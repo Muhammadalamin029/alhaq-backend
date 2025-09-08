@@ -7,12 +7,13 @@ from schemas.products import ProductCreate, ProductResponse
 
 router = APIRouter()
 
-# 0ae50041-f371-4daf-b4f5-f5c0ded517fa
-
 
 @router.get("/")
-def list_products(db: Session = Depends(get_db)):
-    products = product_service.fetch_products(db)
+def list_products(search_query: str = None, db: Session = Depends(get_db)):
+    if search_query:
+        products = product_service.search_products(db, search_query)
+    else:
+        products = product_service.fetch_products(db)
     return {
         "success": True,
         "message": "Products fetched successfully",

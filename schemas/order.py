@@ -54,7 +54,6 @@ class OrderItemResponse(BaseModel):
 
 # ---------------- ORDER -----------------
 class OrderCreate(BaseModel):
-    buyer_id: UUID4
     delivery_address_id: Optional[UUID4] = None
     items: List[OrderItemCreate]
 

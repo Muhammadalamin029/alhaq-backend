@@ -123,6 +123,22 @@ class Product(Base):
     order_items = relationship("OrderItem", back_populates="product")
     reviews = relationship("Review", back_populates="product")
     wishlists = relationship("Wishlist", back_populates="product")
+    images = relationship("ProductImage", back_populates="product")
+
+
+# ---------------- PRODUCT IMAGES ----------------
+class ProductImage(Base):
+    __tablename__ = "product_images"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
+    image_url = Column(Text, nullable=False)
+    is_primary = Column(Boolean, default=False)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    product = relationship("Product", back_populates="images")
 
 
 # ---------------- ORDERS ----------------

@@ -33,13 +33,28 @@ class OrderService:
             .all()
         )
 
+    def get_orders_by_seller(self, db: Session, seller_id: UUID):
+        return (
+            self._with_relationships(db.query(Order))
+            .filter(Order.order_items == seller_id)
+            .all()
+        )
+
+    def get_orders_by_status(self, db: Session, user_id: str, status: str):
+        return (
+            self._with_relationships(db.query(Order))
+            .filter(Order.status == status)
+            .filter(Order.buyer_id == user_id)
+            .all()
+        )
+
     # ---------------- CREATE ----------------
     def create_order(
         self,
         db: Session,
         buyer_id: UUID,
         delivery_address: Optional[UUID],
-        items: List[dict],  # list of {product_id, quantity, price}
+        items: List[OrderItem],  # list of {product_id, quantity, price}
     ):
         # Calculate total
         total_amount = sum(item["quantity"] * item["price"] for item in items)
@@ -57,15 +72,29 @@ class OrderService:
         for item in items:
             order_item = OrderItem(
                 order_id=new_order.id,
-                product_id=item["product_id"],
-                quantity=item["quantity"],
-                price=item["price"],
+                product_id=item.product_id,
+                quantity=item.quantity,
+                price=item.price,
             )
             db.add(order_item)
 
         db.commit()
         db.refresh(new_order)
         return new_order
+
+    def create_order_item(
+        self, db: Session, order_id: UUID, product_id: UUID, quantity: int, price: float
+    ):
+        new_item = OrderItem(
+            order_id=order_id,
+            product_id=product_id,
+            quantity=quantity,
+            price=price,
+        )
+        db.add(new_item)
+        db.commit()
+        db.refresh(new_item)
+        return new_item
 
     # ---------------- UPDATE ----------------
     def update_order_status(self, db: Session, order_id: UUID, new_status: str):

@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from enum import Enum
+from pydantic import BaseModel, EmailStr, Field
 
 # ---------------- SCHEMAS ---------------- #
 
@@ -13,9 +14,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class UserRole(str, Enum):
+    CUSTOMER = "customer"
+    SELLER = "seller"
+    ADMIN = "admin"
+
+
 class RegisterRequest(BaseModel):
-    email: str
-    role: str
-    password: str
-    full_name: str = None
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    full_name: str
     bio: str = None
+    role: UserRole

@@ -12,7 +12,14 @@ class ProductService:
         )
 
     def fetch_products(self, db: Session):
-        return self._with_relationships(db.query(Product)).all()
+        return self._with_relationships(db.query(Product)).limit(10).all()
+
+    def search_products(self, db: Session, keyword: str):
+        return (
+            self._with_relationships(db.query(Product))
+            .filter(Product.name.ilike(f"%{keyword}%"))
+            .all()
+        )
 
     def add_product(
         self, db: Session, name: str, price: float, user_id: UUID,
@@ -45,6 +52,7 @@ class ProductService:
         return (
             self._with_relationships(db.query(Product))
             .filter(Product.seller_id == seller_id)
+            .limit(10)
             .all()
         )
 
@@ -52,6 +60,7 @@ class ProductService:
         return (
             self._with_relationships(db.query(Product))
             .filter(Product.category_id == category_id)
+            .limit(10)
             .all()
         )
 
