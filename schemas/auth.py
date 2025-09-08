@@ -11,3 +11,11 @@ class TokenResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    role: str
+    password: str
+    full_name: str = None
+    bio: str = None

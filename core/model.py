@@ -12,7 +12,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum("customer", "seller", "admin",
@@ -26,10 +26,6 @@ class User(Base):
     profile = relationship("Profile", back_populates="user", uselist=False)
     seller_profile = relationship(
         "SellerProfile", back_populates="user", uselist=False)
-    addresses = relationship("Address", back_populates="user")
-    reviews = relationship("Review", back_populates="user")
-    wishlists = relationship("Wishlist", back_populates="user")
-    stats = relationship("Stats", back_populates="user", uselist=False)
 
 
 # ---------------- PROFILES (CUSTOMERS) ----------------
@@ -52,6 +48,10 @@ class Profile(Base):
     orders = relationship("Order", back_populates="buyer")
     checkouts = relationship("Checkout", back_populates="buyer")
     payments = relationship("Payment", back_populates="buyer")
+    addresses = relationship("Address", back_populates="user")
+    reviews = relationship("Review", back_populates="user")
+    wishlists = relationship("Wishlist", back_populates="user")
+    stats = relationship("Stats", back_populates="user", uselist=False)
 
 
 # ---------------- SELLER PROFILES ----------------
@@ -89,7 +89,7 @@ class Category(Base):
     __tablename__ = "categories"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     name = Column(String(100), unique=True, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -103,7 +103,7 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -120,9 +120,9 @@ class Product(Base):
     # Relationships
     seller = relationship("SellerProfile", back_populates="products")
     category = relationship("Category", back_populates="products")
-    order_items = relationship("OrderItem", back_populates="products")
-    reviews = relationship("Review", back_populates="products")
-    wishlists = relationship("Wishlist", back_populates="products")
+    order_items = relationship("OrderItem", back_populates="product")
+    reviews = relationship("Review", back_populates="product")
+    wishlists = relationship("Wishlist", back_populates="product")
 
 
 # ---------------- ORDERS ----------------
@@ -130,7 +130,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     total_amount = Column(DECIMAL(10, 2), nullable=False)
     status = Column(Enum("pending", "processing", "shipped", "delivered",
@@ -153,7 +153,7 @@ class OrderItem(Base):
     __tablename__ = "order_items"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
     product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -172,7 +172,7 @@ class Checkout(Base):
     __tablename__ = "checkouts"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
     total_amount = Column(DECIMAL(12, 2), nullable=False)
@@ -196,7 +196,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
@@ -222,9 +222,9 @@ class Review(Base):
     __tablename__ = "reviews"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     # Should add CHECK constraint (1-5)
     rating = Column(Integer, nullable=False)
     comment = Column(Text, nullable=True)
@@ -234,7 +234,7 @@ class Review(Base):
 
     # Relationships
     product = relationship("Product", back_populates="reviews")
-    user = relationship("User", back_populates="reviews")
+    user = relationship("Profile", back_populates="reviews")
 
 
 # ---------------- ADDRESSES ----------------
@@ -242,8 +242,8 @@ class Address(Base):
     __tablename__ = "addresses"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+                default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     title = Column(String(50), nullable=False)
     street_address = Column(String(255), nullable=False)
     city = Column(String(100), nullable=False)
@@ -256,7 +256,7 @@ class Address(Base):
     ), onupdate=func.current_timestamp())
 
     # Relationships
-    user = relationship("User", back_populates="addresses")
+    user = relationship("Profile", back_populates="addresses")
     orders = relationship("Order", back_populates="delivery_addr")
 
 
@@ -265,15 +265,15 @@ class Wishlist(Base):
     __tablename__ = "wishlists"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+                default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
 
     # Relationships
-    user = relationship("User", back_populates="wishlists")
+    user = relationship("Profile", back_populates="wishlists")
     product = relationship("Product", back_populates="wishlists")
 
 
@@ -282,8 +282,9 @@ class Stats(Base):
     __tablename__ = "stats"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
-    user_id = Column(UUID, ForeignKey("users.id"), unique=True, nullable=False)
+                default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"),
+                     unique=True, nullable=False)
     total_buys = Column(Integer, default=0)
     total_sells = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -291,7 +292,7 @@ class Stats(Base):
     ), onupdate=func.current_timestamp())
 
     # Relationships
-    user = relationship("User", back_populates="stats")
+    user = relationship("Profile", back_populates="stats")
 
 
 # ---------------- ADMIN STATS ----------------
@@ -299,7 +300,7 @@ class AdminStats(Base):
     __tablename__ = "admin_stats"
 
     id = Column(UUID, primary_key=True, index=True,
-                default=func.uuid_generate_v4())
+                default=func.gen_random_uuid())
     total_users = Column(Integer, default=0)
     total_products = Column(Integer, default=0)
     total_orders = Column(Integer, default=0)

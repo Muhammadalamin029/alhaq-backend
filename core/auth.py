@@ -59,6 +59,10 @@ def hashpassword(pwd: str):
     return hashed_pwd
 
 
+def verify_password(pwd: str, hsd_pwd: str) -> bool:
+    return pwd_context.verify(pwd, hsd_pwd)
+
+
 # ---------------- USER DEPENDENCY ---------------- #
 
 
