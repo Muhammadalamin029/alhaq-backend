@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import auth, products, categories
+from routers import auth, products, categories, order
 from core.config import settings
 from db.session import engine
 from core.model import Base
@@ -21,6 +21,7 @@ app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(products.router, prefix="/products", tags=["Products"])
 app.include_router(categories.router, prefix="/categories",
                    tags=["Categories"])
+app.include_router(order.router, prefix="/orders", tags=["Orders"])
 
 # Register global exception handlers
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
