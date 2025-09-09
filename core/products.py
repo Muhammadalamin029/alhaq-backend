@@ -1,6 +1,7 @@
-from core.model import Product
+from core.model import Product, ProductImage
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID
+from schemas.products import ProductImage
 
 
 class ProductService:
@@ -22,10 +23,17 @@ class ProductService:
         )
 
     def add_product(
-        self, db: Session, name: str, price: float, user_id: UUID,
-        category_id: UUID, description: str, stock_quantity: int,
-        image_url: str = None
+        self,
+        db: Session,
+        name: str,
+        price: float,
+        user_id: UUID,
+        category_id: UUID,
+        description: str,
+        stock_quantity: int,
+        images: list[ProductImage] = None
     ):
+        # 1. Create the product
         new_product = Product(
             name=name,
             price=price,
@@ -33,12 +41,24 @@ class ProductService:
             category_id=category_id,
             description=description,
             stock_quantity=stock_quantity,
-            image_url=image_url
         )
         db.add(new_product)
+        db.flush()  # Get the product ID before committing
+
+        # 2. Add images if provided
+        if images:
+            for img in images:
+                product_image = ProductImage(
+                    product_id=new_product.id,
+                    image_url=img.url
+                )
+                db.add(product_image)
+
+        # 3. Commit everything once
         db.commit()
         db.refresh(new_product)
-        # reload with relationships
+
+        # 4. Return the product with relationships loaded
         return self.get_product_by_id(db, new_product.id)
 
     def get_product_by_id(self, db: Session, product_id: UUID):

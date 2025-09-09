@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.get("/")
-def list_products(search_query: str = None, db: Session = Depends(get_db)):
+async def list_products(search_query: str = None, db: Session = Depends(get_db)):
     if search_query:
         products = product_service.search_products(db, search_query)
     else:
@@ -22,7 +22,7 @@ def list_products(search_query: str = None, db: Session = Depends(get_db)):
 
 
 @router.post("/")
-def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "seller"])), db: Session = Depends(get_db)):
+async def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "seller"])), db: Session = Depends(get_db)):
     new_product = product_service.add_product(
         db=db,
         name=payload.name,
@@ -31,7 +31,7 @@ def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "se
         category_id=payload.category_id,
         description=payload.description,
         stock_quantity=payload.stock_quantity,
-        image_url=payload.image_url
+        images=payload.images
     )
 
     if not new_product:
@@ -43,12 +43,12 @@ def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "se
     return {
         "success": True,
         "message": "Product created successfully",
-        "data": new_product
+        "data": ProductResponse.model_validate(new_product)
     }
 
 
 @router.get("/id/{product_id}")
-def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
+async def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
     product = product_service.get_product_by_id(db=db, product_id=product_id)
     if not product:
         raise HTTPException(
@@ -63,7 +63,7 @@ def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/seller/{seller_id}")
-def get_products_by_seller(seller_id: str, db: Session = Depends(get_db)):
+async def get_products_by_seller(seller_id: str, db: Session = Depends(get_db)):
     products = product_service.get_products_by_seller(
         db=db, seller_id=seller_id)
     if not products:
@@ -79,7 +79,7 @@ def get_products_by_seller(seller_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/category/{category_id}")
-def get_products_by_category(category_id: str, db: Session = Depends(get_db)):
+async def get_products_by_category(category_id: str, db: Session = Depends(get_db)):
     products = product_service.get_products_by_category(
         db=db, category_id=category_id)
     if not products:
@@ -95,20 +95,18 @@ def get_products_by_category(category_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/{product_id}")
-def delete_product(
+async def delete_product(
     product_id: str,
-    user=Depends(role_required(["admin", "seller"])),
+    user=Depends(role_required(["admin", "seller", "customer"])),
     db: Session = Depends(get_db),
 ):
-    product = product_service.get_product_by_id(db=db, product_id=product_id)
+    product = product_service.delete_product(db=db, product_id=product_id)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
 
-    db.delete(product)
-    db.commit()
     return {
         "success": True,
         "message": "Product deleted successfully",

@@ -1,4 +1,4 @@
-from core.model import Order, OrderItem
+from core.model import Order, OrderItem, Product
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID
 from typing import List, Optional
@@ -34,18 +34,34 @@ class OrderService:
         )
 
     def get_orders_by_seller(self, db: Session, seller_id: UUID):
-        return (
-            self._with_relationships(db.query(Order))
-            .filter(Order.order_items == seller_id)
+        orders = (
+            db.query(Order)
+            .join(Order.order_items)
+            .join(OrderItem.product)
+            .filter(Product.seller_id == seller_id)
+            .options(
+                joinedload(Order.buyer),
+                joinedload(Order.order_items).joinedload(OrderItem.product),
+                joinedload(Order.checkouts),
+                joinedload(Order.delivery_addr),
+                joinedload(Order.payments),
+            )
             .all()
         )
+
+        # Keep only items from this seller
+        for order in orders:
+            order.order_items = [
+                item for item in order.order_items if item.product.seller_id == seller_id
+            ]
+        return orders
 
     def get_orders_by_status(self, db: Session, user_id: str, status: str):
         return (
             self._with_relationships(db.query(Order))
             .filter(Order.status == status)
             .filter(Order.buyer_id == user_id)
-            .all()
+            .first()
         )
 
     # ---------------- CREATE ----------------
@@ -53,30 +69,27 @@ class OrderService:
         self,
         db: Session,
         buyer_id: UUID,
-        delivery_address: Optional[UUID],
-        items: List[OrderItem],  # list of {product_id, quantity, price}
+        item: OrderItem,  # list of {product_id, quantity, price}
     ):
         # Calculate total
-        total_amount = sum(item["quantity"] * item["price"] for item in items)
+        total_amount = item.quantity * item.price
 
         # Create order
         new_order = Order(
             buyer_id=buyer_id,
-            delivery_address=delivery_address,
             total_amount=total_amount,
         )
         db.add(new_order)
         db.flush()  # ensures new_order.id is available
 
         # Create order items
-        for item in items:
-            order_item = OrderItem(
-                order_id=new_order.id,
-                product_id=item.product_id,
-                quantity=item.quantity,
-                price=item.price,
-            )
-            db.add(order_item)
+        order_item = OrderItem(
+            order_id=new_order.id,
+            product_id=item.product_id,
+            quantity=item.quantity,
+            price=item.price,
+        )
+        db.add(order_item)
 
         db.commit()
         db.refresh(new_order)
@@ -85,6 +98,9 @@ class OrderService:
     def create_order_item(
         self, db: Session, order_id: UUID, product_id: UUID, quantity: int, price: float
     ):
+
+        amount = quantity * price
+        existing_order = self.get_order_by_id(db=db, order_id=order_id)
         new_item = OrderItem(
             order_id=order_id,
             product_id=product_id,
@@ -118,7 +134,19 @@ class OrderService:
         db.refresh(order)
         return order
 
+    def update_order_amount(
+        self, db: Session, order_id: UUID, new_amount: int
+    ):
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            return None
+        order.total_amount = new_amount
+        db.commit()
+        db.refresh(order)
+        return order
+
     # ---------------- DELETE ----------------
+
     def delete_order(self, db: Session, order_id: UUID):
         order = db.query(Order).filter(Order.id == order_id).first()
         if not order:

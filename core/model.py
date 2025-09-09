@@ -1,7 +1,7 @@
 from db.session import Base
 from sqlalchemy import (
     Column, String, UUID, Text, Date, Integer, DECIMAL,
-    TIMESTAMP, func, Enum, ForeignKey, Boolean
+    TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric
 )
 from sqlalchemy.orm import relationship
 
@@ -107,8 +107,7 @@ class Product(Base):
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    image_url = Column(Text, nullable=True)
-    price = Column(DECIMAL(10, 2), nullable=False)
+    price = Column(Numeric(10, 2), nullable=False)
     stock_quantity = Column(Integer, default=0)
     category_id = Column(UUID, ForeignKey("categories.id"), nullable=False)
     status = Column(Enum("active", "inactive", "out_of_stock",
@@ -120,7 +119,8 @@ class Product(Base):
     # Relationships
     seller = relationship("SellerProfile", back_populates="products")
     category = relationship("Category", back_populates="products")
-    order_items = relationship("OrderItem", back_populates="product")
+    order_items = relationship(
+        "OrderItem", back_populates="product", cascade="all, delete-orphan")
     reviews = relationship("Review", back_populates="product")
     wishlists = relationship("Wishlist", back_populates="product")
     images = relationship("ProductImage", back_populates="product")
@@ -134,7 +134,6 @@ class ProductImage(Base):
                 default=func.gen_random_uuid())
     product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
     image_url = Column(Text, nullable=False)
-    is_primary = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
@@ -148,7 +147,7 @@ class Order(Base):
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    total_amount = Column(DECIMAL(10, 2), nullable=False)
+    total_amount = Column(Numeric(10, 2), nullable=False)
     status = Column(Enum("pending", "processing", "shipped", "delivered",
                     "cancelled", name="order_status"), default="pending")
     delivery_address = Column(UUID, ForeignKey("addresses.id"), nullable=True)
@@ -159,7 +158,8 @@ class Order(Base):
     # Relationships
     buyer = relationship("Profile", back_populates="orders")
     delivery_addr = relationship("Address", back_populates="orders")
-    order_items = relationship("OrderItem", back_populates="order")
+    order_items = relationship(
+        "OrderItem", back_populates="order", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="order")
     checkouts = relationship("Checkout", back_populates="order")
 
@@ -170,10 +170,12 @@ class OrderItem(Base):
 
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
-    product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
+    order_id = Column(UUID, ForeignKey(
+        "orders.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(UUID, ForeignKey(
+        "products.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
-    price = Column(DECIMAL(10, 2), nullable=False)
+    price = Column(Numeric(10, 2), nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
@@ -191,7 +193,7 @@ class Checkout(Base):
                 default=func.gen_random_uuid())
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
-    total_amount = Column(DECIMAL(12, 2), nullable=False)
+    total_amount = Column(Numeric(10, 2), nullable=False)
 
     status = Column(Enum("initiated", "awaiting_payment", "completed",
                     "cancelled", name="checkout_status"), default="initiated")

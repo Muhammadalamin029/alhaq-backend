@@ -1,15 +1,22 @@
 from pydantic import BaseModel, Field, UUID4
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
+
+
+class ProductImage(BaseModel):
+    url: str
+
+    class Config:
+        from_attributes = True
 
 
 class ProductCreate(BaseModel):
     name: str = Field(..., max_length=255)
     description: Optional[str] = None
-    image_url: Optional[str] = None
-    price: int = Field(..., gt=0)
+    price: float = Field(..., gt=0)
     stock_quantity: int = Field(0, ge=0)
     category_id: UUID4
+    images: Optional[List[ProductImage]] = []
 
     class Config:
         from_attributes = True

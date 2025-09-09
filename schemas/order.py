@@ -7,7 +7,7 @@ from datetime import datetime
 class UserResponse(BaseModel):
     id: UUID4
     name: str
-    email: str
+    email: Optional[str] = None
 
     class Config:
         from_attributes = True
