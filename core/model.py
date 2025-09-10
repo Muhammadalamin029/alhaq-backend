@@ -46,7 +46,6 @@ class Profile(Base):
     # Relationships
     user = relationship("User", back_populates="profile")
     orders = relationship("Order", back_populates="buyer")
-    checkouts = relationship("Checkout", back_populates="buyer")
     payments = relationship("Payment", back_populates="buyer")
     addresses = relationship("Address", back_populates="user")
     reviews = relationship("Review", back_populates="user")
@@ -161,7 +160,6 @@ class Order(Base):
     order_items = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="order")
-    checkouts = relationship("Checkout", back_populates="order")
 
 
 # ---------------- ORDER ITEMS ----------------
@@ -183,30 +181,6 @@ class OrderItem(Base):
     # Relationships
     order = relationship("Order", back_populates="order_items")
     product = relationship("Product", back_populates="order_items")
-
-
-# ---------------- CHECKOUTS ----------------
-class Checkout(Base):
-    __tablename__ = "checkouts"
-
-    id = Column(UUID, primary_key=True, index=True,
-                default=func.gen_random_uuid())
-    buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
-    total_amount = Column(Numeric(10, 2), nullable=False)
-
-    status = Column(Enum("initiated", "awaiting_payment", "completed",
-                    "cancelled", name="checkout_status"), default="initiated")
-    payment_reference = Column(String(100), unique=True, nullable=True)
-    expires_at = Column(TIMESTAMP, nullable=True)
-
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
-    ), onupdate=func.current_timestamp())
-
-    # Relationships
-    buyer = relationship("Profile", back_populates="checkouts")
-    order = relationship("Order", back_populates="checkouts")
 
 
 # ---------------- PAYMENTS ----------------

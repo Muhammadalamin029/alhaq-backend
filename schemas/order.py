@@ -39,7 +39,6 @@ class ProductResponse(BaseModel):
 class OrderItemCreate(BaseModel):
     product_id: UUID4
     quantity: int = Field(..., gt=0)
-    price: float = Field(..., gt=0)
 
 
 class OrderItemResponse(BaseModel):
@@ -63,7 +62,6 @@ class OrderResponse(BaseModel):
     total_amount: float
     status: str
     created_at: datetime
-    updated_at: datetime
 
     buyer: UserResponse
     delivery_addr: Optional[AddressResponse] = None

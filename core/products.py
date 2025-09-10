@@ -2,6 +2,7 @@ from core.model import Product, ProductImage
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID
 from schemas.products import ProductImage
+from typing import Optional
 
 
 class ProductService:
@@ -12,15 +13,20 @@ class ProductService:
             joinedload(Product.category)
         )
 
-    def fetch_products(self, db: Session):
-        return self._with_relationships(db.query(Product)).limit(10).all()
+    def fetch_products(self, db: Session, search_query: Optional[str] = None, category_id: Optional[str] = None, limit: int = 10, page: int = 1):
 
-    def search_products(self, db: Session, keyword: str):
-        return (
-            self._with_relationships(db.query(Product))
-            .filter(Product.name.ilike(f"%{keyword}%"))
-            .all()
-        )
+        query = self._with_relationships(db.query(Product))
+
+        if search_query:
+            query = query.filter(Product.name.ilike(f"%{search_query}%"))
+
+        if category_id:
+            query = query.filter(Product.category_id == category_id)
+
+        offset = (page - 1) * limit
+        count = query.count()
+        products = query.offset(offset).limit(limit).all()
+        return products, count
 
     def add_product(
         self,
@@ -68,21 +74,19 @@ class ProductService:
             .first()
         )
 
-    def get_products_by_seller(self, db: Session, seller_id: UUID):
-        return (
-            self._with_relationships(db.query(Product))
-            .filter(Product.seller_id == seller_id)
-            .limit(10)
-            .all()
+    def get_products_by_seller(
+        self, db: Session, seller_id: UUID, limit: int = 10, page: int = 1
+    ):
+        query = self._with_relationships(db.query(Product)).filter(
+            Product.seller_id == seller_id
         )
 
-    def get_products_by_category(self, db: Session, category_id: UUID):
-        return (
-            self._with_relationships(db.query(Product))
-            .filter(Product.category_id == category_id)
-            .limit(10)
-            .all()
-        )
+        count = query.count()
+        offset = (page - 1) * limit
+
+        products = query.offset(offset).limit(limit).all()
+
+        return products, count
 
     def update_product_stock(self, db: Session, product_id: UUID, new_stock: int):
         product = db.query(Product).filter(Product.id == product_id).first()

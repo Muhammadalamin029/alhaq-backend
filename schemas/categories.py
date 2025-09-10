@@ -18,10 +18,10 @@ class CategoryUpdate(BaseModel):
     description: Optional[str] = None
 
 
-class CategoryResponse(CategoryBase):
-    id: UUID
-    created_at: datetime
-    updated_at: datetime
+class CategoryResponse(BaseModel):
+    id:  UUID
+    name: Optional[str] = None
+    description: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
