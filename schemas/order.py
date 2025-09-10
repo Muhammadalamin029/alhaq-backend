@@ -38,7 +38,7 @@ class ProductResponse(BaseModel):
 # ---------------- ORDER ITEM -----------------
 class OrderItemCreate(BaseModel):
     product_id: UUID4
-    quantity: int = Field(..., gt=0)
+    quantity: int = Field(..., gt=0, le=1000, description="Quantity must be between 1 and 1000")
 
 
 class OrderItemResponse(BaseModel):

@@ -1,12 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from uuid import UUID
-from datetime import datetime
 
 
 class CategoryBase(BaseModel):
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=100, strip_whitespace=True)
+    description: Optional[str] = Field(None, max_length=1000, strip_whitespace=True)
 
 
 class CategoryCreate(CategoryBase):
@@ -14,13 +13,13 @@ class CategoryCreate(CategoryBase):
 
 
 class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
+    description: Optional[str] = Field(None, max_length=1000, strip_whitespace=True)
 
 
 class CategoryResponse(BaseModel):
-    id:  UUID
-    name: Optional[str] = None
+    id: UUID
+    name: str
     description: Optional[str] = None
 
     class Config:

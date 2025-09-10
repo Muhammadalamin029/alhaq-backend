@@ -4,10 +4,19 @@ from sqlalchemy import UUID
 
 
 class CategoryService:
-    def fetch_categories(self, db: Session):
-        return db.query(Category).all()
+    def fetch_categories(self, db: Session, limit: int = 10, page: int = 1):
+        offset = (page - 1) * limit
+        query = db.query(Category)
+        count = query.count()
+        categories = query.offset(offset).limit(limit).all()
+        return categories, count
 
     def add_category(self, db: Session, name: str, description: str = None):
+        # Check if category with same name already exists
+        existing = self.get_category_by_name(db, name)
+        if existing:
+            raise ValueError("Category name already exists")
+        
         new_category = Category(name=name, description=description)
         db.add(new_category)
         db.commit()

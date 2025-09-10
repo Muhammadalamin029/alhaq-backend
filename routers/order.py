@@ -70,10 +70,45 @@ async def create_order_item(
     user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db)
 ):
+    # Additional validation for quantity (belt and suspenders approach)
+    if payload.quantity <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quantity must be greater than 0"
+        )
+    
+    if payload.quantity > 1000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quantity cannot exceed 1000 items per order"
+        )
+    
     existing_order = order_service.get_orders_by_status(
         db=db, user_id=user["id"], status="pending"
     )
+    
+    # Validate product exists
     product = product_service.get_product_by_id(db, payload.product_id)
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    
+    # Validate product is active
+    if product.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Product is not available for purchase"
+        )
+    
+    # Validate stock availability
+    if product.stock_quantity < payload.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient stock. Only {product.stock_quantity} items available"
+        )
+    
     price = product.price
     if existing_order:
         order_service.create_order_item(
@@ -187,7 +222,7 @@ async def update_order(
 async def update_order_item_quantity(
     order_id: str,
     item_id: str,
-    quantity: int = Query(..., ge=1),
+    quantity: int = Query(..., ge=1, le=1000),
     user=Depends(role_required(["customer"])),
     db: Session = Depends(get_db)
 ):
@@ -203,6 +238,40 @@ async def update_order_item_quantity(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to update this order."
+        )
+    
+    # Validate order is still pending (only pending orders can be modified)
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending orders can be modified"
+        )
+    
+    # Find the order item to validate stock
+    order_item = None
+    for item in order.order_items:
+        if str(item.id) == item_id:
+            order_item = item
+            break
+    
+    if not order_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order item not found"
+        )
+    
+    # Validate stock availability
+    product = product_service.get_product_by_id(db, order_item.product_id)
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found"
+        )
+    
+    if product.stock_quantity < quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Insufficient stock. Only {product.stock_quantity} items available"
         )
 
     updated_order = order_service.update_order_item_quantity(
@@ -244,6 +313,13 @@ async def delete_order(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to delete this order."
         )
+    
+    # Validate order can be deleted (only pending orders)
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending orders can be deleted"
+        )
 
     order_service.delete_order(db, order_id)
 
@@ -273,6 +349,13 @@ async def delete_order_item(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to modify this order."
+        )
+    
+    # Validate order is still pending
+    if order.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending orders can be modified"
         )
 
     result = order_service.delete_order_item(

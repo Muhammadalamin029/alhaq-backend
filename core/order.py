@@ -14,6 +14,22 @@ class OrderService:
             joinedload(Order.delivery_addr),
             joinedload(Order.payments),
         )
+    
+    def _validate_stock_availability(self, db: Session, product_id: str, requested_quantity: int):
+        """Helper to validate if enough stock is available for a product"""
+        from core.products import product_service
+        product = product_service.get_product_by_id(db, product_id)
+        
+        if not product:
+            raise ValueError("Product not found")
+        
+        if product.status != "active":
+            raise ValueError("Product is not available for purchase")
+        
+        if product.stock_quantity < requested_quantity:
+            raise ValueError(f"Insufficient stock. Only {product.stock_quantity} items available")
+        
+        return product
 
     # ---------------- FETCH ORDERS ----------------
     def fetch_orders(self, db: Session, limit: int = 10, page: int = 1) -> Tuple[List[Order], int]:
@@ -129,6 +145,16 @@ class OrderService:
             return None
         for key, value in kwargs.items():
             setattr(order, key, value)
+        db.commit()
+        db.refresh(order)
+        return order
+    
+    def update_order_amount(self, db: Session, order_id: UUID, new_amount: float):
+        """Update the total amount of an order"""
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            return None
+        order.total_amount = new_amount
         db.commit()
         db.refresh(order)
         return order

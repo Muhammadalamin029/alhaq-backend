@@ -17,7 +17,24 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(Enum("customer", "seller", "admin",
                   name="user_roles"), default="customer")
-    verified = Column(Boolean, default=False)
+    
+    # Email verification
+    email_verified = Column(Boolean, default=False)
+    email_verified_at = Column(TIMESTAMP, nullable=True)
+    
+    # Security fields
+    failed_login_attempts = Column(Integer, default=0)
+    locked_until = Column(TIMESTAMP, nullable=True)
+    last_login = Column(TIMESTAMP, nullable=True)
+    password_changed_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    
+    # Two-factor authentication (for future use)
+    two_factor_enabled = Column(Boolean, default=False)
+    two_factor_secret = Column(String(255), nullable=True)
+    
+    # Legacy field (keeping for backward compatibility)
+
+    
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())

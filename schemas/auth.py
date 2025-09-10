@@ -1,5 +1,7 @@
 from enum import Enum
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator, UUID4
+from typing import Optional, Union
+from datetime import datetime, date
 
 # ---------------- SCHEMAS ---------------- #
 
@@ -26,3 +28,76 @@ class RegisterRequest(BaseModel):
     full_name: str
     bio: str = None
     role: UserRole
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+    confirm_password: str
+    
+    @validator('confirm_password')
+    def passwords_match(cls, v, values):
+        if 'new_password' in values and v != values['new_password']:
+            raise ValueError('Passwords do not match')
+        return v
+
+
+class UpdateProfileRequest(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255, strip_whitespace=True)
+    bio: Optional[str] = Field(None, max_length=1000, strip_whitespace=True)
+
+
+class UserProfileResponse(BaseModel):
+    id: UUID4
+    email: str
+    role: str
+    email_verified: bool
+    created_at: datetime
+    updated_at: datetime
+    last_login: Optional[datetime] = None
+    password_changed_at: datetime
+    two_factor_enabled: bool
+    
+    class Config:
+        from_attributes = True
+
+
+class CustomerProfileResponse(BaseModel):
+    id: UUID4
+    name: str
+    bio: Optional[str] = None
+    kyc_status: str
+    approval_date: Optional[date] = None
+    avatar_url: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class SellerProfileResponse(BaseModel):
+    id: UUID4
+    business_name: str
+    description: Optional[str] = None
+    logo_url: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    website_url: Optional[str] = None
+    kyc_status: str
+    approval_date: Optional[date] = None
+    total_products: int
+    total_orders: int
+    total_revenue: float
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class FullUserProfileResponse(BaseModel):
+    user: UserProfileResponse
+    profile: Union[CustomerProfileResponse, SellerProfileResponse, None] = None
+    
+    class Config:
+        from_attributes = True

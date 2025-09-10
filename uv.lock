@@ -143,6 +143,9 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.35" },
 ]
 
+[package.metadata.requires-dev]
+dev = []
+
 [[package]]
 name = "certifi"
 version = "2025.8.3"
