@@ -4,7 +4,10 @@ from db.session import get_db
 from core.auth import role_required
 from core.order import order_service
 from core.products import product_service
-from schemas.order import OrderResponse, OrderItemCreate, OrderCreate
+from schemas.order import (
+    OrderResponse, OrderItemCreate, OrderCreate,
+    OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate
+)
 from decimal import Decimal
 from uuid import UUID
 
@@ -382,3 +385,152 @@ async def delete_order_item(
         "message": "Order item deleted successfully",
         "data": OrderResponse.model_validate(result),
     }
+
+
+# ---------------- ORDER STATUS MANAGEMENT ----------------
+
+@router.patch("/{order_id}/status", response_model=OrderStatusResponse)
+async def update_order_status(
+    order_id: str,
+    payload: OrderStatusUpdate,
+    user=Depends(role_required(["admin", "seller", "customer"])),
+    db: Session = Depends(get_db)
+):
+    """Update order status with proper workflow validation"""
+    try:
+        result = order_service.update_order_status(
+            db=db,
+            order_id=order_id,
+            new_status=payload.status.value,
+            user_id=user["id"],
+            user_role=user["role"],
+            notes=payload.notes
+        )
+        
+        return OrderStatusResponse(
+            success=True,
+            message=f"Order status updated to {payload.status.value}",
+            data=result
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update order status"
+        )
+
+
+@router.patch("/bulk/status", response_model=OrderStatusResponse)
+async def bulk_update_order_status(
+    payload: BulkOrderStatusUpdate,
+    user=Depends(role_required(["admin", "seller"])),
+    db: Session = Depends(get_db)
+):
+    """Update status for multiple orders (admin and sellers only)"""
+    try:
+        results = order_service.bulk_update_order_status(
+            db=db,
+            order_ids=payload.order_ids,
+            new_status=payload.status.value,
+            user_id=user["id"],
+            user_role=user["role"],
+            notes=payload.notes
+        )
+        
+        success_count = len(results["successful_updates"])
+        total_count = results["total_processed"]
+        
+        return OrderStatusResponse(
+            success=success_count == total_count,
+            message=f"Updated {success_count}/{total_count} orders to {payload.status.value}",
+            data=results
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to bulk update order status"
+        )
+
+
+@router.get("/status-transitions/{order_id}", response_model=OrderStatusResponse)
+async def get_order_status_info(
+    order_id: str,
+    user=Depends(role_required(["admin", "seller", "customer"])),
+    db: Session = Depends(get_db)
+):
+    """Get order status information and valid transitions"""
+    try:
+        # First verify user has access to this order
+        order = order_service.get_order_by_id(db, order_id)
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found"
+            )
+        
+        # Authorization check
+        if user["role"] == "customer" and order.buyer_id != UUID(str(user["id"])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view your own orders"
+            )
+        elif user["role"] == "seller":
+            seller_has_items = any(
+                item.product.seller_id == user["id"] for item in order.order_items
+            )
+            if not seller_has_items:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only view orders containing your products"
+                )
+        
+        status_info = order_service.get_order_status_history(db, order_id)
+        
+        return OrderStatusResponse(
+            success=True,
+            message="Order status information retrieved",
+            data=status_info
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get order status information"
+        )
+
+
+@router.post("/{order_id}/cancel", response_model=OrderStatusResponse)
+async def cancel_order(
+    order_id: str,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Cancel an order (customers can cancel their own pending orders)"""
+    try:
+        result = order_service.update_order_status(
+            db=db,
+            order_id=order_id,
+            new_status="cancelled",
+            user_id=user["id"],
+            user_role=user["role"],
+            notes="Order cancelled by user"
+        )
+        
+        return OrderStatusResponse(
+            success=True,
+            message="Order cancelled successfully",
+            data=result
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel order"
+        )

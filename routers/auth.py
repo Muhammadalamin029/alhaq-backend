@@ -11,7 +11,10 @@ from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
 from db.session import get_db
 from schemas.auth import (
     TokenResponse, RefreshRequest, RegisterRequest, UserRole,
-    ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse
+    ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse,
+    SendVerificationRequest, VerifyEmailRequest, ResendVerificationRequest,
+    RequestPasswordResetRequest, VerifyPasswordResetRequest,
+    EmailVerificationResponse, PasswordResetResponse
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -194,4 +197,138 @@ def check_password_strength(payload: PasswordStrengthRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to analyze password strength"
+        )
+
+
+# ---------------- EMAIL VERIFICATION ---------------- #
+
+@router.post("/send-verification", response_model=EmailVerificationResponse)
+def send_verification_email(payload: SendVerificationRequest, db: Session = Depends(get_db)):
+    """Send email verification code to user"""
+    try:
+        result = auth_service.send_verification_email(db, payload.email)
+        return EmailVerificationResponse(
+            success=True,
+            message=result["message"],
+            data={
+                "task_id": result["task_id"],
+                "expires_in_minutes": result["expires_in_minutes"]
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send verification email"
+        )
+
+
+@router.post("/verify-email", response_model=EmailVerificationResponse)
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
+    """Verify user's email with verification code"""
+    try:
+        result = auth_service.verify_email(db, payload.email, payload.verification_code)
+        return EmailVerificationResponse(
+            success=True,
+            message=result["message"],
+            data={
+                "verified_at": result["verified_at"]
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify email"
+        )
+
+
+@router.post("/resend-verification", response_model=EmailVerificationResponse)
+def resend_verification_email(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
+    """Resend email verification code"""
+    try:
+        result = auth_service.send_verification_email(db, payload.email)
+        return EmailVerificationResponse(
+            success=True,
+            message=result["message"],
+            data={
+                "task_id": result["task_id"],
+                "expires_in_minutes": result["expires_in_minutes"]
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to resend verification email"
+        )
+
+
+@router.get("/verification-status/{email}", response_model=EmailVerificationResponse)
+def get_verification_status(email: str, db: Session = Depends(get_db)):
+    """Get email verification status for user"""
+    try:
+        result = auth_service.get_verification_status(db, email)
+        return EmailVerificationResponse(
+            success=True,
+            message="Verification status retrieved",
+            data=result
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get verification status"
+        )
+
+
+# ---------------- PASSWORD RESET ---------------- #
+
+@router.post("/request-password-reset", response_model=PasswordResetResponse)
+def request_password_reset(payload: RequestPasswordResetRequest, db: Session = Depends(get_db)):
+    """Request password reset email"""
+    try:
+        result = auth_service.request_password_reset(db, payload.email)
+        return PasswordResetResponse(
+            success=True,
+            message=result["message"],
+            data={
+                "expires_in_minutes": result["expires_in_minutes"]
+            }
+        )
+    except Exception as e:
+        # Always return success for security (prevent email enumeration)
+        return PasswordResetResponse(
+            success=True,
+            message=f"If an account with {payload.email} exists, a password reset email has been sent",
+            data={
+                "expires_in_minutes": 30
+            }
+        )
+
+
+@router.post("/reset-password", response_model=PasswordResetResponse)
+def reset_password_with_code(payload: VerifyPasswordResetRequest, db: Session = Depends(get_db)):
+    """Reset password using verification code"""
+    try:
+        result = auth_service.reset_password_with_code(
+            db, payload.email, payload.reset_code, payload.new_password
+        )
+        return PasswordResetResponse(
+            success=True,
+            message=result["message"],
+            data={
+                "password_changed_at": result["password_changed_at"]
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset password"
         )

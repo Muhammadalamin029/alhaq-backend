@@ -290,6 +290,253 @@ class AuthService:
         user.failed_login_attempts = 0
         db.commit()
         return True
+    
+    # ---------------- EMAIL VERIFICATION METHODS ---------------- #
+    
+    def send_verification_email(self, db: Session, email: str) -> Dict[str, Any]:
+        """
+        Send verification email to user
+        
+        Args:
+            db: Database session
+            email: User's email address
+            
+        Returns:
+            dict: Response with success status and message
+        """
+        from core.redis_client import verification_manager
+        from core.tasks import send_verification_email
+        
+        # Check if user exists
+        user = self.get_user_by_email(db, email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if user is already verified
+        if user.email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is already verified"
+            )
+        
+        # Check rate limiting
+        if verification_manager.is_rate_limited(email):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many verification requests. Please try again later."
+            )
+        
+        # Get user name based on profile type
+        user_name = "User"  # Default fallback
+        if user.role == "customer":
+            profile = db.query(Profile).filter(Profile.id == user.id).first()
+            if profile:
+                user_name = profile.name
+        elif user.role in ["seller", "admin"]:
+            profile = db.query(SellerProfile).filter(SellerProfile.id == user.id).first()
+            if profile:
+                user_name = profile.business_name
+        
+        # Increment rate limit counter
+        verification_manager.increment_rate_limit(email)
+        
+        # Send verification email asynchronously
+        task = send_verification_email.delay(email, user_name)
+        
+        return {
+            "message": f"Verification email sent to {email}",
+            "task_id": task.id,
+            "expires_in_minutes": 15  # verification_manager.EMAIL_VERIFICATION_EXPIRE_MINUTES
+        }
+    
+    def verify_email(self, db: Session, email: str, verification_code: str) -> Dict[str, Any]:
+        """
+        Verify user's email with verification code
+        
+        Args:
+            db: Database session
+            email: User's email address
+            verification_code: 6-digit verification code
+            
+        Returns:
+            dict: Response with success status and message
+        """
+        from core.redis_client import verification_manager
+        from core.tasks import send_welcome_email
+        
+        # Check if user exists
+        user = self.get_user_by_email(db, email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if user is already verified
+        if user.email_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is already verified"
+            )
+        
+        # Verify the code
+        if not verification_manager.verify_code(email, verification_code, "verification"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired verification code"
+            )
+        
+        # Update user verification status
+        user.email_verified = True
+        user.email_verified_at = datetime.utcnow()
+        db.commit()
+        
+        # Get user name for welcome email
+        user_name = "User"  # Default fallback
+        if user.role == "customer":
+            profile = db.query(Profile).filter(Profile.id == user.id).first()
+            if profile:
+                user_name = profile.name
+        elif user.role in ["seller", "admin"]:
+            profile = db.query(SellerProfile).filter(SellerProfile.id == user.id).first()
+            if profile:
+                user_name = profile.business_name
+        
+        # Send welcome email (async, non-blocking)
+        send_welcome_email.delay(email, user_name)
+        
+        return {
+            "message": "Email verified successfully",
+            "verified_at": user.email_verified_at.isoformat()
+        }
+    
+    def request_password_reset(self, db: Session, email: str) -> Dict[str, Any]:
+        """
+        Send password reset email to user
+        
+        Args:
+            db: Database session
+            email: User's email address
+            
+        Returns:
+            dict: Response with success status and message
+        """
+        from core.redis_client import verification_manager
+        from core.tasks import send_password_reset_email
+        
+        # Check if user exists (but don't reveal if email doesn't exist for security)
+        user = self.get_user_by_email(db, email)
+        
+        # Always return success to prevent email enumeration attacks
+        # But only send email if user actually exists
+        if user:
+            # Check rate limiting
+            if verification_manager.is_rate_limited(email, max_attempts=3, window_minutes=60):
+                # Still return success but log the attempt
+                pass
+            else:
+                # Get user name based on profile type
+                user_name = "User"  # Default fallback
+                if user.role == "customer":
+                    profile = db.query(Profile).filter(Profile.id == user.id).first()
+                    if profile:
+                        user_name = profile.name
+                elif user.role in ["seller", "admin"]:
+                    profile = db.query(SellerProfile).filter(SellerProfile.id == user.id).first()
+                    if profile:
+                        user_name = profile.business_name
+                
+                # Increment rate limit counter
+                verification_manager.increment_rate_limit(email, window_minutes=60)
+                
+                # Send password reset email asynchronously
+                send_password_reset_email.delay(email, user_name)
+        
+        return {
+            "message": f"If an account with {email} exists, a password reset email has been sent",
+            "expires_in_minutes": 30  # verification_manager.PASSWORD_RESET_EXPIRE_MINUTES
+        }
+    
+    def reset_password_with_code(self, db: Session, email: str, reset_code: str, new_password: str) -> Dict[str, Any]:
+        """
+        Reset user password using verification code
+        
+        Args:
+            db: Database session
+            email: User's email address
+            reset_code: 6-digit reset code
+            new_password: New password
+            
+        Returns:
+            dict: Response with success status and message
+        """
+        from core.redis_client import verification_manager
+        
+        # Check if user exists
+        user = self.get_user_by_email(db, email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Verify the reset code
+        if not verification_manager.verify_code(email, reset_code, "password_reset"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset code"
+            )
+        
+        # Validate new password
+        PasswordPolicy.validate_password(new_password)
+        
+        # Update password
+        user.hashed_password = hashpassword(new_password)
+        user.password_changed_at = datetime.utcnow()
+        # Reset failed login attempts and unlock account
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        
+        db.commit()
+        
+        return {
+            "message": "Password reset successfully",
+            "password_changed_at": user.password_changed_at.isoformat()
+        }
+    
+    def get_verification_status(self, db: Session, email: str) -> Dict[str, Any]:
+        """
+        Get email verification status for user
+        
+        Args:
+            db: Database session
+            email: User's email address
+            
+        Returns:
+            dict: Verification status information
+        """
+        from core.redis_client import verification_manager
+        
+        user = self.get_user_by_email(db, email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if there's a pending verification code
+        remaining_time = verification_manager.get_remaining_time(email, "verification")
+        
+        return {
+            "email_verified": user.email_verified,
+            "verified_at": user.email_verified_at.isoformat() if user.email_verified_at else None,
+            "has_pending_verification": remaining_time > 0,
+            "verification_expires_in_seconds": remaining_time if remaining_time > 0 else None,
+            "can_resend_verification": not verification_manager.is_rate_limited(email)
+        }
 
 
 # Create service instance

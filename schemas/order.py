@@ -1,6 +1,16 @@
-from pydantic import BaseModel, UUID4, Field
+from pydantic import BaseModel, UUID4, Field, validator
 from typing import List, Optional
 from datetime import datetime
+from enum import Enum
+
+
+# ----------------- ENUMS -----------------
+class OrderStatus(str, Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SHIPPED = "shipped"
+    DELIVERED = "delivered"
+    CANCELLED = "cancelled"
 
 
 # ----------------- SUPPORTING -----------------
@@ -62,6 +72,7 @@ class OrderResponse(BaseModel):
     total_amount: float
     status: str
     created_at: datetime
+    updated_at: datetime
 
     buyer: UserResponse
     delivery_addr: Optional[AddressResponse] = None
@@ -69,3 +80,29 @@ class OrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ----------------- ORDER STATUS MANAGEMENT -----------------
+class OrderStatusUpdate(BaseModel):
+    status: OrderStatus
+    notes: Optional[str] = Field(None, max_length=500, description="Optional status update notes")
+    
+    @validator('status')
+    def validate_status_transition(cls, v):
+        # This will be further validated in the service layer with current status
+        allowed_statuses = [status.value for status in OrderStatus]
+        if v not in allowed_statuses:
+            raise ValueError(f"Invalid status. Must be one of: {allowed_statuses}")
+        return v
+
+
+class OrderStatusResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[dict] = None
+
+
+class BulkOrderStatusUpdate(BaseModel):
+    order_ids: List[UUID4] = Field(..., min_items=1, max_items=50, description="List of order IDs to update")
+    status: OrderStatus
+    notes: Optional[str] = Field(None, max_length=500, description="Optional notes for all orders")

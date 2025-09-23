@@ -1,6 +1,6 @@
 from enum import Enum
 from pydantic import BaseModel, EmailStr, Field, validator, UUID4
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 from datetime import datetime, date
 
 # ---------------- SCHEMAS ---------------- #
@@ -101,3 +101,51 @@ class FullUserProfileResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# ---------------- EMAIL VERIFICATION SCHEMAS ---------------- #
+
+class SendVerificationRequest(BaseModel):
+    email: EmailStr
+    
+    
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    verification_code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$')
+    
+    
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+# ---------------- PASSWORD RESET SCHEMAS ---------------- #
+
+class RequestPasswordResetRequest(BaseModel):
+    email: EmailStr
+    
+    
+class VerifyPasswordResetRequest(BaseModel):
+    email: EmailStr
+    reset_code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$')
+    new_password: str = Field(..., min_length=8)
+    confirm_password: str
+    
+    @validator('confirm_password')
+    def passwords_match(cls, v, values):
+        if 'new_password' in values and v != values['new_password']:
+            raise ValueError('Passwords do not match')
+        return v
+
+
+# ---------------- RESPONSE SCHEMAS ---------------- #
+
+class EmailVerificationResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[Dict] = None
+    
+    
+class PasswordResetResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[Dict] = None

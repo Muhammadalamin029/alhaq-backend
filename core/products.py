@@ -1,16 +1,17 @@
 from core.model import Product, ProductImage
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID
-from schemas.products import ProductImage
+from schemas.products import ProductImageSchema
 from typing import Optional
 
 
 class ProductService:
     def _with_relationships(self, query):
-        """Helper to always eager-load seller and category"""
+        """Helper to always eager-load seller, category, and images"""
         return query.options(
             joinedload(Product.seller),
-            joinedload(Product.category)
+            joinedload(Product.category),
+            joinedload(Product.images)
         )
 
     def fetch_products(self, db: Session, search_query: Optional[str] = None, category_id: Optional[str] = None, limit: int = 10, page: int = 1):
@@ -37,7 +38,7 @@ class ProductService:
         category_id: UUID,
         description: str,
         stock_quantity: int,
-        images: list[ProductImage] = None
+        images: list[ProductImageSchema] = None
     ):
         # 1. Create the product
         new_product = Product(

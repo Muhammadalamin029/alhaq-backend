@@ -9,5 +9,6 @@ wheels/
 # Virtual environments
 .venv
 .env
+.env.example
 plans/
 reports/

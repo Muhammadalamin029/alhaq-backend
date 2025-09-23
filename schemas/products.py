@@ -1,9 +1,11 @@
 from pydantic import BaseModel, Field, UUID4
 from typing import Optional, List
 from uuid import UUID
+from datetime import datetime
 
 
-class ProductImage(BaseModel):
+class ProductImageSchema(BaseModel):
+    """Schema for product image data"""
     url: str
 
     class Config:
@@ -19,7 +21,7 @@ class ProductCreate(BaseModel):
     stock_quantity: int = Field(
         0, ge=0, description="Stock quantity cannot be negative")
     category_id: UUID4
-    images: Optional[List[ProductImage]] = []
+    images: Optional[List[ProductImageSchema]] = []
 
     class Config:
         from_attributes = True
@@ -37,7 +39,7 @@ class ProductUpdate(BaseModel):
     category_id: Optional[UUID4] = None
     status: Optional[str] = Field(
         None, pattern="^(active|inactive|out_of_stock)$")
-    images: Optional[List[ProductImage]] = None
+    images: Optional[List[ProductImageSchema]] = None
 
     class Config:
         from_attributes = True
@@ -72,8 +74,11 @@ class ProductResponse(BaseModel):
     price: float
     stock_quantity: int
     status: str
+    created_at: datetime
+    updated_at: datetime
     seller: SellerResponse
     category: CategoryResponse
+    images: Optional[List[ProductImageSchema]] = []
 
     class Config:
         from_attributes = True
