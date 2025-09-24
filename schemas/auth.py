@@ -21,13 +21,16 @@ class UserRole(str, Enum):
     SELLER = "seller"
     ADMIN = "admin"
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str = Field(..., min_length=8)
+
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str = Field(..., min_length=8)
     full_name: str
     bio: str = None
-    role: UserRole
 
 
 class ChangePasswordRequest(BaseModel):
@@ -43,9 +46,25 @@ class ChangePasswordRequest(BaseModel):
 
 
 class UpdateProfileRequest(BaseModel):
+    # Shared
     email: Optional[EmailStr] = None
-    full_name: Optional[str] = Field(None, min_length=1, max_length=255, strip_whitespace=True)
+
+    # Customer fields
+    firstName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
+    lastName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
     bio: Optional[str] = Field(None, max_length=1000, strip_whitespace=True)
+    avatar_url: Optional[str] = None
+
+    # Seller/Admin fields
+    business_name: Optional[str] = Field(None, min_length=1, max_length=255, strip_whitespace=True)
+    description: Optional[str] = Field(None, max_length=2000, strip_whitespace=True)
+    contact_email: Optional[EmailStr] = None
+    contact_phone: Optional[str] = Field(None, min_length=7, max_length=20, strip_whitespace=True)
+    website_url: Optional[str] = None
+    logo_url: Optional[str] = None
+
+    class Config:
+        orm_mode = True
 
 
 class UserProfileResponse(BaseModel):

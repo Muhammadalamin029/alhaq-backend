@@ -14,17 +14,15 @@ class ProductImageSchema(BaseModel):
 
 class ProductCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, strip_whitespace=True)
-    description: Optional[str] = Field(
-        None, max_length=2000, strip_whitespace=True)
-    price: float = Field(..., gt=0,
-                         description="Product price must be greater than 0")
-    stock_quantity: int = Field(
-        0, ge=0, description="Stock quantity cannot be negative")
+    description: Optional[str] = Field(None, max_length=2000, strip_whitespace=True)
+    price: float = Field(..., gt=0, description="Product price must be greater than 0")
+    stock_quantity: int = Field(0, ge=0, description="Stock quantity cannot be negative")
     category_id: UUID4
-    images: Optional[List[ProductImageSchema]] = []
+    images: Optional[List[ProductImageSchema]] = None  # <-- fixed
 
     class Config:
         from_attributes = True
+
 
 
 class ProductUpdate(BaseModel):

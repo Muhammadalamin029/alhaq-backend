@@ -14,9 +14,13 @@ from schemas.auth import (
     ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse,
     SendVerificationRequest, VerifyEmailRequest, ResendVerificationRequest,
     RequestPasswordResetRequest, VerifyPasswordResetRequest,
-    EmailVerificationResponse, PasswordResetResponse
+    EmailVerificationResponse, PasswordResetResponse, LoginRequest
 )
 from sqlalchemy.exc import IntegrityError
+from core.logging_config import get_logger, log_auth_event, log_error
+
+# Get logger for auth routes
+auth_logger = get_logger("auth")
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -55,66 +59,141 @@ def refresh_tokens(refresh_request: RefreshRequest):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(form_data: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate user and return tokens"""
-    user, _ = auth_service.authenticate_user(
-        db, form_data.username, form_data.password)
-
-    access_token, refresh_token = generate_tokens(str(user.id), user.role)
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    try:
+        auth_logger.info(f"Login attempt for user: {form_data.email}")
+        
+        user, _ = auth_service.authenticate_user(
+            db, form_data.email, form_data.password)
+        
+        # Log successful login
+        log_auth_event(
+            auth_logger, 
+            "user_login", 
+            email=form_data.email,
+            user_id=str(user.id),
+            success=True,
+            user_role=user.role
+        )
+        
+        access_token, refresh_token = generate_tokens(str(user.id), user.role)
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+        
+    except HTTPException as e:
+        # Log failed login attempt
+        log_auth_event(
+            auth_logger,
+            "user_login_failed",
+            email=form_data.email,
+            success=False,
+            reason=str(e.detail),
+            status_code=e.status_code
+        )
+        raise
+    except Exception as e:
+        log_error(auth_logger, f"Unexpected error during login for {form_data.email}", e, email=form_data.email)
+        raise HTTPException(status_code=500, detail="Login failed")
 
 
 # ---------------- REGISTRATION ---------------- #
 
-@router.post("/register/customer", status_code=201)
+@router.post("/register/customer", response_model=TokenResponse, status_code=201)
 def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
-    """Register a new customer"""
-    if body.role != UserRole.CUSTOMER:
-        raise HTTPException(
-            status_code=400, detail="Invalid role for this endpoint")
-
+    """Register a new customer and return authentication tokens"""
     try:
+        auth_logger.info(f"Customer registration attempt: {body.email}")
+        
         user_id = auth_service.create_user(
-            db, body.email, body.password, body.role, body.full_name, body.bio
+            db, body.email, body.password, "customer", body.full_name, body.bio
         )
-        return {
-            "success": True,
-            "message": "Customer registered successfully",
-            "data": {"user_id": user_id}
-        }
-    except IntegrityError:
+        
+        # Log successful registration
+        log_auth_event(
+            auth_logger,
+            "customer_registration",
+            email=body.email,
+            user_id=user_id,
+            success=True,
+            user_role="customer"
+        )
+        
+        # Generate tokens for immediate login after registration
+        access_token, refresh_token = generate_tokens(user_id, "customer")
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+        
+    except IntegrityError as e:
         db.rollback()
+        log_auth_event(
+            auth_logger,
+            "customer_registration_failed",
+            email=body.email,
+            success=False,
+            reason="Email already registered"
+        )
         raise HTTPException(status_code=400, detail="Email already registered")
-    except HTTPException:
+    except HTTPException as e:
+        log_auth_event(
+            auth_logger,
+            "customer_registration_failed", 
+            email=body.email,
+            success=False,
+            reason=str(e.detail)
+        )
         raise
-    except Exception:
+    except Exception as e:
         db.rollback()
+        log_error(auth_logger, f"Customer registration failed for {body.email}", e, email=body.email)
         raise HTTPException(status_code=500, detail="Registration failed")
 
 
-@router.post("/register/seller", status_code=201)
+@router.post("/register/seller", response_model=TokenResponse, status_code=201)
 def register_seller(body: RegisterRequest, db: Session = Depends(get_db)):
-    """Register a new seller"""
-    if body.role != UserRole.SELLER:
-        raise HTTPException(
-            status_code=400, detail="Invalid role for this endpoint")
+    """Register a new seller and return authentication tokens"""
 
     try:
+        auth_logger.info(f"Seller registration attempt: {body.email}")
+        
         user_id = auth_service.create_user(
-            db, body.email, body.password, body.role, body.full_name, body.bio
+            db, body.email, body.password, "seller", body.full_name, body.bio
         )
-        return {
-            "success": True,
-            "message": "Seller registered successfully",
-            "data": {"user_id": user_id}
-        }
-    except IntegrityError:
+        
+        # Log successful registration
+        log_auth_event(
+            auth_logger,
+            "seller_registration",
+            email=body.email,
+            user_id=user_id,
+            success=True,
+            user_role="seller"
+        )
+        
+        # Generate tokens for immediate login after registration
+        access_token, refresh_token = generate_tokens(user_id, "seller")
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+        
+    except IntegrityError as e:
         db.rollback()
+        log_auth_event(
+            auth_logger,
+            "seller_registration_failed",
+            email=body.email,
+            success=False,
+            reason="Email already registered"
+        )
         raise HTTPException(status_code=400, detail="Email already registered")
-    except HTTPException:
+    except HTTPException as e:
+        log_auth_event(
+            auth_logger,
+            "seller_registration_failed", 
+            email=body.email,
+            success=False,
+            reason=str(e.detail)
+        )
         raise
-    except Exception:
+    except Exception as e:
         db.rollback()
+        log_error(auth_logger, f"Seller registration failed for {body.email}", e, email=body.email)
         raise HTTPException(status_code=500, detail="Registration failed")
 
 
@@ -126,8 +205,19 @@ def get_current_user_profile(
     db: Session = Depends(get_db)
 ):
     """Get current authenticated user's profile"""
-    profile_data = auth_service.get_user_profile(db, current_user["id"])
-    return FullUserProfileResponse(**profile_data)
+    try:
+        auth_logger.debug(f"Profile fetch request for user: {current_user['id']}")
+        
+        profile_data = auth_service.get_user_profile(db, current_user["id"])
+        
+        auth_logger.info(f"Profile fetched successfully for user: {current_user['id']}")
+        return FullUserProfileResponse(**profile_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(auth_logger, f"Failed to fetch profile for user {current_user['id']}", e, user_id=current_user['id'])
+        raise HTTPException(status_code=500, detail="Failed to fetch profile")
 
 
 @router.put("/me", response_model=FullUserProfileResponse)
@@ -137,10 +227,28 @@ def update_current_user_profile(
     db: Session = Depends(get_db)
 ):
     """Update current authenticated user's profile"""
-    update_data = payload.model_dump(exclude_unset=True)
-    profile_data = auth_service.update_user_profile(
-        db, current_user["id"], update_data)
-    return FullUserProfileResponse(**profile_data)
+    try:
+        update_data = payload.model_dump(exclude_unset=True)
+        
+        auth_logger.info(f"Profile update request for user: {current_user['id']}", extra={
+            "user_id": current_user['id'],
+            "update_fields": list(update_data.keys())
+        })
+
+        print(update_data)
+        
+        profile_data = auth_service.update_user_profile(
+            db, current_user["id"], update_data)
+        
+        auth_logger.info(f"Profile updated successfully for user: {current_user['id']}")
+        return FullUserProfileResponse(**profile_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(auth_logger, f"Failed to update profile for user {current_user['id']}", e, 
+                  user_id=current_user['id'], update_fields=list(update_data.keys()) if 'update_data' in locals() else [])
+        raise HTTPException(status_code=500, detail="Failed to update profile")
 
 
 @router.put("/change-password", status_code=status.HTTP_200_OK)
@@ -150,15 +258,40 @@ def change_password(
     db: Session = Depends(get_db)
 ):
     """Change user's password"""
-    password_data = auth_service.change_user_password(
-        db, current_user["id"], payload.current_password, payload.new_password
-    )
-
-    return {
-        "success": True,
-        "message": "Password changed successfully",
-        "data": password_data
-    }
+    try:
+        auth_logger.info(f"Password change request for user: {current_user['id']}")
+        
+        password_data = auth_service.change_user_password(
+            db, current_user["id"], payload.current_password, payload.new_password
+        )
+        
+        # Log successful password change
+        log_auth_event(
+            auth_logger,
+            "password_change",
+            user_id=current_user['id'],
+            success=True
+        )
+        
+        return {
+            "success": True,
+            "message": "Password changed successfully",
+            "data": password_data
+        }
+        
+    except HTTPException as e:
+        # Log failed password change
+        log_auth_event(
+            auth_logger,
+            "password_change_failed",
+            user_id=current_user['id'],
+            success=False,
+            reason=str(e.detail)
+        )
+        raise
+    except Exception as e:
+        log_error(auth_logger, f"Password change failed for user {current_user['id']}", e, user_id=current_user['id'])
+        raise HTTPException(status_code=500, detail="Password change failed")
 
 
 # ---------------- PASSWORD POLICY ---------------- #

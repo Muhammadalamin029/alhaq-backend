@@ -5,6 +5,10 @@ from db.session import get_db
 from core.categories import category_service
 from schemas.categories import CategoryCreate, CategoryResponse, CategoryUpdate
 from core.auth import role_required
+from core.logging_config import get_logger, log_error
+
+# Get logger for categories routes
+categories_logger = get_logger("routers.categories")
 
 router = APIRouter()
 
@@ -52,29 +56,38 @@ async def create_category(
     db: Session = Depends(get_db)
 ):
     try:
+        categories_logger.info(f"Creating new category: {payload.name} by user {user['id']}")
+        
         category = category_service.add_category(
             db=db,
             name=payload.name,
             description=payload.description
         )
+        
+        categories_logger.info(f"Category created successfully: {category.id} by user {user['id']}")
+        
         return {
             "success": True,
             "message": "Category created successfully",
             "data": CategoryResponse.model_validate(category)
         }
     except ValueError as e:
+        categories_logger.warning(f"Invalid category data from user {user['id']}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
-    except IntegrityError:
+    except IntegrityError as e:
         db.rollback()
+        categories_logger.warning(f"Duplicate category name attempt by user {user['id']}: {payload.name}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Category name already exists"
         )
-    except Exception:
+    except Exception as e:
         db.rollback()
+        log_error(categories_logger, f"Failed to create category for user {user['id']}", e, 
+                  user_id=user['id'], category_name=payload.name)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create category"

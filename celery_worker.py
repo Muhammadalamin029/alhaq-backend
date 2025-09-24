@@ -22,13 +22,18 @@ Usage:
 import logging
 import os
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-
-logger = logging.getLogger(__name__)
+try:
+    # Use the application's logging configuration
+    from core.logging_config import setup_logging, get_logger
+    setup_logging(log_level="INFO")
+    logger = get_logger("celery_worker")
+except ImportError:
+    # Fallback to basic logging if app logging is not available
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
 
 try:
     # Import the celery app
@@ -41,7 +46,7 @@ try:
     logger.info(f"Registered tasks: {list(celery_app.tasks.keys())}")
     
 except ImportError as e:
-    logger.error(f"Failed to import celery app or tasks: {e}")\
+    logger.error(f"Failed to import celery app or tasks: {e}")
 
 # Export the celery app for the celery command
 app = celery_app
@@ -51,4 +56,4 @@ if __name__ == '__main__':
     This allows running the worker directly with:
     python celery_worker.py
     """
-    celery_app.start()
+    celery_app.worker_main()

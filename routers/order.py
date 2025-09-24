@@ -10,6 +10,10 @@ from schemas.order import (
 )
 from decimal import Decimal
 from uuid import UUID
+from core.logging_config import get_logger, log_error
+
+# Get logger for orders routes
+orders_logger = get_logger("routers.orders")
 
 router = APIRouter()
 
@@ -21,30 +25,37 @@ async def list_orders(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
 ):
-    if user["role"] == "admin":
-        orders, count = order_service.fetch_orders(db, limit=limit, page=page)
-
-    elif user["role"] == "seller":
-        orders, count = order_service.get_orders_by_seller(
-            db, seller_id=user["id"], limit=limit, page=page
-        )
-
-    else:  # customer
-        orders, count = order_service.get_orders_by_buyer(
-            db, buyer_id=user["id"], limit=limit, page=page
-        )
-
-    return {
-        "success": True,
-        "message": "Orders fetched successfully",
-        "data": [OrderResponse.model_validate(o) for o in orders],
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": count,
-            "total_pages": (count + limit - 1) // limit,
-        },
-    }
+    try:
+        orders_logger.info(f"Fetching orders for {user['role']} user {user['id']} - page: {page}, limit: {limit}")
+        
+        if user["role"] == "admin":
+            orders, count = order_service.fetch_orders(db, limit=limit, page=page)
+        elif user["role"] == "seller":
+            orders, count = order_service.get_orders_by_seller(
+                db, seller_id=user["id"], limit=limit, page=page
+            )
+        else:  # customer
+            orders, count = order_service.get_orders_by_buyer(
+                db, buyer_id=user["id"], limit=limit, page=page
+            )
+        
+        orders_logger.info(f"Orders fetched successfully for user {user['id']} - count: {count}")
+        
+        return {
+            "success": True,
+            "message": "Orders fetched successfully",
+            "data": [OrderResponse.model_validate(o) for o in orders],
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": count,
+                "total_pages": (count + limit - 1) // limit,
+            },
+        }
+    except Exception as e:
+        log_error(orders_logger, f"Failed to fetch orders for user {user['id']}", e, 
+                  user_id=user['id'], user_role=user['role'], page=page, limit=limit)
+        raise HTTPException(status_code=500, detail="Failed to fetch orders")
 
 
 @router.get("/pending", status_code=status.HTTP_200_OK)

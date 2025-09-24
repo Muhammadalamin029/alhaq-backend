@@ -6,6 +6,10 @@ from db.session import get_db
 from core.auth import role_required
 from schemas.products import ProductCreate, ProductResponse, ProductUpdate
 from typing import Optional
+from core.logging_config import get_logger, log_error
+
+# Get logger for products routes
+products_logger = get_logger("routers.products")
 
 router = APIRouter()
 
@@ -19,20 +23,28 @@ async def list_products(
         None, description="Search products by name"),
     category_id: Optional[str] = Query(None, description="Filter by category"),
 ):
-    products, count = product_service.fetch_products(
-        db=db, limit=limit, page=page, category_id=category_id, search_query=search_query)
-
-    return {
-        "success": True,
-        "message": "Products fetched successfully",
-        "data": [ProductResponse.model_validate(p) for p in products] if products else [],
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": count,
-            "total_pages": (count + limit - 1) // limit
+    try:
+        products_logger.info(f"Fetching products - page: {page}, limit: {limit}, search: {search_query}, category: {category_id}")
+        
+        products, count = product_service.fetch_products(
+            db=db, limit=limit, page=page, category_id=category_id, search_query=search_query)
+        
+        products_logger.info(f"Products fetched successfully - count: {count}, page: {page}")
+        
+        return {
+            "success": True,
+            "message": "Products fetched successfully",
+            "data": [ProductResponse.model_validate(p) for p in products] if products else [],
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": count,
+                "total_pages": (count + limit - 1) // limit
+            }
         }
-    }
+    except Exception as e:
+        log_error(products_logger, "Failed to fetch products", e, page=page, limit=limit, search_query=search_query, category_id=category_id)
+        raise HTTPException(status_code=500, detail="Failed to fetch products")
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
@@ -72,6 +84,8 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
         )
     
     try:
+        products_logger.info(f"Creating new product: {payload.name} by user {user['id']}")
+        
         new_product = product_service.add_product(
             db=db,
             name=payload.name,
@@ -84,18 +98,25 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
         )
 
         if not new_product:
+            products_logger.error(f"Product creation failed for user {user['id']}: service returned None")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Failed to create product"
             )
-
+        
+        products_logger.info(f"Product created successfully: {new_product.id} by user {user['id']}")
+        
         return {
             "success": True,
             "message": "Product created successfully",
             "data": ProductResponse.model_validate(new_product)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
+        log_error(products_logger, f"Failed to create product for user {user['id']}", e, 
+                  user_id=user['id'], product_name=payload.name, price=payload.price)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while creating the product"

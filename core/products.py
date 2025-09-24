@@ -36,11 +36,11 @@ class ProductService:
         price: float,
         user_id: UUID,
         category_id: UUID,
-        description: str,
-        stock_quantity: int,
-        images: list[ProductImageSchema] = None
+        description: Optional[str] = None,
+        stock_quantity: int = 0,
+        images: Optional[list[ProductImageSchema]] = None
     ):
-        # 1. Create the product
+        # 1. Create product with default status
         new_product = Product(
             name=name,
             price=price,
@@ -48,9 +48,10 @@ class ProductService:
             category_id=category_id,
             description=description,
             stock_quantity=stock_quantity,
+            status="active" if stock_quantity > 0 else "out_of_stock"
         )
         db.add(new_product)
-        db.flush()  # Get the product ID before committing
+        db.flush()  # assign ID
 
         # 2. Add images if provided
         if images:
@@ -61,12 +62,15 @@ class ProductService:
                 )
                 db.add(product_image)
 
-        # 3. Commit everything once
         db.commit()
         db.refresh(new_product)
 
-        # 4. Return the product with relationships loaded
-        return self.get_product_by_id(db, new_product.id)
+        # 3. Eager load relationships for response
+        return db.query(Product).options(
+            joinedload(Product.seller),
+            joinedload(Product.category),
+            joinedload(Product.images)
+        ).filter(Product.id == new_product.id).first()
 
     def get_product_by_id(self, db: Session, product_id: UUID):
         return (

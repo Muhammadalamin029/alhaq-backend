@@ -23,7 +23,7 @@ class OrderService:
             db.rollback()
             logger.error(f"Order transaction failed: {str(e)}")
             raise
-    
+
     def _with_relationships(self, query):
         """Helper to always eager-load related entities for an order"""
         return query.options(
@@ -32,27 +32,29 @@ class OrderService:
             joinedload(Order.delivery_addr),
             joinedload(Order.payments),
         )
-    
+
     def _validate_and_reserve_stock(self, db: Session, product_id: UUID, requested_quantity: int, order_id: UUID = None) -> Dict:
         """Validate stock availability and reserve it atomically"""
         try:
             # Check availability first
-            availability = inventory_service.check_product_availability(db, product_id, requested_quantity)
-            
+            availability = inventory_service.check_product_availability(
+                db, product_id, requested_quantity)
+
             if not availability['is_available']:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Insufficient stock for product {product_id}. "
-                           f"Available: {availability['available_stock']}, "
-                           f"Requested: {requested_quantity}"
+                    f"Available: {availability['available_stock']}, "
+                    f"Requested: {requested_quantity}"
                 )
-            
+
             return availability
-            
+
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Stock validation failed for product {product_id}: {str(e)}")
+            logger.error(
+                f"Stock validation failed for product {product_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to validate product availability"
@@ -124,9 +126,10 @@ class OrderService:
                 availability = self._validate_and_reserve_stock(
                     db, item.product_id, item.quantity
                 )
-                
+
                 # Calculate total
-                total_amount = Decimal(str(item.quantity)) * Decimal(str(price))
+                total_amount = Decimal(
+                    str(item.quantity)) * Decimal(str(price))
 
                 # Create order
                 new_order = Order(
@@ -149,13 +152,14 @@ class OrderService:
                     price=price,
                 )
                 db.add(order_item)
-                
+
                 # Don't commit here - context manager handles it
                 db.refresh(new_order)
                 return new_order
-                
+
         except Exception as e:
-            logger.error(f"Failed to create order for buyer {buyer_id}: {str(e)}")
+            logger.error(
+                f"Failed to create order for buyer {buyer_id}: {str(e)}")
             raise
 
     def create_order_item(
@@ -167,10 +171,11 @@ class OrderService:
                 availability = self._validate_and_reserve_stock(
                     db, product_id, quantity, order_id
                 )
-                
+
                 # Reserve stock
-                inventory_service.reserve_stock(db, product_id, quantity, order_id)
-                
+                inventory_service.reserve_stock(
+                    db, product_id, quantity, order_id)
+
                 # Create order item
                 new_item = OrderItem(
                     order_id=order_id,
@@ -181,9 +186,10 @@ class OrderService:
                 db.add(new_item)
                 db.refresh(new_item)
                 return new_item
-                
+
         except Exception as e:
-            logger.error(f"Failed to create order item for order {order_id}: {str(e)}")
+            logger.error(
+                f"Failed to create order item for order {order_id}: {str(e)}")
             raise
 
     # ---------------- UPDATE ----------------
@@ -205,7 +211,7 @@ class OrderService:
         db.commit()
         db.refresh(order)
         return order
-    
+
     def update_order_amount(self, db: Session, order_id: UUID, new_amount: float):
         """Update the total amount of an order"""
         order = db.query(Order).filter(Order.id == order_id).first()
@@ -216,56 +222,52 @@ class OrderService:
         db.refresh(order)
         return order
 
-    def update_order_item_quantity(self, db: Session, order_id: UUID, item_id: UUID, quantity: int):
+    def update_order_item_quantity(
+        self, db: Session, order_id: UUID, item_id: UUID, quantity: int
+    ):
         try:
             with self.transaction_context(db):
-                # Get order item with product relationship loaded
+                # Fetch order item with product + order
                 order_item = (
                     db.query(OrderItem)
-                    .options(joinedload(OrderItem.product))
+                    .options(joinedload(OrderItem.product), joinedload(OrderItem.order))
                     .filter(OrderItem.id == item_id, OrderItem.order_id == order_id)
                     .first()
                 )
                 if not order_item:
                     return None
 
-                # Calculate stock difference
                 old_quantity = order_item.quantity
                 quantity_diff = quantity - old_quantity
-                
+
                 if quantity_diff > 0:
-                    # Need to reserve more stock
                     inventory_service.reserve_stock(
                         db, order_item.product_id, quantity_diff, order_id
                     )
                 elif quantity_diff < 0:
-                    # Release excess stock
                     inventory_service.release_stock(
                         db, order_item.product_id, abs(quantity_diff), order_id
                     )
 
-                # Update quantity (keep original price from when order was created)
+                # Update quantity
                 order_item.quantity = quantity
 
-                # Recalculate order total with proper relationship loading
-                order = (
-                    db.query(Order)
-                    .options(joinedload(Order.order_items))
-                    .filter(Order.id == order_id)
-                    .first()
+                # Recalculate order total using loaded relationship
+                order = order_item.order
+                new_total = sum(
+                    Decimal(str(item.price)) * item.quantity for item in order.order_items
                 )
-                
-                new_total = sum(Decimal(str(item.price)) * item.quantity for item in order.order_items)
                 order.total_amount = float(new_total)
 
-                db.refresh(order)
+                db.flush()  # ensures pending changes are visible
+                db.refresh(order)  # refresh with latest DB state
                 return order
-                
+
         except Exception as e:
             logger.error(f"Failed to update order item quantity: {str(e)}")
             raise
 
-    # ---------------- DELETE ----------------
+      # ---------------- DELETE ----------------
 
     def delete_order(self, db: Session, order_id: UUID):
         try:
@@ -279,20 +281,21 @@ class OrderService:
                 )
                 if not order:
                     return False
-                
+
                 # Release stock for all order items
                 stock_items = [
                     {'product_id': item.product_id, 'quantity': item.quantity}
                     for item in order.order_items
                 ]
-                
+
                 if stock_items:
-                    inventory_service.release_multiple_products(db, stock_items, order_id)
-                
+                    inventory_service.release_multiple_products(
+                        db, stock_items, order_id)
+
                 # Delete the order (cascade will handle order items)
                 db.delete(order)
                 return True
-                
+
         except Exception as e:
             logger.error(f"Failed to delete order {order_id}: {str(e)}")
             raise
@@ -314,7 +317,7 @@ class OrderService:
                 inventory_service.release_stock(
                     db, order_item.product_id, order_item.quantity, order_id
                 )
-                
+
                 # Store item data before deletion
                 item_quantity = order_item.quantity
                 item_price = order_item.price
@@ -341,21 +344,20 @@ class OrderService:
 
                 # Otherwise recalc total with proper decimal handling
                 new_total = sum(
-                    Decimal(str(item.price)) * item.quantity 
+                    Decimal(str(item.price)) * item.quantity
                     for item in order.order_items
                 )
                 order.total_amount = float(new_total)
 
                 db.refresh(order)
                 return order
-                
+
         except Exception as e:
             logger.error(f"Failed to delete order item {item_id}: {str(e)}")
             raise
 
-
     # ---------------- ORDER STATUS MANAGEMENT ----------------
-    
+
     def get_valid_status_transitions(self, current_status: str) -> List[str]:
         """Get valid status transitions based on current status"""
         transitions = {
@@ -366,17 +368,17 @@ class OrderService:
             "cancelled": []  # Final state
         }
         return transitions.get(current_status, [])
-    
+
     def validate_status_transition(self, current_status: str, new_status: str) -> bool:
         """Validate if status transition is allowed"""
         valid_transitions = self.get_valid_status_transitions(current_status)
         return new_status in valid_transitions
-    
+
     def update_order_status(
-        self, 
-        db: Session, 
-        order_id: UUID, 
-        new_status: str, 
+        self,
+        db: Session,
+        order_id: UUID,
+        new_status: str,
         user_id: str = None,
         user_role: str = None,
         notes: str = None
@@ -391,23 +393,24 @@ class OrderService:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Order not found"
                     )
-                
+
                 current_status = order.status
-                
+
                 # Check if status transition is valid
                 if not self.validate_status_transition(current_status, new_status):
-                    valid_transitions = self.get_valid_status_transitions(current_status)
+                    valid_transitions = self.get_valid_status_transitions(
+                        current_status)
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Invalid status transition from {current_status} to {new_status}. "
-                               f"Valid transitions: {valid_transitions}"
+                        f"Valid transitions: {valid_transitions}"
                     )
-                
+
                 # Authorization check
                 if user_role == "seller":
                     # Sellers can only update orders containing their products
                     seller_has_items = any(
-                        item.product.seller_id == UUID(user_id) 
+                        item.product.seller_id == UUID(user_id)
                         for item in order.order_items
                     )
                     if not seller_has_items:
@@ -415,14 +418,14 @@ class OrderService:
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="You can only update orders containing your products"
                         )
-                    
+
                     # Sellers can only mark orders as shipped or delivered
                     if new_status not in ["shipped", "delivered"]:
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="Sellers can only mark orders as shipped or delivered"
                         )
-                
+
                 elif user_role == "customer":
                     # Customers can only cancel pending orders
                     if new_status != "cancelled" or current_status != "pending":
@@ -430,17 +433,17 @@ class OrderService:
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="Customers can only cancel pending orders"
                         )
-                    
+
                     # Verify customer owns the order
                     if order.buyer_id != UUID(user_id):
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="You can only update your own orders"
                         )
-                
+
                 # Handle status-specific logic
                 old_status = order.status
-                
+
                 if new_status == "cancelled" and old_status in ["pending", "processing"]:
                     # Release stock when order is cancelled
                     stock_items = [
@@ -448,15 +451,17 @@ class OrderService:
                         for item in order.order_items
                     ]
                     if stock_items:
-                        inventory_service.release_multiple_products(db, stock_items, order_id)
-                
+                        inventory_service.release_multiple_products(
+                            db, stock_items, order_id)
+
                 # Update order status
                 order.status = new_status
-                
+
                 db.refresh(order)
-                
-                logger.info(f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
-                
+
+                logger.info(
+                    f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
+
                 return {
                     "order_id": str(order_id),
                     "old_status": old_status,
@@ -464,7 +469,7 @@ class OrderService:
                     "updated_at": order.updated_at.isoformat() if order.updated_at else None,
                     "notes": notes
                 }
-                
+
         except HTTPException:
             raise
         except Exception as e:
@@ -473,11 +478,11 @@ class OrderService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update order status"
             )
-    
+
     def bulk_update_order_status(
-        self, 
-        db: Session, 
-        order_ids: List[UUID], 
+        self,
+        db: Session,
+        order_ids: List[UUID],
         new_status: str,
         user_id: str = None,
         user_role: str = None,
@@ -489,7 +494,7 @@ class OrderService:
             "failed_updates": [],
             "total_processed": len(order_ids)
         }
-        
+
         for order_id in order_ids:
             try:
                 result = self.update_order_status(
@@ -504,9 +509,9 @@ class OrderService:
                     "order_id": str(order_id),
                     "error": str(e)
                 })
-        
+
         return results
-    
+
     def get_order_status_history(self, db: Session, order_id: UUID) -> Dict:
         """Get order status change history (if implemented with audit table)"""
         # This would require an order_status_history table
@@ -517,7 +522,7 @@ class OrderService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         return {
             "order_id": str(order_id),
             "current_status": order.status,
