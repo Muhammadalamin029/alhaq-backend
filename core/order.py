@@ -92,7 +92,6 @@ class OrderService:
             .options(
                 joinedload(Order.buyer),
                 joinedload(Order.order_items).joinedload(OrderItem.product),
-                joinedload(Order.checkouts),
                 joinedload(Order.delivery_addr),
                 joinedload(Order.payments),
             )

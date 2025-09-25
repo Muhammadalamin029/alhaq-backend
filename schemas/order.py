@@ -2,6 +2,7 @@ from pydantic import BaseModel, UUID4, Field, validator
 from typing import List, Optional
 from datetime import datetime
 from enum import Enum
+from schemas.products import ProductResponse, SellerResponse
 
 
 # ----------------- ENUMS -----------------
@@ -33,29 +34,6 @@ class AddressResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class SellerResponse(BaseModel):
-    id: UUID4
-    business_name: str
-    description: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    total_products: Optional[int] = None
-    logo_url: Optional[str] = None
-    website_url: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-class ProductResponse(BaseModel):
-    id: UUID4
-    name: str
-    description: Optional[str] = None
-    price: float
-    image_url: Optional[str] = None
-    seller: SellerResponse
-
-    class Config:
-        from_attributes = True
 
 
 # ---------------- ORDER ITEM -----------------

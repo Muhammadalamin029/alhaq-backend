@@ -6,7 +6,8 @@ from datetime import datetime
 
 class ProductImageSchema(BaseModel):
     """Schema for product image data"""
-    url: str
+    image_url: str
+    product_id: UUID
 
     class Config:
         from_attributes = True

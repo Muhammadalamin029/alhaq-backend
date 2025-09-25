@@ -123,7 +123,7 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
         )
 
 
-@router.get("/id/{product_id}")
+@router.get("/{product_id}")
 async def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
     product = product_service.get_product_by_id(db=db, product_id=product_id)
     if not product:
