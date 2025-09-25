@@ -33,6 +33,18 @@ class AddressResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class SellerResponse(BaseModel):
+    id: UUID4
+    business_name: str
+    description: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    total_products: Optional[int] = None
+    logo_url: Optional[str] = None
+    website_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 class ProductResponse(BaseModel):
     id: UUID4
@@ -40,6 +52,7 @@ class ProductResponse(BaseModel):
     description: Optional[str] = None
     price: float
     image_url: Optional[str] = None
+    seller: SellerResponse
 
     class Config:
         from_attributes = True

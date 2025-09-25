@@ -9,7 +9,7 @@ from schemas.order import (
     OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate
 )
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID,  uuid4
 from core.logging_config import get_logger, log_error
 
 # Get logger for orders routes
@@ -163,7 +163,7 @@ async def create_order_item(
 
 @router.get("/{order_id}", status_code=status.HTTP_200_OK)
 async def fetch_order_by_id(
-    order_id: str,
+    order_id: UUID,
     user=Depends(role_required(["customer", "admin", "seller"])),
     db: Session = Depends(get_db)
 ):
@@ -404,7 +404,7 @@ async def delete_order_item(
 async def update_order_status(
     order_id: str,
     payload: OrderStatusUpdate,
-    user=Depends(role_required(["admin", "seller", "customer"])),
+    user=Depends(role_required(["admin", "seller"])),
     db: Session = Depends(get_db)
 ):
     """Update order status with proper workflow validation"""

@@ -184,6 +184,7 @@ class OrderService:
                     price=price,
                 )
                 db.add(new_item)
+                db.flush()
                 db.refresh(new_item)
                 return new_item
 
