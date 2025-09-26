@@ -1,6 +1,12 @@
 import os
 from fastapi import FastAPI
 from routers import auth, products, categories, order
+from routers import wishlist as wishlist_router
+from routers import dashboard as dashboard_router
+from routers import addresses as addresses_router
+from routers import reviews as reviews_router
+from routers import profile as profile_router
+from routers import checkout as checkout_router
 from core.config import settings
 from db.session import engine
 from core.model import Base
@@ -66,6 +72,18 @@ app.include_router(categories.router, prefix="/categories", tags=["Categories"])
 logger.debug("Registered categories routes at /categories")
 app.include_router(order.router, prefix="/orders", tags=["Orders"])
 logger.debug("Registered order routes at /orders")
+app.include_router(wishlist_router.router, prefix="/wishlist", tags=["Wishlist"])
+logger.debug("Registered wishlist routes at /wishlist")
+app.include_router(dashboard_router.router, prefix="/dashboard", tags=["Dashboard"])
+logger.debug("Registered dashboard routes at /dashboard")
+app.include_router(addresses_router.router, prefix="/addresses", tags=["Addresses"])
+logger.debug("Registered addresses routes at /addresses")
+app.include_router(reviews_router.router, prefix="/reviews", tags=["Reviews"])
+logger.debug("Registered reviews routes at /reviews")
+app.include_router(profile_router.router, prefix="/profile", tags=["Profile"])
+logger.debug("Registered profile routes at /profile")
+app.include_router(checkout_router.router, prefix="/checkout", tags=["Checkout"])
+logger.debug("Registered checkout routes at /checkout")
 
 # Register global exception handlers
 logger.info("Registering global exception handlers")

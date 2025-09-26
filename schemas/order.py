@@ -26,9 +26,11 @@ class UserResponse(BaseModel):
 
 class AddressResponse(BaseModel):
     id: UUID4
-    street: str
+    # Use FE-friendly names but map to BE model fields via aliases
+    street: str = Field(alias="street_address")
     city: str
-    state: str
+    state: str = Field(alias="state_province")
+    postal_code: str
     country: str
 
     class Config:

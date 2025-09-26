@@ -61,8 +61,10 @@ class OrderService:
             )
 
     # ---------------- FETCH ORDERS ----------------
-    def fetch_orders(self, db: Session, limit: int = 10, page: int = 1) -> Tuple[List[Order], int]:
+    def fetch_orders(self, db: Session, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
         query = self._with_relationships(db.query(Order))
+        if status:
+            query = query.filter(Order.status == status)
         count = query.count()
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()
@@ -75,15 +77,17 @@ class OrderService:
             .first()
         )
 
-    def get_orders_by_buyer(self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1) -> Tuple[List[Order], int]:
+    def get_orders_by_buyer(self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
         query = self._with_relationships(
             db.query(Order)).filter(Order.buyer_id == buyer_id)
+        if status:
+            query = query.filter(Order.status == status)
         count = query.count()
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()
         return orders, count
 
-    def get_orders_by_seller(self, db: Session, seller_id: UUID, limit: int = 10, page: int = 1) -> Tuple[List[Order], int]:
+    def get_orders_by_seller(self, db: Session, seller_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
         query = (
             db.query(Order)
             .join(Order.order_items)
@@ -96,6 +100,8 @@ class OrderService:
                 joinedload(Order.payments),
             )
         )
+        if status:
+            query = query.filter(Order.status == status)
 
         count = query.distinct(Order.id).count()
         offset = (page - 1) * limit
@@ -151,8 +157,13 @@ class OrderService:
                     price=price,
                 )
                 db.add(order_item)
+                db.flush()
 
                 # Don't commit here - context manager handles it
+                db.refresh(new_order)
+                # Ensure total is consistent (already set), but recalc in case of float/decimal quirks
+                recalc_total = sum(Decimal(str(i.price)) * i.quantity for i in new_order.order_items)
+                new_order.total_amount = float(recalc_total)
                 db.refresh(new_order)
                 return new_order
 
@@ -166,26 +177,47 @@ class OrderService:
     ):
         try:
             with self.transaction_context(db):
-                # Validate and reserve stock
-                availability = self._validate_and_reserve_stock(
-                    db, product_id, quantity, order_id
+                # Load order with items
+                order = (
+                    db.query(Order)
+                    .options(joinedload(Order.order_items))
+                    .filter(Order.id == order_id)
+                    .first()
                 )
+                if not order:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-                # Reserve stock
-                inventory_service.reserve_stock(
-                    db, product_id, quantity, order_id)
+                # Check if item already exists in order
+                existing_item = next((i for i in order.order_items if i.product_id == product_id), None)
 
-                # Create order item
-                new_item = OrderItem(
-                    order_id=order_id,
-                    product_id=product_id,
-                    quantity=quantity,
-                    price=price,
-                )
-                db.add(new_item)
-                db.flush()
-                db.refresh(new_item)
-                return new_item
+                if existing_item:
+                    # Validate and reserve additional stock only for the diff
+                    self._validate_and_reserve_stock(db, product_id, quantity, order_id)
+                    inventory_service.reserve_stock(db, product_id, quantity, order_id)
+
+                    # Increase quantity
+                    existing_item.quantity = existing_item.quantity + quantity
+                else:
+                    # Validate and reserve stock for new item
+                    self._validate_and_reserve_stock(db, product_id, quantity, order_id)
+                    inventory_service.reserve_stock(db, product_id, quantity, order_id)
+
+                    # Create new order item
+                    new_item = OrderItem(
+                        order_id=order_id,
+                        product_id=product_id,
+                        quantity=quantity,
+                        price=price,
+                    )
+                    db.add(new_item)
+                    db.flush()
+
+                # Recalculate order total
+                db.refresh(order)
+                new_total = sum(Decimal(str(item.price)) * item.quantity for item in order.order_items)
+                order.total_amount = float(new_total)
+                db.refresh(order)
+                return order
 
         except Exception as e:
             logger.error(
@@ -427,15 +459,15 @@ class OrderService:
                         )
 
                 elif user_role == "customer":
-                    # Customers can only cancel pending orders
-                    if new_status != "cancelled" or current_status != "pending":
+                    # Customers can only cancel pending or processing orders
+                    if new_status != "cancelled" or current_status not in ["pending", "processing"]:
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Customers can only cancel pending orders"
+                            detail="Customers can only cancel pending or processing orders"
                         )
 
                     # Verify customer owns the order
-                    if order.buyer_id != UUID(user_id):
+                    if str(order.buyer_id) != str(user_id):
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail="You can only update your own orders"
@@ -456,7 +488,7 @@ class OrderService:
 
                 # Update order status
                 order.status = new_status
-
+                db.flush()  # Ensure changes are written to DB
                 db.refresh(order)
 
                 logger.info(

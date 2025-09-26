@@ -6,7 +6,7 @@ from core.order import order_service
 from core.products import product_service
 from schemas.order import (
     OrderResponse, OrderItemCreate, OrderCreate,
-    OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate
+    OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate, OrderStatus
 )
 from decimal import Decimal
 from uuid import UUID,  uuid4
@@ -24,19 +24,22 @@ async def list_orders(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    status_filter: OrderStatus | None = Query(None, alias="status", description="Filter by order status"),
 ):
     try:
-        orders_logger.info(f"Fetching orders for {user['role']} user {user['id']} - page: {page}, limit: {limit}")
+        orders_logger.info(f"Fetching orders for {user['role']} user {user['id']} - page: {page}, limit: {limit}, status: {status_filter}")
         
+        status_value = status_filter.value if status_filter else None
+
         if user["role"] == "admin":
-            orders, count = order_service.fetch_orders(db, limit=limit, page=page)
+            orders, count = order_service.fetch_orders(db, limit=limit, page=page, status=status_value)
         elif user["role"] == "seller":
             orders, count = order_service.get_orders_by_seller(
-                db, seller_id=user["id"], limit=limit, page=page
+                db, seller_id=user["id"], limit=limit, page=page, status=status_value
             )
         else:  # customer
             orders, count = order_service.get_orders_by_buyer(
-                db, buyer_id=user["id"], limit=limit, page=page
+                db, buyer_id=user["id"], limit=limit, page=page, status=status_value
             )
         
         orders_logger.info(f"Orders fetched successfully for user {user['id']} - count: {count}")
@@ -44,7 +47,7 @@ async def list_orders(
         return {
             "success": True,
             "message": "Orders fetched successfully",
-            "data": [OrderResponse.model_validate(o) for o in orders],
+            "data": [OrderResponse.model_validate(o).model_dump(by_alias=True) for o in orders],
             "pagination": {
                 "page": page,
                 "limit": limit,
@@ -74,7 +77,7 @@ async def get_pending_orders(
     return {
         "success": True,
         "message": "Pending orders fetched successfully",
-        "data": OrderResponse.model_validate(order),
+        "data": OrderResponse.model_validate(order).model_dump(by_alias=True),
     }
 
 
@@ -125,7 +128,7 @@ async def create_order_item(
     
     price = product.price
     if existing_order:
-        order_service.create_order_item(
+        updated_order = order_service.create_order_item(
             db=db,
             order_id=existing_order.id,
             product_id=payload.product_id,
@@ -133,18 +136,10 @@ async def create_order_item(
             price=price,
         )
 
-        new_total_amount = Decimal(existing_order.total_amount) + Decimal(
-            price * payload.quantity
-        )
-
-        order_service.update_order_amount(
-            db, existing_order.id, new_total_amount
-        )
-
         return {
             "success": True,
             "message": "Order updated successfully",
-            "data": OrderResponse.model_validate(existing_order),
+            "data": OrderResponse.model_validate(updated_order).model_dump(by_alias=True),
         }
 
     new_order = order_service.create_order(
@@ -157,7 +152,7 @@ async def create_order_item(
     return {
         "success": True,
         "message": "Order created successfully",
-        "data": OrderResponse.model_validate(new_order),
+        "data": OrderResponse.model_validate(new_order).model_dump(by_alias=True),
     }
 
 
@@ -193,13 +188,13 @@ async def fetch_order_by_id(
     return {
         "success": True,
         "message": "Order fetched successfully",
-        "data": OrderResponse.model_validate(order),
+        "data": OrderResponse.model_validate(order).model_dump(by_alias=True),
     }
 
 
 @router.put("/{order_id}", status_code=status.HTTP_200_OK)
 async def update_order(
-    order_id: str,
+    order_id: UUID,
     order_data: OrderCreate,
     user=Depends(role_required(["customer"])),
     db: Session = Depends(get_db)
@@ -221,14 +216,13 @@ async def update_order(
     updated_order = order_service.update_order(
         db,
         order.id,
-        delivery_address=order_data.delivery_address,
-        items=[OrderItemCreate.model_dump(i) for i in order_data.items],
+        delivery_address=order_data.delivery_address_id,
     )
 
     return {
         "success": True,
         "message": "Order updated successfully",
-        "data": OrderResponse.model_validate(updated_order),
+        "data": OrderResponse.model_validate(updated_order).model_dump(by_alias=True),
     }
 
 
@@ -304,7 +298,7 @@ async def update_order_item_quantity(
     return {
         "success": True,
         "message": "Order item updated successfully",
-        "data": OrderResponse.model_validate(updated_order),
+        "data": OrderResponse.model_validate(updated_order).model_dump(by_alias=True),
     }
 
 
@@ -394,7 +388,7 @@ async def delete_order_item(
     return {
         "success": True,
         "message": "Order item deleted successfully",
-        "data": OrderResponse.model_validate(result),
+        "data": OrderResponse.model_validate(result).model_dump(by_alias=True),
     }
 
 
@@ -544,4 +538,102 @@ async def cancel_order(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cancel order"
+        )
+
+
+@router.get("/{order_id}/timeline")
+async def get_order_timeline(
+    order_id: str,
+    user=Depends(role_required(["customer", "admin", "seller"])),
+    db: Session = Depends(get_db)
+):
+    """Get order timeline/history"""
+    try:
+        # First verify user has access to this order
+        order = order_service.get_order_by_id(db, order_id)
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found"
+            )
+        
+        # Authorization check
+        if user["role"] == "customer" and order.buyer_id != UUID(str(user["id"])):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view your own orders"
+            )
+        elif user["role"] == "seller":
+            seller_has_items = any(
+                item.product.seller_id == user["id"] for item in order.order_items
+            )
+            if not seller_has_items:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only view orders containing your products"
+                )
+        
+        # Create timeline based on order status and dates
+        timeline = []
+        
+        # Order placed
+        timeline.append({
+            "status": "Order Placed",
+            "date": order.created_at.isoformat(),
+            "completed": True,
+            "description": "Your order has been placed successfully"
+        })
+        
+        # Processing
+        if order.status in ["processing", "shipped", "delivered"]:
+            timeline.append({
+                "status": "Processing",
+                "date": order.updated_at.isoformat() if order.status != "pending" else None,
+                "completed": order.status in ["processing", "shipped", "delivered"],
+                "description": "Your order is being prepared"
+            })
+        
+        # Shipped
+        if order.status in ["shipped", "delivered"]:
+            timeline.append({
+                "status": "Shipped",
+                "date": order.updated_at.isoformat() if order.status in ["shipped", "delivered"] else None,
+                "completed": order.status in ["shipped", "delivered"],
+                "description": "Your order has been shipped"
+            })
+        
+        # Delivered
+        if order.status == "delivered":
+            timeline.append({
+                "status": "Delivered",
+                "date": order.updated_at.isoformat(),
+                "completed": True,
+                "description": "Your order has been delivered"
+            })
+        
+        # Cancelled
+        if order.status == "cancelled":
+            timeline.append({
+                "status": "Cancelled",
+                "date": order.updated_at.isoformat(),
+                "completed": True,
+                "description": "Your order has been cancelled"
+            })
+        
+        return {
+            "success": True,
+            "message": "Order timeline retrieved successfully",
+            "data": {
+                "order_id": order.id,
+                "current_status": order.status,
+                "timeline": timeline
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get order timeline"
         )
