@@ -7,6 +7,8 @@ from routers import addresses as addresses_router
 from routers import reviews as reviews_router
 from routers import profile as profile_router
 from routers import checkout as checkout_router
+from routers import notifications as notifications_router
+from routers import seller as seller_router
 from core.config import settings
 from db.session import engine
 from core.model import Base
@@ -83,7 +85,10 @@ logger.debug("Registered reviews routes at /reviews")
 app.include_router(profile_router.router, prefix="/profile", tags=["Profile"])
 logger.debug("Registered profile routes at /profile")
 app.include_router(checkout_router.router, prefix="/checkout", tags=["Checkout"])
-logger.debug("Registered checkout routes at /checkout")
+app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
+logger.debug("Registered notifications routes at /notifications")
+app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
+logger.debug("Registered seller routes at /seller")
 
 # Register global exception handlers
 logger.info("Registering global exception handlers")

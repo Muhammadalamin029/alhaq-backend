@@ -1,18 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from db.session import get_db
 from core.auth import role_required
 from core.model import Wishlist as WishlistModel, Product
-from schemas.wishlist import WishlistCreate, WishlistItemResponse
+from schemas.wishlist import WishlistCreate, WishlistItemResponse, WishlistListResponse
 from typing import List
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[WishlistItemResponse])
+@router.get("/", response_model=WishlistListResponse)
 async def list_wishlist(
     user=Depends(role_required(["customer", "seller", "admin"])),
     db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
 ):
     # Only customers' wishlist is relevant; sellers/admins will still see their own if any
     q = (
@@ -25,8 +27,24 @@ async def list_wishlist(
         .options(joinedload(WishlistModel.product).joinedload(Product.images))
         .filter(WishlistModel.user_id == user["id"])
     )
-    items = q.all()
-    return [WishlistItemResponse.model_validate(i) for i in items]
+    total = q.count()
+    items = (
+        q.order_by(WishlistModel.created_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "success": True,
+        "message": "Wishlist retrieved successfully",
+        "data": [WishlistItemResponse.model_validate(i) for i in items],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit,
+        },
+    }
 
 
 @router.post("/", response_model=WishlistItemResponse, status_code=status.HTTP_201_CREATED)

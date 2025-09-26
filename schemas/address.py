@@ -43,6 +43,7 @@ class AddressListResponse(BaseModel):
     success: bool
     message: str
     data: list[AddressResponse]
+    pagination: dict | None = None
 
 
 class AddressSingleResponse(BaseModel):

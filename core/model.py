@@ -318,3 +318,80 @@ class AdminStats(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
+
+
+# ---------------- NOTIFICATIONS ----------------
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False, index=True)
+
+    type = Column(Enum(
+        "order_confirmed",
+        "order_processing",
+        "order_shipped",
+        "order_delivered",
+        "order_cancelled",
+        "payment_successful",
+        "payment_failed",
+        "account_verified",
+        "password_changed",
+        "profile_updated",
+        "wishlist_item_back_in_stock",
+        "system_announcement",
+        "promotional_offer",
+        name="notification_type"
+    ), nullable=False)
+
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+
+    priority = Column(Enum("low", "medium", "high", "urgent", name="notification_priority"), default="low")
+
+    channels = Column(Text, nullable=False, default="in_app")  # comma-separated values
+
+    data = Column(Text, nullable=True)  # JSON string
+
+    is_read = Column(Boolean, default=False)
+    is_sent = Column(Boolean, default=False)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    read_at = Column(TIMESTAMP, nullable=True)
+    sent_at = Column(TIMESTAMP, nullable=True)
+    expires_at = Column(TIMESTAMP, nullable=True)
+
+
+class NotificationPreferences(Base):
+    __tablename__ = "notification_preferences"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), unique=True, nullable=False, index=True)
+
+    # Email
+    email_order_updates = Column(Boolean, default=True)
+    email_payment_updates = Column(Boolean, default=True)
+    email_account_updates = Column(Boolean, default=True)
+    email_promotional_offers = Column(Boolean, default=False)
+    email_system_announcements = Column(Boolean, default=True)
+
+    # SMS
+    sms_order_updates = Column(Boolean, default=False)
+    sms_payment_updates = Column(Boolean, default=False)
+    sms_account_updates = Column(Boolean, default=False)
+
+    # Push
+    push_order_updates = Column(Boolean, default=True)
+    push_payment_updates = Column(Boolean, default=True)
+    push_account_updates = Column(Boolean, default=True)
+    push_promotional_offers = Column(Boolean, default=False)
+
+    # In-app
+    in_app_order_updates = Column(Boolean, default=True)
+    in_app_payment_updates = Column(Boolean, default=True)
+    in_app_account_updates = Column(Boolean, default=True)
+    in_app_promotional_offers = Column(Boolean, default=True)
+    in_app_system_announcements = Column(Boolean, default=True)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())

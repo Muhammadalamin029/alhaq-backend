@@ -232,3 +232,26 @@ def cleanup_expired_codes():
             "success": False,
             "error": str(exc)
         }
+
+
+@celery_app.task(bind=True, name='core.tasks.send_notification_email')
+def send_notification_email(self, to_email: str, subject: str, html_body: str, text_body: str | None = None):
+    """
+    Generic notification email sender.
+    """
+    try:
+        success = email_service.send_email_sync(
+            to_email=to_email,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body or html_body,
+        )
+        if success:
+            logger.info(f"Notification email sent to {to_email}")
+            return {"success": True}
+        else:
+            logger.error(f"Failed to send notification email to {to_email}")
+            raise self.retry(countdown=60, max_retries=3)
+    except Exception as exc:
+        logger.error(f"Error sending notification email to {to_email}: {str(exc)}")
+        raise self.retry(exc=exc, countdown=60, max_retries=3)

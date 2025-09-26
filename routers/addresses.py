@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
@@ -20,15 +20,25 @@ router = APIRouter()
 @router.get("/", response_model=AddressListResponse)
 async def list_addresses(
     user=Depends(role_required(["customer", "seller", "admin"])),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100)
 ):
     """Get all addresses for the current user"""
-    addresses = db.query(Address).filter(Address.user_id == user["id"]).all()
+    q = db.query(Address).filter(Address.user_id == user["id"]) 
+    total = q.count()
+    addresses = q.order_by(Address.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
     
     return AddressListResponse(
         success=True,
         message="Addresses retrieved successfully",
-        data=[AddressResponse.model_validate(addr) for addr in addresses]
+        data=[AddressResponse.model_validate(addr) for addr in addresses],
+        pagination={
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit
+        }
     )
 
 

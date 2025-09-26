@@ -16,3 +16,10 @@ class WishlistItemResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class WishlistListResponse(BaseModel):
+    success: bool
+    message: str
+    data: list[WishlistItemResponse]
+    pagination: dict
