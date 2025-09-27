@@ -40,7 +40,6 @@ class SellerProfileUpdate(BaseModel):
     contact_phone: Optional[str] = Field(None, max_length=50)
     website_url: Optional[str] = Field(None, max_length=500)
 
-
 class SellerStatsResponse(BaseModel):
     success: bool
     message: str
@@ -56,6 +55,11 @@ class SellerStatsData(BaseModel):
     total_revenue: float
     kyc_status: str
     business_name: str
+    # Enhanced dashboard data
+    recent_orders: List[Dict[str, Any]] = []
+    recent_products: List[Dict[str, Any]] = []
+    revenue_trend: Optional[str] = None
+    orders_trend: Optional[str] = None
 
 
 class SellerProductsResponse(BaseModel):

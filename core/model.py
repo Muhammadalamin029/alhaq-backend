@@ -123,7 +123,7 @@ class Product(Base):
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    price = Column(Numeric(10, 2), nullable=False)
+    price = Column(Numeric(15, 2), nullable=False)
     stock_quantity = Column(Integer, default=0)
     category_id = Column(UUID, ForeignKey("categories.id"), nullable=False)
     status = Column(Enum("active", "inactive", "out_of_stock",
@@ -163,7 +163,7 @@ class Order(Base):
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    total_amount = Column(Numeric(10, 2), nullable=False)
+    total_amount = Column(Numeric(15, 2), nullable=False)
     status = Column(Enum("pending", "processing", "shipped", "delivered",
                     "cancelled", name="order_status"), default="pending")
     delivery_address = Column(UUID, ForeignKey("addresses.id"), nullable=True)
@@ -190,7 +190,9 @@ class OrderItem(Base):
     product_id = Column(UUID, ForeignKey(
         "products.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
-    price = Column(Numeric(10, 2), nullable=False)
+    price = Column(Numeric(15, 2), nullable=False)
+    status = Column(Enum("pending", "processing", "shipped", "delivered", "cancelled", 
+                        name="order_item_status"), default="pending", nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())

@@ -6,9 +6,9 @@ from uuid import UUID
 
 from db.session import get_db
 from core.auth import role_required, get_current_user
-from core.model import User, SellerProfile, Product, Order, OrderItem, ProductImage, Category
+from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, ProductImage, Category
 from schemas.products import ProductResponse, ProductCreate, ProductUpdate
-from schemas.order import OrderResponse
+from schemas.order import OrderResponse, OrderStatus
 from schemas.seller import (
     SellerProfileResponse, 
     SellerProfileUpdate, 
@@ -18,83 +18,20 @@ from schemas.seller import (
     SellerAnalyticsResponse
 )
 from core.logging_config import get_logger, log_error
+from core.order import OrderService
 
 # Get logger for seller routes
 seller_logger = get_logger("routers.seller")
 
+# Initialize order service
+order_service = OrderService()
+
 router = APIRouter()
 
 
-@router.get("/profile", response_model=SellerProfileResponse)
-async def get_seller_profile(
-    user=Depends(role_required(["seller", "admin"])),
-    db: Session = Depends(get_db)
-):
-    """Get seller profile information"""
-    try:
-        seller_profile = (
-            db.query(SellerProfile)
-            .options(joinedload(SellerProfile.user))
-            .filter(SellerProfile.id == user["id"])
-            .first()
-        )
-        
-        if not seller_profile:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Seller profile not found"
-            )
-        
-        return SellerProfileResponse(
-            success=True,
-            message="Seller profile retrieved successfully",
-            data=seller_profile
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error(seller_logger, f"Failed to fetch seller profile for user {user['id']}", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch seller profile")
-
-
-@router.put("/profile", response_model=SellerProfileResponse)
-async def update_seller_profile(
-    profile_data: SellerProfileUpdate,
-    user=Depends(role_required(["seller", "admin"])),
-    db: Session = Depends(get_db)
-):
-    """Update seller profile information"""
-    try:
-        seller_profile = (
-            db.query(SellerProfile)
-            .filter(SellerProfile.id == user["id"])
-            .first()
-        )
-        
-        if not seller_profile:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Seller profile not found"
-            )
-        
-        # Update profile fields
-        update_data = profile_data.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(seller_profile, field, value)
-        
-        db.commit()
-        db.refresh(seller_profile)
-        
-        return SellerProfileResponse(
-            success=True,
-            message="Seller profile updated successfully",
-            data=seller_profile
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error(seller_logger, f"Failed to update seller profile for user {user['id']}", e)
-        raise HTTPException(status_code=500, detail="Failed to update seller profile")
+# NOTE: Profile management (GET/PUT /profile) has been moved to /auth/me
+# This eliminates code duplication and provides a unified API for all user types
+# Use /auth/me for profile operations instead of /seller/profile
 
 
 @router.get("/stats", response_model=SellerStatsResponse)
@@ -166,6 +103,64 @@ async def get_seller_stats(
         
         total_revenue = float(revenue_result) if revenue_result else 0.0
         
+        # Get recent orders (last 5)
+        recent_orders_query = (
+            db.query(Order)
+            .join(OrderItem)
+            .join(Product)
+            .filter(Product.seller_id == seller_id)
+            .options(joinedload(Order.buyer).joinedload(Profile.user))
+            .order_by(desc(Order.created_at))
+            .limit(5)
+        )
+        
+        recent_orders = []
+        for order in recent_orders_query.all():
+            # Count items for this seller in this order
+            seller_items = (
+                db.query(OrderItem)
+                .join(Product)
+                .filter(Product.seller_id == seller_id, OrderItem.order_id == order.id)
+                .count()
+            )
+            
+            # Calculate total amount for this seller's items in this order
+            seller_amount = (
+                db.query(func.sum(OrderItem.quantity * OrderItem.price))
+                .join(Product)
+                .filter(Product.seller_id == seller_id, OrderItem.order_id == order.id)
+                .scalar()
+            ) or 0
+            
+            recent_orders.append({
+                "id": str(order.id),
+                "status": order.status,
+                "total_amount": float(seller_amount),
+                "created_at": order.created_at.isoformat(),
+                "buyer": {
+                    "email": order.buyer.user.email if order.buyer and order.buyer.user else None
+                },
+                "order_items": [{"length": seller_items}]  # For compatibility
+            })
+        
+        # Get recent products (last 3)
+        recent_products_query = (
+            db.query(Product)
+            .filter(Product.seller_id == seller_id)
+            .order_by(desc(Product.created_at))
+            .limit(3)
+        )
+        
+        recent_products = []
+        for product in recent_products_query.all():
+            recent_products.append({
+                "id": str(product.id),
+                "name": product.name,
+                "price": float(product.price),
+                "stock_quantity": product.stock_quantity,
+                "status": product.status
+            })
+        
         return SellerStatsResponse(
             success=True,
             message="Seller statistics retrieved successfully",
@@ -177,7 +172,11 @@ async def get_seller_stats(
                 "pending_orders": pending_orders,
                 "total_revenue": total_revenue,
                 "kyc_status": seller_profile.kyc_status,
-                "business_name": seller_profile.business_name
+                "business_name": seller_profile.business_name,
+                "recent_orders": recent_orders,
+                "recent_products": recent_products,
+                "revenue_trend": "+12%",  # TODO: Calculate from historical data
+                "orders_trend": "+5%"     # TODO: Calculate from historical data
             }
         )
     except HTTPException:
@@ -252,41 +251,16 @@ async def get_seller_orders(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    status: Optional[str] = Query(None, description="Filter by order status")
+    status_filter: Optional[OrderStatus] = Query(None, description="Filter by order status")
 ):
     """Get orders for seller's products"""
     try:
         seller_id = user["id"]
-        offset = (page - 1) * limit
+        status_value = status_filter.value if status_filter else None
         
-        # Build query for orders containing seller's products
-        query = (
-            db.query(Order)
-            .join(OrderItem)
-            .join(Product)
-            .options(
-                joinedload(Order.buyer),
-                joinedload(Order.delivery_addr),
-                joinedload(Order.order_items).joinedload(OrderItem.product)
-            )
-            .filter(Product.seller_id == seller_id)
-            .distinct()
-        )
-        
-        # Apply status filter
-        if status:
-            query = query.filter(Order.status == status)
-        
-        # Get total count
-        total_orders = query.count()
-        
-        # Get paginated results
-        orders = (
-            query
-            .order_by(desc(Order.created_at))
-            .offset(offset)
-            .limit(limit)
-            .all()
+        # Use the service method to get seller orders with proper filtering
+        orders, total_orders = order_service.get_orders_by_seller(
+            db, seller_id=seller_id, limit=limit, page=page, status=status_value
         )
         
         return SellerOrdersResponse(
@@ -303,6 +277,34 @@ async def get_seller_orders(
     except Exception as e:
         log_error(seller_logger, f"Failed to fetch seller orders for user {user['id']}", e)
         raise HTTPException(status_code=500, detail="Failed to fetch seller orders")
+
+
+@router.get("/orders/{order_id}", response_model=OrderResponse)
+async def get_seller_order_details(
+    order_id: str,
+    user=Depends(role_required(["seller", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get detailed information for a specific order containing seller's products"""
+    try:
+        seller_id = user["id"]
+        
+        # Use the service method to get seller order with proper filtering
+        order = order_service.get_seller_order_by_id(db, order_id, seller_id)
+        
+        if not order:
+            raise HTTPException(
+                status_code=404, 
+                detail="Order not found or does not contain your products"
+            )
+        
+        return OrderResponse.model_validate(order).model_dump(by_alias=True)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(seller_logger, f"Failed to fetch seller order details for order {order_id}", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch order details")
 
 
 @router.get("/analytics", response_model=SellerAnalyticsResponse)

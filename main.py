@@ -5,7 +5,7 @@ from routers import wishlist as wishlist_router
 from routers import dashboard as dashboard_router
 from routers import addresses as addresses_router
 from routers import reviews as reviews_router
-from routers import profile as profile_router
+# Profile router removed - functionality consolidated into auth router
 from routers import checkout as checkout_router
 from routers import notifications as notifications_router
 from routers import seller as seller_router
@@ -82,9 +82,9 @@ app.include_router(addresses_router.router, prefix="/addresses", tags=["Addresse
 logger.debug("Registered addresses routes at /addresses")
 app.include_router(reviews_router.router, prefix="/reviews", tags=["Reviews"])
 logger.debug("Registered reviews routes at /reviews")
-app.include_router(profile_router.router, prefix="/profile", tags=["Profile"])
-logger.debug("Registered profile routes at /profile")
+# Profile routes consolidated into /auth - no separate /profile endpoint needed
 app.include_router(checkout_router.router, prefix="/checkout", tags=["Checkout"])
+logger.debug("Registered checkout routes at /checkout")
 app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
 logger.debug("Registered notifications routes at /notifications")
 app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])

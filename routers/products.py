@@ -229,7 +229,7 @@ async def update_product(
             for img in update_data["images"]:
                 new_image = ProductImage(
                     product_id=product_id,
-                    image_url=img.url
+                    image_url=img.image_url
                 )
                 db.add(new_image)
             

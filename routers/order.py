@@ -162,29 +162,35 @@ async def fetch_order_by_id(
     user=Depends(role_required(["customer", "admin", "seller"])),
     db: Session = Depends(get_db)
 ):
-    order = order_service.get_order_by_id(db, order_id)
+    # For customers, include seller grouping; for others, use standard format
+    include_seller_groups = user["role"] == "customer"
+    order = order_service.get_order_by_id(db, order_id, include_seller_groups=include_seller_groups)
+    
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found."
+            detail="Order not found"
         )
-
-    # Authorization check
-    if user["role"] == "customer" and order.buyer_id != UUID(str(user["id"])):
+    
+    # Check if user has permission to view this order
+    if user["role"] == "customer" and str(order.buyer_id) != user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to view this order."
+            detail="You can only view your own orders"
         )
     elif user["role"] == "seller":
-        is_seller_order = any(
-            item.product.seller_id == user["id"] for item in order.order_items
+        # Check if seller has any products in this order
+        seller_has_products = any(
+            item.product.seller_id == user["id"] 
+            for item in order.order_items 
+            if item.product
         )
-        if not is_seller_order:
+        if not seller_has_products:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to view this order."
+                detail="You can only view orders containing your products"
             )
-
+    
     return {
         "success": True,
         "message": "Order fetched successfully",

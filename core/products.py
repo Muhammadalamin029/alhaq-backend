@@ -38,7 +38,7 @@ class ProductService:
         category_id: UUID,
         description: Optional[str] = None,
         stock_quantity: int = 0,
-        images: Optional[list[ProductImageSchema]] = None
+        images: Optional[list] = None
     ):
         # 1. Create product with default status
         new_product = Product(
@@ -58,7 +58,7 @@ class ProductService:
             for img in images:
                 product_image = ProductImage(
                     product_id=new_product.id,
-                    image_url=img.url
+                    image_url=img.image_url
                 )
                 db.add(product_image)
 
