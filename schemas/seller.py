@@ -82,11 +82,70 @@ class SellerAnalyticsResponse(BaseModel):
     data: "SellerAnalyticsData"
 
 
+class RevenueDataPoint(BaseModel):
+    date: str
+    revenue: float
+    orders: int
+    
+class OrderDataPoint(BaseModel):
+    date: str
+    orders: int
+    total_value: float
+    
+class TopProduct(BaseModel):
+    id: str
+    name: str
+    total_sold: int
+    revenue: float
+    stock_quantity: int
+    
+class ProductPerformance(BaseModel):
+    id: str
+    name: str
+    views: int
+    orders: int
+    conversion_rate: float
+    revenue: float
+    
+class CustomerInsight(BaseModel):
+    total_customers: int
+    repeat_customers: int
+    repeat_rate: float
+    average_order_value: float
+    
+class InventoryInsight(BaseModel):
+    total_products: int
+    active_products: int
+    low_stock_products: int
+    out_of_stock_products: int
+    total_inventory_value: float
+
 class SellerAnalyticsData(BaseModel):
-    revenue_data: List[Dict[str, Any]]
-    order_data: List[Dict[str, Any]]
-    top_products: List[Dict[str, Any]]
+    # Time series data
+    revenue_data: List[RevenueDataPoint]
+    order_data: List[OrderDataPoint]
+    
+    # Product insights
+    top_products: List[TopProduct]
+    product_performance: List[ProductPerformance]
+    
+    # Customer insights
+    customer_insights: CustomerInsight
+    
+    # Inventory insights
+    inventory_insights: InventoryInsight
+    
+    # Summary metrics
+    total_revenue: float
+    total_orders: int
+    average_order_value: float
+    revenue_growth: float
+    order_growth: float
+    
+    # Period info
     period: str
+    start_date: str
+    end_date: str
 
 
 class PaginationMeta(BaseModel):

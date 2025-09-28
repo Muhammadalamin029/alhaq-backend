@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 from typing import Optional, List
 from uuid import UUID
 
@@ -312,7 +312,7 @@ async def get_seller_analytics(
     db: Session = Depends(get_db),
     period: str = Query("30d", description="Analytics period: 7d, 30d, 90d, 1y")
 ):
-    """Get seller analytics data"""
+    """Get comprehensive seller analytics data"""
     try:
         seller_id = user["id"]
         
@@ -322,38 +322,45 @@ async def get_seller_analytics(
         
         if period == "7d":
             start_date = now - timedelta(days=7)
+            prev_start_date = now - timedelta(days=14)
         elif period == "30d":
             start_date = now - timedelta(days=30)
+            prev_start_date = now - timedelta(days=60)
         elif period == "90d":
             start_date = now - timedelta(days=90)
+            prev_start_date = now - timedelta(days=180)
         elif period == "1y":
             start_date = now - timedelta(days=365)
+            prev_start_date = now - timedelta(days=730)
         else:
             start_date = now - timedelta(days=30)
+            prev_start_date = now - timedelta(days=60)
         
-        # Revenue analytics
+        # 1. Revenue analytics with order count
         revenue_data = (
             db.query(
                 func.date(Order.created_at).label('date'),
-                func.sum(OrderItem.quantity * OrderItem.price).label('revenue')
+                func.sum(OrderItem.quantity * OrderItem.price).label('revenue'),
+                func.count(func.distinct(Order.id)).label('orders')
             )
             .join(OrderItem)
             .join(Product)
             .filter(
                 Product.seller_id == seller_id,
                 Order.created_at >= start_date,
-                Order.status == "delivered"
+                Order.status.in_(["delivered", "shipped", "processing"])
             )
             .group_by(func.date(Order.created_at))
             .order_by('date')
             .all()
         )
         
-        # Order count analytics
+        # 2. Order analytics with total value
         order_data = (
             db.query(
                 func.date(Order.created_at).label('date'),
-                func.count(Order.id).label('orders')
+                func.count(func.distinct(Order.id)).label('orders'),
+                func.sum(OrderItem.quantity * OrderItem.price).label('total_value')
             )
             .join(OrderItem)
             .join(Product)
@@ -366,10 +373,12 @@ async def get_seller_analytics(
             .all()
         )
         
-        # Top selling products
+        # 3. Top selling products with stock info
         top_products = (
             db.query(
+                Product.id,
                 Product.name,
+                Product.stock_quantity,
                 func.sum(OrderItem.quantity).label('total_sold'),
                 func.sum(OrderItem.quantity * OrderItem.price).label('revenue')
             )
@@ -378,28 +387,187 @@ async def get_seller_analytics(
             .filter(
                 Product.seller_id == seller_id,
                 Order.created_at >= start_date,
-                Order.status == "delivered"
+                Order.status.in_(["delivered", "shipped", "processing"])
             )
-            .group_by(Product.id, Product.name)
+            .group_by(Product.id, Product.name, Product.stock_quantity)
             .order_by(desc('total_sold'))
             .limit(10)
             .all()
         )
         
+        # 4. Product performance (for products with orders)
+        product_performance = (
+            db.query(
+                Product.id,
+                Product.name,
+                func.sum(OrderItem.quantity).label('orders'),
+                func.sum(OrderItem.quantity * OrderItem.price).label('revenue')
+            )
+            .join(OrderItem)
+            .join(Order)
+            .filter(
+                Product.seller_id == seller_id,
+                Order.created_at >= start_date
+            )
+            .group_by(Product.id, Product.name)
+            .order_by(desc('revenue'))
+            .limit(20)
+            .all()
+        )
+        
+        # 5. Customer insights
+        customer_stats = (
+            db.query(
+                func.count(func.distinct(Order.buyer_id)).label('total_customers'),
+                func.avg(OrderItem.quantity * OrderItem.price).label('avg_order_value')
+            )
+            .join(OrderItem)
+            .join(Product)
+            .filter(
+                Product.seller_id == seller_id,
+                Order.created_at >= start_date
+            )
+            .first()
+        )
+        
+        # Repeat customers
+        repeat_customers = (
+            db.query(func.count().label('repeat_count'))
+            .select_from(
+                db.query(Order.buyer_id)
+                .join(OrderItem)
+                .join(Product)
+                .filter(
+                    Product.seller_id == seller_id,
+                    Order.created_at >= start_date
+                )
+                .group_by(Order.buyer_id)
+                .having(func.count(Order.id) > 1)
+                .subquery()
+            )
+            .scalar() or 0
+        )
+        
+        # 6. Inventory insights
+        inventory_stats = (
+            db.query(
+                func.count(Product.id).label('total_products'),
+                func.count(case((Product.stock_quantity > 0, Product.id))).label('active_products'),
+                func.count(case((Product.stock_quantity == 0, Product.id))).label('out_of_stock'),
+                func.count(case((Product.stock_quantity <= 5, Product.id))).label('low_stock'),
+                func.sum(Product.stock_quantity * Product.price).label('inventory_value')
+            )
+            .filter(Product.seller_id == seller_id)
+            .first()
+        )
+        
+        # 7. Calculate growth metrics
+        current_revenue = sum(r.revenue or 0 for r in revenue_data)
+        current_orders = sum(r.orders or 0 for r in revenue_data)
+        
+        # Previous period metrics for growth calculation
+        prev_revenue = (
+            db.query(func.sum(OrderItem.quantity * OrderItem.price))
+            .join(Order)
+            .join(Product)
+            .filter(
+                Product.seller_id == seller_id,
+                Order.created_at >= prev_start_date,
+                Order.created_at < start_date,
+                Order.status.in_(["delivered", "shipped", "processing"])
+            )
+            .scalar() or 0
+        )
+        
+        prev_orders = (
+            db.query(func.count(func.distinct(Order.id)))
+            .join(OrderItem)
+            .join(Product)
+            .filter(
+                Product.seller_id == seller_id,
+                Order.created_at >= prev_start_date,
+                Order.created_at < start_date
+            )
+            .scalar() or 0
+        )
+        
+        # Calculate growth percentages
+        revenue_growth = ((current_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0
+        order_growth = ((current_orders - prev_orders) / prev_orders * 100) if prev_orders > 0 else 0
+        
+        # Calculate repeat rate
+        total_customers = customer_stats.total_customers or 0
+        repeat_rate = (repeat_customers / total_customers * 100) if total_customers > 0 else 0
+        
         return SellerAnalyticsResponse(
             success=True,
             message="Seller analytics retrieved successfully",
             data={
-                "revenue_data": [{"date": str(r.date), "revenue": float(r.revenue or 0)} for r in revenue_data],
-                "order_data": [{"date": str(o.date), "orders": o.orders} for o in order_data],
+                # Time series data
+                "revenue_data": [
+                    {
+                        "date": str(r.date),
+                        "revenue": float(r.revenue or 0),
+                        "orders": int(r.orders or 0)
+                    } for r in revenue_data
+                ],
+                "order_data": [
+                    {
+                        "date": str(o.date),
+                        "orders": int(o.orders or 0),
+                        "total_value": float(o.total_value or 0)
+                    } for o in order_data
+                ],
+                
+                # Product insights
                 "top_products": [
                     {
+                        "id": str(p.id),
                         "name": p.name,
                         "total_sold": int(p.total_sold or 0),
-                        "revenue": float(p.revenue or 0)
+                        "revenue": float(p.revenue or 0),
+                        "stock_quantity": int(p.stock_quantity or 0)
                     } for p in top_products
                 ],
-                "period": period
+                "product_performance": [
+                    {
+                        "id": str(p.id),
+                        "name": p.name,
+                        "views": 0,  # TODO: Implement view tracking
+                        "orders": int(p.orders or 0),
+                        "conversion_rate": 0.0,  # TODO: Calculate conversion rate
+                        "revenue": float(p.revenue or 0)
+                    } for p in product_performance
+                ],
+                
+                # Customer insights
+                "customer_insights": {
+                    "total_customers": int(total_customers),
+                    "repeat_customers": int(repeat_customers),
+                    "repeat_rate": float(repeat_rate),
+                    "average_order_value": float(customer_stats.avg_order_value or 0)
+                },
+                
+                # Inventory insights
+                "inventory_insights": {
+                    "total_products": int(inventory_stats.total_products or 0),
+                    "active_products": int(inventory_stats.active_products or 0),
+                    "low_stock_products": int(inventory_stats.low_stock or 0),
+                    "out_of_stock_products": int(inventory_stats.out_of_stock or 0),
+                    "total_inventory_value": float(inventory_stats.inventory_value or 0)
+                },
+                
+                # Summary metrics
+                "total_revenue": float(current_revenue),
+                "total_orders": int(current_orders),
+                "average_order_value": float(customer_stats.avg_order_value or 0),
+                "revenue_growth": float(revenue_growth),
+                "order_growth": float(order_growth),
+                
+                # Period info
+                "period": period,
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": now.strftime("%Y-%m-%d")
             }
         )
     except Exception as e:
