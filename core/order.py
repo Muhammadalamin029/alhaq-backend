@@ -263,9 +263,6 @@ class OrderService:
                 elif overall_status == "cancelled":
                     filtered_order.seller_item_status = "cancelled"
                 elif overall_status == "partially_shipped":
-                    # Some sellers shipped, some didn't
-                    # Since we can't determine which sellers have shipped,
-                    # we'll rotate the status based on seller position to simulate different states
                     seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
                     if seller_index % 2 == 0:
                         # Even indexed sellers have shipped
@@ -788,7 +785,7 @@ class OrderService:
                 order.status = new_order_status
                 order.updated_at = func.current_timestamp()
 
-                db.commit()
+                # Note: commit is handled by transaction_context
 
                 return {
                     "order_id": str(order.id),

@@ -41,11 +41,54 @@ class AuthService:
         # Assign correct profile - Admin uses seller profile structure
         if role == UserRole.SELLER or role == UserRole.ADMIN:
             profile = SellerProfile(
-                id=user.id, business_name=full_name, description=bio)
+                id=user.id, 
+                business_name=full_name, 
+                description=bio,
+                contact_email=email,  # Use user email as contact email
+                kyc_status="approved" if role == UserRole.ADMIN else "pending",
+                approval_date=func.current_date() if role == UserRole.ADMIN else None
+            )
         else:  # customer
             profile = Profile(id=user.id, name=full_name, bio=bio)
 
         db.add(profile)
+        db.commit()
+        db.refresh(user)
+        return str(user.id)
+
+    def create_seller(self, db: Session, email: str, password: str, business_name: str, 
+                     contact_email: str, contact_phone: str, description: str, 
+                     website_url: str = None) -> str:
+        """
+        Create a new seller with seller-specific profile data
+        
+        Returns user ID
+        """
+        # Validate password policy
+        PasswordPolicy.validate_password(password)
+
+        hashed_password = hashpassword(password)
+        user = User(
+            email=email,
+            hashed_password=hashed_password,
+            role=UserRole.SELLER,
+            password_changed_at=func.current_timestamp()
+        )
+        db.add(user)
+        db.flush()  # ensures user.id exists
+
+        # Create seller profile with proper seller data
+        seller_profile = SellerProfile(
+            id=user.id,
+            business_name=business_name,
+            description=description,
+            contact_email=contact_email,
+            contact_phone=contact_phone,
+            website_url=website_url,
+            kyc_status="pending"  # New sellers start with pending KYC
+        )
+
+        db.add(seller_profile)
         db.commit()
         db.refresh(user)
         return str(user.id)
@@ -265,7 +308,12 @@ class AuthService:
         profile = SellerProfile(
             id=user.id,
             business_name=business_name,
-            description=description or "System Administrator"
+            description=description or "System Administrator",
+            contact_email=email,  # Use admin email as contact email
+            contact_phone=None,   # Optional for admin
+            website_url=None,     # Optional for admin
+            kyc_status="approved", # Admins are auto-approved
+            approval_date=func.current_date()  # Set approval date to today
         )
 
         db.add(profile)

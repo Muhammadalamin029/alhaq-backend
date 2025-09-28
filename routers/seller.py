@@ -41,8 +41,48 @@ async def get_seller_stats(
     """Get seller statistics"""
     try:
         seller_id = user["id"]
+        user_role = user["role"]
         
-        # Get basic stats from seller profile
+        # Handle admin access - show platform-wide stats
+        if user_role == "admin":
+            # For admin, show platform-wide statistics
+            total_products = db.query(Product).count()
+            active_products = db.query(Product).filter(Product.status == "active").count()
+            out_of_stock_products = db.query(Product).filter(Product.stock_quantity == 0).count()
+            
+            total_orders = db.query(Order).count()
+            pending_orders = db.query(Order).filter(Order.status == "processing").count()
+            
+            # Get total platform revenue
+            revenue_result = (
+                db.query(func.sum(OrderItem.quantity * OrderItem.price))
+                .join(Order)
+                .filter(Order.status == "delivered")
+                .scalar()
+            )
+            total_revenue = float(revenue_result) if revenue_result else 0.0
+            
+            # Return admin platform stats
+            return SellerStatsResponse(
+                success=True,
+                message="Platform statistics retrieved successfully",
+                data={
+                    "total_products": total_products,
+                    "active_products": active_products,
+                    "out_of_stock_products": out_of_stock_products,
+                    "total_orders": total_orders,
+                    "pending_orders": pending_orders,
+                    "total_revenue": total_revenue,
+                    "kyc_status": "approved",  # Admin is always approved
+                    "business_name": "Platform Administrator",
+                    "recent_orders": [],  # TODO: Get recent platform orders
+                    "recent_products": [],  # TODO: Get recent platform products
+                    "revenue_trend": "+15%",  # TODO: Calculate from historical data
+                    "orders_trend": "+8%"     # TODO: Calculate from historical data
+                }
+            )
+        
+        # Get basic stats from seller profile for actual sellers
         seller_profile = (
             db.query(SellerProfile)
             .filter(SellerProfile.id == seller_id)
@@ -197,6 +237,7 @@ async def get_seller_products(
     """Get seller's products with pagination and filtering"""
     try:
         seller_id = user["id"]
+        user_role = user["role"]
         offset = (page - 1) * limit
         
         # Build query
@@ -206,8 +247,12 @@ async def get_seller_products(
                 joinedload(Product.category),
                 joinedload(Product.images)
             )
-            .filter(Product.seller_id == seller_id)
         )
+        
+        # For sellers, filter by their products only
+        # For admins, show all products (platform-wide view)
+        if user_role == "seller":
+            query = query.filter(Product.seller_id == seller_id)
         
         # Apply filters
         if status:
@@ -255,12 +300,34 @@ async def get_seller_orders(
     """Get orders for seller's products"""
     try:
         seller_id = user["id"]
+        user_role = user["role"]
         status_value = status_filter.value if status_filter else None
         
-        # Use the service method to get seller orders with proper filtering
-        orders, total_orders = order_service.get_orders_by_seller(
-            db, seller_id=seller_id, limit=limit, page=page, status=status_value
-        )
+        # For admins, get all orders; for sellers, get only their orders
+        if user_role == "admin":
+            # Get all platform orders for admin
+            query = db.query(Order).options(
+                joinedload(Order.buyer).joinedload(Profile.user),
+                joinedload(Order.order_items).joinedload(OrderItem.product),
+                joinedload(Order.delivery_addr)
+            )
+            
+            if status_value:
+                query = query.filter(Order.status == status_value)
+            
+            total_orders = query.count()
+            orders = (
+                query
+                .order_by(desc(Order.created_at))
+                .offset((page - 1) * limit)
+                .limit(limit)
+                .all()
+            )
+        else:
+            # Use the service method to get seller orders with proper filtering
+            orders, total_orders = order_service.get_orders_by_seller(
+                db, seller_id=seller_id, limit=limit, page=page, status=status_value
+            )
         
         return SellerOrdersResponse(
             success=True,
@@ -287,14 +354,28 @@ async def get_seller_order_details(
     """Get detailed information for a specific order containing seller's products"""
     try:
         seller_id = user["id"]
+        user_role = user["role"]
         
-        # Use the service method to get seller order with proper filtering
-        order = order_service.get_seller_order_by_id(db, order_id, seller_id)
+        # For admins, get any order; for sellers, get only their orders
+        if user_role == "admin":
+            order = (
+                db.query(Order)
+                .options(
+                    joinedload(Order.buyer).joinedload(Profile.user),
+                    joinedload(Order.order_items).joinedload(OrderItem.product),
+                    joinedload(Order.delivery_addr)
+                )
+                .filter(Order.id == order_id)
+                .first()
+            )
+        else:
+            # Use the service method to get seller order with proper filtering
+            order = order_service.get_seller_order_by_id(db, order_id, seller_id)
         
         if not order:
             raise HTTPException(
                 status_code=404, 
-                detail="Order not found or does not contain your products"
+                detail="Order not found" if user_role == "admin" else "Order not found or does not contain your products"
             )
         
         return OrderResponse.model_validate(order).model_dump(by_alias=True)
@@ -315,6 +396,7 @@ async def get_seller_analytics(
     """Get comprehensive seller analytics data"""
     try:
         seller_id = user["id"]
+        user_role = user["role"]
         
         # Calculate date range based on period
         from datetime import datetime, timedelta
@@ -337,7 +419,7 @@ async def get_seller_analytics(
             prev_start_date = now - timedelta(days=60)
         
         # 1. Revenue analytics with order count
-        revenue_data = (
+        revenue_query = (
             db.query(
                 func.date(Order.created_at).label('date'),
                 func.sum(OrderItem.quantity * OrderItem.price).label('revenue'),
@@ -346,17 +428,24 @@ async def get_seller_analytics(
             .join(OrderItem)
             .join(Product)
             .filter(
-                Product.seller_id == seller_id,
                 Order.created_at >= start_date,
                 Order.status.in_(["delivered", "shipped", "processing"])
             )
+        )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            revenue_query = revenue_query.filter(Product.seller_id == seller_id)
+        
+        revenue_data = (
+            revenue_query
             .group_by(func.date(Order.created_at))
             .order_by('date')
             .all()
         )
         
         # 2. Order analytics with total value
-        order_data = (
+        order_query = (
             db.query(
                 func.date(Order.created_at).label('date'),
                 func.count(func.distinct(Order.id)).label('orders'),
@@ -364,17 +453,22 @@ async def get_seller_analytics(
             )
             .join(OrderItem)
             .join(Product)
-            .filter(
-                Product.seller_id == seller_id,
-                Order.created_at >= start_date
-            )
+            .filter(Order.created_at >= start_date)
+        )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            order_query = order_query.filter(Product.seller_id == seller_id)
+        
+        order_data = (
+            order_query
             .group_by(func.date(Order.created_at))
             .order_by('date')
             .all()
         )
         
         # 3. Top selling products with stock info
-        top_products = (
+        top_products_query = (
             db.query(
                 Product.id,
                 Product.name,
@@ -385,10 +479,17 @@ async def get_seller_analytics(
             .join(OrderItem)
             .join(Order)
             .filter(
-                Product.seller_id == seller_id,
                 Order.created_at >= start_date,
                 Order.status.in_(["delivered", "shipped", "processing"])
             )
+        )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            top_products_query = top_products_query.filter(Product.seller_id == seller_id)
+        
+        top_products = (
+            top_products_query
             .group_by(Product.id, Product.name, Product.stock_quantity)
             .order_by(desc('total_sold'))
             .limit(10)
@@ -396,7 +497,7 @@ async def get_seller_analytics(
         )
         
         # 4. Product performance (for products with orders)
-        product_performance = (
+        product_performance_query = (
             db.query(
                 Product.id,
                 Product.name,
@@ -405,10 +506,15 @@ async def get_seller_analytics(
             )
             .join(OrderItem)
             .join(Order)
-            .filter(
-                Product.seller_id == seller_id,
-                Order.created_at >= start_date
-            )
+            .filter(Order.created_at >= start_date)
+        )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            product_performance_query = product_performance_query.filter(Product.seller_id == seller_id)
+        
+        product_performance = (
+            product_performance_query
             .group_by(Product.id, Product.name)
             .order_by(desc('revenue'))
             .limit(20)
@@ -416,31 +522,38 @@ async def get_seller_analytics(
         )
         
         # 5. Customer insights
-        customer_stats = (
+        customer_stats_query = (
             db.query(
                 func.count(func.distinct(Order.buyer_id)).label('total_customers'),
                 func.avg(OrderItem.quantity * OrderItem.price).label('avg_order_value')
             )
             .join(OrderItem)
             .join(Product)
-            .filter(
-                Product.seller_id == seller_id,
-                Order.created_at >= start_date
-            )
-            .first()
+            .filter(Order.created_at >= start_date)
         )
         
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            customer_stats_query = customer_stats_query.filter(Product.seller_id == seller_id)
+        
+        customer_stats = customer_stats_query.first()
+        
         # Repeat customers
+        repeat_customers_query = (
+            db.query(Order.buyer_id)
+            .join(OrderItem)
+            .join(Product)
+            .filter(Order.created_at >= start_date)
+        )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            repeat_customers_query = repeat_customers_query.filter(Product.seller_id == seller_id)
+        
         repeat_customers = (
             db.query(func.count().label('repeat_count'))
             .select_from(
-                db.query(Order.buyer_id)
-                .join(OrderItem)
-                .join(Product)
-                .filter(
-                    Product.seller_id == seller_id,
-                    Order.created_at >= start_date
-                )
+                repeat_customers_query
                 .group_by(Order.buyer_id)
                 .having(func.count(Order.id) > 1)
                 .subquery()
@@ -449,7 +562,7 @@ async def get_seller_analytics(
         )
         
         # 6. Inventory insights
-        inventory_stats = (
+        inventory_query = (
             db.query(
                 func.count(Product.id).label('total_products'),
                 func.count(case((Product.stock_quantity > 0, Product.id))).label('active_products'),
@@ -457,39 +570,51 @@ async def get_seller_analytics(
                 func.count(case((Product.stock_quantity <= 5, Product.id))).label('low_stock'),
                 func.sum(Product.stock_quantity * Product.price).label('inventory_value')
             )
-            .filter(Product.seller_id == seller_id)
-            .first()
         )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            inventory_query = inventory_query.filter(Product.seller_id == seller_id)
+        
+        inventory_stats = inventory_query.first()
         
         # 7. Calculate growth metrics
         current_revenue = sum(r.revenue or 0 for r in revenue_data)
         current_orders = sum(r.orders or 0 for r in revenue_data)
         
         # Previous period metrics for growth calculation
-        prev_revenue = (
+        prev_revenue_query = (
             db.query(func.sum(OrderItem.quantity * OrderItem.price))
             .join(Order)
             .join(Product)
             .filter(
-                Product.seller_id == seller_id,
                 Order.created_at >= prev_start_date,
                 Order.created_at < start_date,
                 Order.status.in_(["delivered", "shipped", "processing"])
             )
-            .scalar() or 0
         )
         
-        prev_orders = (
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            prev_revenue_query = prev_revenue_query.filter(Product.seller_id == seller_id)
+        
+        prev_revenue = prev_revenue_query.scalar() or 0
+        
+        prev_orders_query = (
             db.query(func.count(func.distinct(Order.id)))
             .join(OrderItem)
             .join(Product)
             .filter(
-                Product.seller_id == seller_id,
                 Order.created_at >= prev_start_date,
                 Order.created_at < start_date
             )
-            .scalar() or 0
         )
+        
+        # For sellers, filter by their products only
+        if user_role == "seller":
+            prev_orders_query = prev_orders_query.filter(Product.seller_id == seller_id)
+        
+        prev_orders = prev_orders_query.scalar() or 0
         
         # Calculate growth percentages
         revenue_growth = ((current_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0

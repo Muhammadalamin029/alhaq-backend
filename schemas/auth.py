@@ -1,11 +1,10 @@
 from enum import Enum
-from pydantic import BaseModel, EmailStr, Field, validator, UUID4
+from pydantic import BaseModel, Field, validator
 from typing import Optional, Union, Dict
 from datetime import datetime, date
+from uuid import UUID
 
 # ---------------- SCHEMAS ---------------- #
-
-
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -33,6 +32,16 @@ class RegisterRequest(BaseModel):
     bio: str = None
 
 
+class SellerRegisterRequest(BaseModel):
+    email: str
+    password: str = Field(..., min_length=8)
+    business_name: str = Field(..., min_length=2, max_length=255)
+    contact_email: str
+    contact_phone: str = Field(..., min_length=10, max_length=20)
+    description: str = Field(..., max_length=1000)
+    website_url: Optional[str] = Field(None, max_length=500)
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=8)
@@ -47,7 +56,7 @@ class ChangePasswordRequest(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     # Shared
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
 
     # Customer fields
     firstName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
@@ -58,7 +67,7 @@ class UpdateProfileRequest(BaseModel):
     # Seller/Admin fields
     business_name: Optional[str] = Field(None, min_length=1, max_length=255, strip_whitespace=True)
     description: Optional[str] = Field(None, max_length=2000, strip_whitespace=True)
-    contact_email: Optional[EmailStr] = None
+    contact_email: Optional[str] = None
     contact_phone: Optional[str] = Field(None, min_length=7, max_length=20, strip_whitespace=True)
     website_url: Optional[str] = None
     logo_url: Optional[str] = None
@@ -68,7 +77,7 @@ class UpdateProfileRequest(BaseModel):
 
 
 class UserProfileResponse(BaseModel):
-    id: UUID4
+    id: UUID
     email: str
     role: str
     email_verified: bool
@@ -83,7 +92,7 @@ class UserProfileResponse(BaseModel):
 
 
 class CustomerProfileResponse(BaseModel):
-    id: UUID4
+    id: UUID
     name: str
     bio: Optional[str] = None
     kyc_status: str
@@ -96,7 +105,7 @@ class CustomerProfileResponse(BaseModel):
 
 
 class SellerProfileResponse(BaseModel):
-    id: UUID4
+    id: UUID
     business_name: str
     description: Optional[str] = None
     logo_url: Optional[str] = None
@@ -125,26 +134,26 @@ class FullUserProfileResponse(BaseModel):
 # ---------------- EMAIL VERIFICATION SCHEMAS ---------------- #
 
 class SendVerificationRequest(BaseModel):
-    email: EmailStr
+    email: str
     
     
 class VerifyEmailRequest(BaseModel):
-    email: EmailStr
+    email: str
     verification_code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$')
     
     
 class ResendVerificationRequest(BaseModel):
-    email: EmailStr
+    email: str
 
 
 # ---------------- PASSWORD RESET SCHEMAS ---------------- #
 
 class RequestPasswordResetRequest(BaseModel):
-    email: EmailStr
+    email: str
     
     
 class VerifyPasswordResetRequest(BaseModel):
-    email: EmailStr
+    email: str
     reset_code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$')
     new_password: str = Field(..., min_length=8)
     confirm_password: str

@@ -9,6 +9,7 @@ from routers import reviews as reviews_router
 from routers import checkout as checkout_router
 from routers import notifications as notifications_router
 from routers import seller as seller_router
+from routers import admin as admin_router
 from core.config import settings
 from db.session import engine
 from core.model import Base
@@ -89,6 +90,8 @@ app.include_router(notifications_router.router, prefix="/notifications", tags=["
 logger.debug("Registered notifications routes at /notifications")
 app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
 logger.debug("Registered seller routes at /seller")
+app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
+logger.debug("Registered admin routes at /admin")
 
 # Register global exception handlers
 logger.info("Registering global exception handlers")

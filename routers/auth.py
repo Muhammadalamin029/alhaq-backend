@@ -10,15 +10,13 @@ from core.auth_service import auth_service
 from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
 from db.session import get_db
 from schemas.auth import (
-    TokenResponse, RefreshRequest, RegisterRequest, UserRole,
+    LoginRequest, RegisterRequest, SellerRegisterRequest, TokenResponse, RefreshRequest,
     ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse,
-    SendVerificationRequest, VerifyEmailRequest, ResendVerificationRequest,
-    RequestPasswordResetRequest, VerifyPasswordResetRequest,
-    EmailVerificationResponse, PasswordResetResponse, LoginRequest
+    VerifyEmailRequest, ResendVerificationRequest, VerifyPasswordResetRequest,
+    EmailVerificationResponse, PasswordResetResponse, LoginRequest, SendVerificationRequest, RequestPasswordResetRequest
 )
 from sqlalchemy.exc import IntegrityError
 from core.logging_config import get_logger, log_auth_event, log_error
-
 # Get logger for auth routes
 auth_logger = get_logger("auth")
 
@@ -148,15 +146,30 @@ def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/register/seller", response_model=TokenResponse, status_code=201)
-def register_seller(body: RegisterRequest, db: Session = Depends(get_db)):
+def register_seller(body: SellerRegisterRequest, db: Session = Depends(get_db)):
     """Register a new seller and return authentication tokens"""
 
     try:
         auth_logger.info(f"Seller registration attempt: {body.email}")
         
-        user_id = auth_service.create_user(
-            db, body.email, body.password, "seller", body.full_name, body.bio
+        user_id = auth_service.create_seller(
+            db, 
+            email=body.email, 
+            password=body.password, 
+            business_name=body.business_name,
+            contact_email=body.contact_email,
+            contact_phone=body.contact_phone,
+            description=body.description,
+            website_url=body.website_url
         )
+        
+        # Send verification email
+        try:
+            auth_service.send_verification_email(db, body.email)
+            auth_logger.info(f"Verification email sent to seller: {body.email}")
+        except Exception as e:
+            auth_logger.warning(f"Failed to send verification email to {body.email}: {str(e)}")
+            # Don't fail registration if email sending fails
         
         # Log successful registration
         log_auth_event(
