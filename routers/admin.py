@@ -40,7 +40,7 @@ async def create_admin_user(
 ):
     """Create a new admin user (only accessible by existing admins)"""
     try:
-        admin_logger.info(f"Admin {current_admin['email']} attempting to create admin: {request.email}")
+        admin_logger.info(f"Admin attempting to create admin: {request.email}")
         
         # Check if user already exists
         existing_user = db.query(User).filter(User.email == request.email).first()
@@ -59,7 +59,7 @@ async def create_admin_user(
             description=request.description
         )
         
-        admin_logger.info(f"Admin user created: {request.email} (ID: {user_id}) by {current_admin['email']}")
+        admin_logger.info(f"Admin user created: {request.email} (ID: {user_id}) by")
         
         return AdminResponse(
             success=True,
@@ -436,7 +436,7 @@ async def get_admin_products(
             .join(SellerProfile, Product.seller_id == SellerProfile.id)
             .join(Category, Product.category_id == Category.id)
             .options(
-                joinedload(Product.seller_profile),
+                joinedload(Product.seller),
                 joinedload(Product.category)
             )
         )
@@ -482,9 +482,10 @@ async def get_admin_products(
                 created_at=product.created_at,
                 updated_at=product.updated_at,
                 seller_id=product.seller_id,
-                seller_name=product.seller_profile.business_name,
+                seller_name=product.seller.business_name,
                 category_id=product.category_id,
-                category_name=product.category.name
+                category_name=product.category.name,
+                images_count=len(product.images)
             )
             product_list.append(product_data.dict())
         
@@ -582,52 +583,173 @@ async def get_admin_orders(
         )
         
     except Exception as e:
-        log_error(admin_logger, f"Failed to fetch orders list", e)
+        log_error(admin_logger, f"Failed to fetch orders for admin", e)
         raise HTTPException(status_code=500, detail="Failed to fetch orders")
-
-
-@router.patch("/users/{user_id}/action", response_model=AdminResponse)
-async def admin_user_action(
-    user_id: UUID,
-    action: AdminUserActionRequest,
-    admin_user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Perform admin actions on users"""
-    try:
-        target_user = db.query(User).filter(User.id == user_id).first()
-        if not target_user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        if action.action == "lock_account":
-            hours = action.lock_duration_hours or 24
-            target_user.locked_until = datetime.utcnow() + timedelta(hours=hours)
-            message = f"User locked for {hours} hours"
-        elif action.action == "unlock_account":
-            target_user.locked_until = None
-            message = "User unlocked successfully"
-        elif action.action == "verify_email":
-            target_user.email_verified = True
-            target_user.email_verified_at = datetime.utcnow()
-            message = "User email verified"
-        elif action.action == "reset_login_attempts":
-            target_user.failed_login_attempts = 0
-            message = "Login attempts reset"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid action")
-        
-        db.commit()
-        
-        admin_logger.info(f"Admin {admin_user['id']} performed {action.action} on user {user_id}")
-        
-        return AdminResponse(
-            success=True,
-            message=message,
-            data={"user_id": str(user_id), "action": action.action}
-        )
         
     except HTTPException:
         raise
     except Exception as e:
         log_error(admin_logger, f"Failed to perform user action", e)
         raise HTTPException(status_code=500, detail="Failed to perform user action")
+
+
+@router.get("/products", response_model=AdminListResponse)
+async def get_admin_products(
+    current_admin=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    filters: AdminProductListFilters = Depends()
+):
+    """Get all platform products for admin oversight"""
+    try:
+        admin_logger.info(f"Admin fetching products - page: {page}, limit: {limit}")
+        
+        # Build base query with relationships
+        query = (
+            db.query(Product)
+            .options(
+                joinedload(Product.seller),
+                joinedload(Product.category),
+                joinedload(Product.images)
+            )
+        )
+        
+        # Apply filters
+        if filters.seller_id:
+            query = query.filter(Product.seller_id == filters.seller_id)
+        
+        if filters.category_id:
+            query = query.filter(Product.category_id == filters.category_id)
+        
+        if filters.status:
+            query = query.filter(Product.status == filters.status)
+        
+        if filters.min_price is not None:
+            query = query.filter(Product.price >= filters.min_price)
+        
+        if filters.max_price is not None:
+            query = query.filter(Product.price <= filters.max_price)
+        
+        if filters.search:
+            search_term = f"%{filters.search}%"
+            query = query.filter(
+                or_(
+                    Product.name.ilike(search_term),
+                    Product.description.ilike(search_term)
+                )
+            )
+        
+        if filters.created_after:
+            query = query.filter(Product.created_at >= filters.created_after)
+        
+        if filters.created_before:
+            query = query.filter(Product.created_at <= filters.created_before)
+        
+        # Get total count
+        total_products = query.count()
+        
+        # Apply pagination and ordering
+        products = (
+            query
+            .order_by(desc(Product.created_at))
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+        
+        # Format response
+        product_list = []
+        for product in products:
+            product_data = AdminProductListResponse(
+                id=product.id,
+                name=product.name,
+                description=product.description,
+                price=product.price,
+                stock_quantity=product.stock_quantity,
+                status=product.status,
+                seller_id=product.seller_id,
+                seller_name=product.seller.business_name if product.seller else "Unknown",
+                category_id=product.category_id,
+                category_name=product.category.name if product.category else "Uncategorized",
+                images_count=len(product.images) if product.images else 0,
+                created_at=product.created_at,
+                updated_at=product.updated_at
+            )
+            product_list.append(product_data.dict())
+        
+        return AdminListResponse(
+            success=True,
+            message="Products retrieved successfully",
+            data=product_list,
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_pages": (total_products + limit - 1) // limit,
+                "has_next": page * limit < total_products,
+                "has_prev": page > 1,
+                "total": total_products
+            }
+        )
+        
+    except Exception as e:
+        log_error(admin_logger, f"Failed to fetch products for admin", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch products")
+
+
+@router.patch("/products/{product_id}/status", response_model=AdminResponse)
+async def update_product_status(
+    product_id: UUID,
+    request: AdminProductActionRequest,
+    current_admin=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Update product status (admin moderation)"""
+    try:
+        admin_logger.info(f"Admin updating product {product_id} status to {request.action}")
+        
+        # Get product
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        # Update product status based on action
+        if request.action == "approve":
+            product.status = "active"
+        elif request.action == "reject":
+            product.status = "inactive"
+        elif request.action == "disable":
+            product.status = "inactive"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid action. Must be 'approve', 'reject', or 'disable'"
+            )
+        
+        product.updated_at = func.current_timestamp()
+        db.commit()
+        
+        admin_logger.info(f"Product {product_id} status updated to {product.status} by admin")
+        
+        return AdminResponse(
+            success=True,
+            message=f"Product {request.action}d successfully",
+            data={
+                "product_id": str(product_id),
+                "new_status": product.status,
+                "action": request.action,
+                "notes": request.notes
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to update product {product_id} status", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update product status"
+        )

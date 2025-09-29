@@ -1,9 +1,9 @@
-from pydantic import BaseModel, EmailStr, Field, validator, UUID4
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 from enum import Enum
 from decimal import Decimal
-
+from uuid import UUID
 
 # ---------------- ENUMS ----------------
 class UserActionType(str, Enum):
@@ -30,7 +30,7 @@ class ProductActionType(str, Enum):
 # ---------------- USER MANAGEMENT ----------------
 class AdminUserListResponse(BaseModel):
     """Admin view of user list - matches User model"""
-    id: UUID4
+    id: UUID
     email: str
     role: str
     email_verified: bool
@@ -49,7 +49,7 @@ class AdminUserListResponse(BaseModel):
 class AdminUserDetailResponse(BaseModel):
     """Detailed admin view of a user - matches User + Profile models"""
     # User fields
-    id: UUID4
+    id: UUID
     email: str
     role: str
     email_verified: bool
@@ -97,7 +97,7 @@ class AdminUserActionRequest(BaseModel):
 # ---------------- SELLER MANAGEMENT ----------------
 class AdminSellerListResponse(BaseModel):
     """Admin view of seller list - matches SellerProfile model"""
-    id: UUID4
+    id: UUID
     email: str  # From User
     business_name: str
     description: Optional[str] = None
@@ -127,7 +127,7 @@ class AdminSellerActionRequest(BaseModel):
 # ---------------- PRODUCT MANAGEMENT ----------------
 class AdminProductListResponse(BaseModel):
     """Admin view of product list - matches Product model"""
-    id: UUID4
+    id: UUID
     name: str
     description: Optional[str] = None
     price: Decimal
@@ -135,9 +135,9 @@ class AdminProductListResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
-    seller_id: UUID4
+    seller_id: UUID
     seller_name: str  # From SellerProfile.business_name
-    category_id: UUID4
+    category_id: UUID
     category_name: str  # From Category.name
     
     class Config:
@@ -146,12 +146,12 @@ class AdminProductListResponse(BaseModel):
 
 class AdminProductCreateRequest(BaseModel):
     """Admin create product request - matches Product model"""
-    seller_id: UUID4
+    seller_id: UUID
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=2000)
     price: Decimal = Field(..., gt=0, decimal_places=2)
     stock_quantity: int = Field(0, ge=0)
-    category_id: UUID4
+    category_id: UUID
     status: str = Field("active", pattern="^(active|inactive|out_of_stock)$")
 
 
@@ -161,7 +161,7 @@ class AdminProductUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
     price: Optional[Decimal] = Field(None, gt=0, decimal_places=2)
     stock_quantity: Optional[int] = Field(None, ge=0)
-    category_id: Optional[UUID4] = None
+    category_id: Optional[UUID] = None
     status: Optional[str] = Field(None, pattern="^(active|inactive|out_of_stock)$")
 
 
@@ -174,13 +174,13 @@ class AdminProductActionRequest(BaseModel):
 # ---------------- ORDER MANAGEMENT ----------------
 class AdminOrderListResponse(BaseModel):
     """Admin view of order list - matches Order model"""
-    id: UUID4
-    buyer_id: UUID4
+    id: UUID
+    buyer_id: UUID
     buyer_name: str  # From Profile.name
     buyer_email: str  # From User.email
     total_amount: Decimal
     status: str
-    delivery_address: Optional[UUID4] = None
+    delivery_address: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     items_count: int  # Calculated
@@ -222,7 +222,7 @@ class AdminRevenueByPeriod(BaseModel):
 
 class AdminTopSeller(BaseModel):
     """Top seller analytics"""
-    seller_id: UUID4
+    seller_id: UUID
     business_name: str
     total_revenue: Decimal
     total_orders: int
@@ -231,7 +231,7 @@ class AdminTopSeller(BaseModel):
 
 class AdminTopProduct(BaseModel):
     """Top product analytics"""
-    product_id: UUID4
+    product_id: UUID
     product_name: str
     seller_name: str
     total_sold: int
@@ -272,8 +272,8 @@ class AdminSellerListFilters(BaseModel):
 
 class AdminProductListFilters(BaseModel):
     """Filters for admin product list"""
-    seller_id: Optional[UUID4] = None
-    category_id: Optional[UUID4] = None
+    seller_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
     status: Optional[str] = Field(None, pattern="^(active|inactive|out_of_stock)$")
     search: Optional[str] = Field(None, max_length=255)  # Search product name
     low_stock: Optional[bool] = None  # Products with stock < 10
@@ -286,13 +286,53 @@ class AdminProductListFilters(BaseModel):
 class AdminOrderListFilters(BaseModel):
     """Filters for admin order list"""
     status: Optional[str] = Field(None, pattern="^(pending|processing|shipped|delivered|cancelled)$")
-    buyer_id: Optional[UUID4] = None
+    buyer_id: Optional[UUID] = None
     created_after: Optional[date] = None
     created_before: Optional[date] = None
     min_amount: Optional[Decimal] = Field(None, ge=0)
     max_amount: Optional[Decimal] = Field(None, ge=0)
     page: int = Field(1, ge=1)
     limit: int = Field(20, ge=1, le=100)
+
+
+class AdminProductListResponse(BaseModel):
+    """Product list item for admin"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    price: Decimal
+    stock_quantity: int
+    status: str
+    seller_id: UUID
+    seller_name: str
+    category_id: Optional[UUID] = None
+    category_name: str
+    images_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AdminProductListFilters(BaseModel):
+    """Filters for admin product list"""
+    seller_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
+    status: Optional[str] = Field(None, pattern="^(active|inactive|pending)$")
+    search: Optional[str] = Field(None, max_length=255)
+    min_price: Optional[Decimal] = Field(None, ge=0)
+    max_price: Optional[Decimal] = Field(None, ge=0)
+    created_after: Optional[date] = None
+    created_before: Optional[date] = None
+    page: int = Field(1, ge=1)
+    limit: int = Field(20, ge=1, le=100)
+
+
+class AdminProductActionRequest(BaseModel):
+    """Request for admin product actions"""
+    action: str = Field(..., pattern="^(approve|reject|disable)$")
+    notes: Optional[str] = Field(None, max_length=500)
 
 
 # ---------------- RESPONSE WRAPPERS ----------------
