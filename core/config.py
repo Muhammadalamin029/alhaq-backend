@@ -37,9 +37,6 @@ class Settings(BaseSettings):
     EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 15
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
     
-    # Frontend URLs (for email templates)
-    FRONTEND_URL: str = "http://localhost:3000"
-    
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
     JSON_LOGS: bool = False
