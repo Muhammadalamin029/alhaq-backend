@@ -18,9 +18,35 @@ depends_on = None
 def upgrade():
     # Add new values to the order_status enum
     # PostgreSQL requires using ALTER TYPE to add enum values
-    op.execute("ALTER TYPE order_status ADD VALUE 'partially_shipped'")
-    op.execute("ALTER TYPE order_status ADD VALUE 'partially_delivered'")
-    op.execute("ALTER TYPE order_status ADD VALUE 'partially_cancelled'")
+    # Check if values already exist before adding them
+    connection = op.get_bind()
+    
+    # Check if partially_shipped exists
+    result = connection.execute(sa.text("""
+        SELECT 1 FROM pg_enum 
+        WHERE enumlabel = 'partially_shipped' 
+        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')
+    """))
+    if not result.fetchone():
+        op.execute("ALTER TYPE order_status ADD VALUE 'partially_shipped'")
+    
+    # Check if partially_delivered exists
+    result = connection.execute(sa.text("""
+        SELECT 1 FROM pg_enum 
+        WHERE enumlabel = 'partially_delivered' 
+        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')
+    """))
+    if not result.fetchone():
+        op.execute("ALTER TYPE order_status ADD VALUE 'partially_delivered'")
+    
+    # Check if partially_cancelled exists
+    result = connection.execute(sa.text("""
+        SELECT 1 FROM pg_enum 
+        WHERE enumlabel = 'partially_cancelled' 
+        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')
+    """))
+    if not result.fetchone():
+        op.execute("ALTER TYPE order_status ADD VALUE 'partially_cancelled'")
 
 
 def downgrade():
@@ -36,3 +62,4 @@ def downgrade():
     # 4. Drop old enum
     
     pass  # No automatic downgrade possible
+
