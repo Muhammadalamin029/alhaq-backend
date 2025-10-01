@@ -10,6 +10,7 @@ from routers import (
     notifications as notifications_router,
     seller as seller_router,
     admin as admin_router,
+    payments
 )
 from core.config import settings
 from db.session import engine
@@ -65,7 +66,7 @@ except Exception as e:
 # CORS setup
 # ------------------------------------------------------
 origins = [
-    "http://localhost:3000",                 # Local dev FE
+    "http://localhost:8080",                 # Local dev FE
     "https://alhaq-frontend.vercel.app",     # Production FE (no trailing slash!)
 ]
 
@@ -93,6 +94,7 @@ app.include_router(checkout_router.router, prefix="/checkout", tags=["Checkout"]
 app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
 app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
+app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 
 # ------------------------------------------------------
 # Global exception handlers

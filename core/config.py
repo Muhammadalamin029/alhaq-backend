@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 15
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
     
+    # Paystack Configuration
+    PAYSTACK_SECRET_KEY: str = ""
+    PAYSTACK_PUBLIC_KEY: str = ""
+    PAYSTACK_WEBHOOK_SECRET: str = ""
+    
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
     JSON_LOGS: bool = False

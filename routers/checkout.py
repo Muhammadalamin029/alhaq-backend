@@ -115,9 +115,9 @@ async def process_checkout(
         product = db.query(Product).filter(Product.id == item.product_id).first()
         product.stock_quantity -= item.quantity
     
-    # Update order with delivery address and status
+    # Update order with delivery address (keep as pending until payment)
     pending_order.delivery_address = checkout_data.delivery_address_id
-    pending_order.status = "processing"
+    # Don't change status to processing yet - wait for payment confirmation
     
     # Add notes if provided
     if checkout_data.notes:

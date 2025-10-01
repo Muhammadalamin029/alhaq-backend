@@ -211,7 +211,7 @@ class Payment(Base):
                 default=func.gen_random_uuid())
     order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=True)
     amount = Column(DECIMAL(12, 2), nullable=False)
 
     status = Column(Enum("pending", "completed", "failed",

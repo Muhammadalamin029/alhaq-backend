@@ -392,8 +392,14 @@ class OrderService:
             
         return order
 
-    def get_orders_by_status(self, db: Session, user_id: str, status: str): return (self._with_relationships(
-        db.query(Order)) .filter(Order.status == status) .filter(Order.buyer_id == user_id) .first())
+    def get_orders_by_status(self, db: Session, user_id: str, status: str):
+        """Get order by status for a specific user"""
+        return (
+            self._with_relationships(db.query(Order))
+            .filter(Order.status == status)
+            .filter(Order.buyer_id == user_id)
+            .first()
+        )
 
     # ---------------- CREATE ----------------
     def create_order(

@@ -753,3 +753,75 @@ async def update_product_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update product status"
         )
+
+
+@router.patch("/users/{user_id}/action", response_model=AdminResponse)
+async def update_user_action(
+    user_id: UUID,
+    action: AdminUserActionRequest,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Update user action (lock, unlock, verify email, reset login attempts)"""
+    try:
+        # Get the target user
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Prevent admin from locking themselves
+        if str(target_user.id) == user["id"]:
+            raise HTTPException(status_code=400, detail="Cannot perform action on yourself")
+        
+        if action.action == "lock_account":
+            # Lock user account
+            if action.lock_duration_hours:
+                lock_until = datetime.utcnow() + timedelta(hours=action.lock_duration_hours)
+            else:
+                lock_until = datetime.utcnow() + timedelta(hours=24)  # Default 24 hours
+            
+            target_user.locked_until = lock_until
+            message = f"User account locked for {action.lock_duration_hours or 24} hours"
+            
+        elif action.action == "unlock_account":
+            # Unlock user account
+            target_user.locked_until = None
+            message = "User account unlocked"
+            
+        elif action.action == "verify_email":
+            # Verify user email
+            target_user.email_verified = True
+            target_user.email_verified_at = datetime.utcnow()
+            message = "User email verified"
+            
+        elif action.action == "reset_login_attempts":
+            # Reset failed login attempts
+            target_user.failed_login_attempts = 0
+            message = "Login attempts reset"
+            
+        else:
+            raise HTTPException(status_code=400, detail="Invalid action")
+        
+        # Update user
+        target_user.updated_at = func.current_timestamp()
+        db.commit()
+        
+        # Log the action
+        admin_logger.info(f"Admin {user['id']} performed {action.action} on user {user_id}. Reason: {action.reason}")
+        
+        return AdminResponse(
+            success=True,
+            message=message,
+            data={
+                "user_id": str(user_id),
+                "action": action.action,
+                "reason": action.reason,
+                "performed_by": user["id"]
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to perform user action {action.action}", e)
+        raise HTTPException(status_code=500, detail="Failed to perform user action")
