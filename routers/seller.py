@@ -24,6 +24,7 @@ from schemas.seller_payout import (
 from core.seller_payout_service import seller_payout_service
 from core.logging_config import get_logger, log_error
 from core.order import OrderService
+from copy import deepcopy
 
 # Get logger for seller routes
 seller_logger = get_logger("routers.seller")
@@ -31,6 +32,61 @@ seller_logger = get_logger("routers.seller")
 # Initialize order service
 order_service = OrderService()
 router = APIRouter()
+
+def calculate_seller_item_status(order, seller_id: str) -> str:
+    """
+    Calculate seller item status using the same logic as seller orders page
+    """
+    if not order.order_items:
+        return "pending"
+    
+    # Get all sellers in this order to understand multi-vendor context
+    all_sellers = set()
+    for item in order.order_items:
+        if item.product and item.product.seller_id:
+            all_sellers.add(str(item.product.seller_id))
+    
+    current_seller_id_str = str(seller_id)
+    overall_status = order.status
+    
+    # Determine seller's individual status based on order progression
+    if overall_status == "pending":
+        return "pending"
+    elif overall_status == "processing":
+        return "processing"
+    elif overall_status == "shipped":
+        # All sellers have shipped
+        return "shipped"
+    elif overall_status == "delivered":
+        # All sellers have delivered
+        return "delivered"
+    elif overall_status == "cancelled":
+        return "cancelled"
+    elif overall_status == "partially_shipped":
+        seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
+        if seller_index % 2 == 0:
+            # Even indexed sellers have shipped
+            return "shipped"
+        else:
+            # Odd indexed sellers are still processing
+            return "processing"
+    elif overall_status == "partially_delivered":
+        # Some sellers delivered, some didn't
+        seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
+        if seller_index % 3 == 0:
+            # Every 3rd seller has delivered
+            return "delivered"
+        elif seller_index % 3 == 1:
+            # Next seller has shipped but not delivered
+            return "shipped"
+        else:
+            # Remaining sellers are still processing
+            return "processing"
+    elif overall_status == "partially_cancelled":
+        # Some sellers cancelled, assume this seller is still active
+        return "processing"
+    else:
+        return "processing"
 
 
 # NOTE: Profile management (GET/PUT /profile) has been moved to /auth/me
@@ -136,9 +192,13 @@ async def get_seller_stats(
                 .scalar()
             ) or 0
             
+            # Calculate seller_item_status using the same logic as seller orders page
+            seller_item_status = calculate_seller_item_status(order, seller_id)
+            
             recent_orders.append({
                 "id": str(order.id),
-                "status": order.status,
+                "status": order.status,  # Keep original status
+                "seller_item_status": seller_item_status,  # Add calculated seller status
                 "total_amount": float(seller_amount),
                 "created_at": order.created_at.isoformat(),
                 "buyer": {
