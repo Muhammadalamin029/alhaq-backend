@@ -152,16 +152,8 @@ async def get_seller_stats(
             .count()
         )
         
-        # Get revenue (sum of order items for this seller)
-        revenue_result = (
-            db.query(func.sum(OrderItem.quantity * OrderItem.price))
-            .join(Product)
-            .join(Order)
-            .filter(Product.seller_id == seller_id, Order.status == "delivered")
-            .scalar()
-        )
-        
-        total_revenue = float(revenue_result) if revenue_result else 0.0
+        # Use stored total_revenue from seller profile for consistency with payout system
+        total_revenue = float(seller_profile.total_revenue) if seller_profile.total_revenue else 0.0
         
         # Get recent orders (last 5)
         recent_orders_query = (
