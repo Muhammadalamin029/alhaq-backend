@@ -4,6 +4,7 @@ from sqlalchemy import UUID, func
 from typing import List, Optional, Tuple, Dict
 from schemas.order import OrderItemCreate
 from core.inventory import inventory_service
+from core.seller_payout_service import seller_payout_service
 from fastapi import HTTPException, status
 from decimal import Decimal
 import logging
@@ -917,6 +918,9 @@ class OrderService:
                 db.flush()  # Ensure changes are written to DB
                 db.refresh(order)
 
+                # Update seller balances for this order
+                self.update_seller_balances_for_order(db, order_id, new_status)
+
                 logger.info(
                     f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
 
@@ -988,6 +992,44 @@ class OrderService:
             "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "valid_transitions": self.get_valid_status_transitions(order.status)
         }
+    
+    def update_seller_balances_for_order(self, db: Session, order_id: UUID, new_status: str):
+        """
+        Update seller balances when order status changes
+        
+        Args:
+            db: Database session
+            order_id: Order ID
+            new_status: New order status
+        """
+        try:
+            # Get all sellers involved in this order
+            order_items = (
+                db.query(OrderItem)
+                .join(Product)
+                .filter(OrderItem.order_id == order_id)
+                .all()
+            )
+            
+            # Group by seller
+            sellers_involved = set()
+            for item in order_items:
+                if item.product and item.product.seller_id:
+                    sellers_involved.add(str(item.product.seller_id))
+            
+            # Update balance for each seller
+            for seller_id in sellers_involved:
+                seller_payout_service.update_seller_balance(
+                    db=db,
+                    seller_id=seller_id,
+                    order_id=str(order_id),
+                    order_status=new_status
+                )
+                
+            logger.info(f"Updated seller balances for order {order_id} with status {new_status}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update seller balances for order {order_id}: {e}")
 
 
 order_service = OrderService()

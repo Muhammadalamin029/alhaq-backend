@@ -17,6 +17,11 @@ from schemas.seller import (
     SellerOrdersResponse,
     SellerAnalyticsResponse
 )
+from schemas.seller_payout import (
+    SellerPayoutCreate, SellerPayoutResponse, SellerPayoutListResponse,
+    SellerBalanceResponse, SellerBalanceData, PayoutRequestResponse
+)
+from core.seller_payout_service import seller_payout_service
 from core.logging_config import get_logger, log_error
 from core.order import OrderService
 
@@ -711,4 +716,156 @@ async def update_seller_order_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update order status"
+        )
+
+
+# ---------------- SELLER PAYOUT ENDPOINTS ----------------
+
+@router.get("/balance", response_model=SellerBalanceResponse)
+async def get_seller_balance(
+    user=Depends(role_required(["seller"])),
+    db: Session = Depends(get_db)
+):
+    """Get seller balance and payout information"""
+    try:
+        seller_id = user["id"]
+        
+        seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
+        if not seller:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Seller profile not found"
+            )
+        
+        balance_data = SellerBalanceData(
+            available_balance=seller.available_balance,
+            pending_balance=seller.pending_balance,
+            total_paid=seller.total_paid,
+            total_revenue=seller.total_revenue,
+            platform_fee_rate=seller_payout_service.PLATFORM_FEE_RATE,
+            payout_account_configured=bool(seller.payout_recipient_code)
+        )
+        
+        return SellerBalanceResponse(
+            success=True,
+            message="Balance retrieved successfully",
+            data=balance_data.model_dump()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        seller_logger.error(f"Failed to get seller balance: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve balance"
+        )
+
+@router.post("/payouts", response_model=PayoutRequestResponse)
+async def request_payout(
+    payout_data: SellerPayoutCreate,
+    user=Depends(role_required(["seller"])),
+    db: Session = Depends(get_db)
+):
+    """Request a payout for seller earnings"""
+    try:
+        seller_id = user["id"]
+        
+        # Validate payout amount
+        if payout_data.amount <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Payout amount must be greater than 0"
+            )
+        
+        # Create payout request
+        payout = seller_payout_service.create_payout(
+            db=db,
+            seller_id=seller_id,
+            amount=payout_data.amount,
+            account_number=payout_data.account_number,
+            bank_code=payout_data.bank_code,
+            bank_name=payout_data.bank_name
+        )
+        
+        # Create notification for payout request
+        from core.notifications_service import create_notification
+        create_notification(db, {
+            "user_id": str(seller_id),
+            "type": "payment_successful",  # Using existing type
+            "title": "Payout Requested",
+            "message": f"Your payout request of ₦{payout_data.amount:,.2f} has been submitted and is being processed.",
+            "priority": "medium",
+            "channels": ["in_app"],
+            "data": {
+                "payout_id": str(payout.id),
+                "amount": float(payout_data.amount),
+                "status": "pending"
+            }
+        })
+        
+        return PayoutRequestResponse(
+            success=True,
+            message="Payout request submitted successfully",
+            data=SellerPayoutResponse.model_validate(payout).model_dump()
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        seller_logger.error(f"Failed to create payout request: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create payout request"
+        )
+
+@router.get("/payouts", response_model=SellerPayoutListResponse)
+async def get_seller_payouts(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    user=Depends(role_required(["seller"])),
+    db: Session = Depends(get_db)
+):
+    """Get seller payout history"""
+    try:
+        seller_id = user["id"]
+        
+        payouts, total_count = seller_payout_service.get_seller_payouts(
+            db=db,
+            seller_id=seller_id,
+            limit=limit,
+            page=page
+        )
+        
+        payout_responses = [
+            SellerPayoutResponse.model_validate(payout).model_dump() 
+            for payout in payouts
+        ]
+        
+        total_pages = (total_count + limit - 1) // limit
+        
+        return SellerPayoutListResponse(
+            success=True,
+            message="Payouts retrieved successfully",
+            data=payout_responses,
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_count": total_count,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1
+            }
+        )
+        
+    except Exception as e:
+        seller_logger.error(f"Failed to get seller payouts: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve payouts"
         )

@@ -17,6 +17,11 @@ from schemas.admin import (
 )
 from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
+from core.notifications_service import create_notification
+from core.seller_payout_service import seller_payout_service
+from schemas.seller_payout import (
+    AdminPayoutListResponse, PayoutProcessRequest, PayoutProcessResponse
+)
 from pydantic import BaseModel, Field
 
 # Get logger for admin routes
@@ -390,10 +395,47 @@ async def update_seller_kyc_status(
             seller.kyc_status = "approved"
             seller.approval_date = datetime.utcnow().date()
             message = "Seller KYC approved successfully"
+            
+            # Create notification for KYC approval
+            try:
+                create_notification(db, {
+                    "user_id": str(seller.id),
+                    "type": "account_verified",
+                    "title": "KYC Approved!",
+                    "message": f"Congratulations! Your KYC verification has been approved. You can now start selling on our platform.",
+                    "priority": "high",
+                    "channels": ["in_app", "email"],
+                    "data": {
+                        "seller_id": str(seller.id),
+                        "kyc_status": "approved",
+                        "approval_date": seller.approval_date.isoformat()
+                    }
+                })
+            except Exception as e:
+                admin_logger.error(f"Failed to create KYC approval notification: {e}")
+                
         elif action.action == "reject_kyc":
             seller.kyc_status = "rejected"
             seller.approval_date = None
             message = "Seller KYC rejected"
+            
+            # Create notification for KYC rejection
+            try:
+                create_notification(db, {
+                    "user_id": str(seller.id),
+                    "type": "account_verified",
+                    "title": "KYC Verification Required",
+                    "message": f"Your KYC verification was not approved. Please review your documents and resubmit for verification.",
+                    "priority": "high",
+                    "channels": ["in_app", "email"],
+                    "data": {
+                        "seller_id": str(seller.id),
+                        "kyc_status": "rejected",
+                        "action_required": True
+                    }
+                })
+            except Exception as e:
+                admin_logger.error(f"Failed to create KYC rejection notification: {e}")
         else:
             raise HTTPException(status_code=400, detail="Invalid action")
         
@@ -825,3 +867,89 @@ async def update_user_action(
     except Exception as e:
         log_error(admin_logger, f"Failed to perform user action {action.action}", e)
         raise HTTPException(status_code=500, detail="Failed to perform user action")
+
+
+# ---------------- ADMIN PAYOUT MANAGEMENT ----------------
+
+@router.get("/payouts", response_model=AdminPayoutListResponse)
+async def get_pending_payouts(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get all pending payouts for admin processing"""
+    try:
+        payouts = seller_payout_service.get_pending_payouts(db=db, limit=limit)
+        
+        payout_responses = [
+            {
+                "id": str(payout.id),
+                "seller_id": str(payout.seller_id),
+                "amount": float(payout.amount),
+                "platform_fee": float(payout.platform_fee),
+                "net_amount": float(payout.net_amount),
+                "status": payout.status,
+                "transfer_reference": payout.transfer_reference,
+                "account_number": payout.account_number,
+                "bank_code": payout.bank_code,
+                "bank_name": payout.bank_name,
+                "created_at": payout.created_at.isoformat(),
+                "seller": {
+                    "business_name": payout.seller.business_name,
+                    "contact_email": payout.seller.contact_email
+                } if payout.seller else None
+            }
+            for payout in payouts
+        ]
+        
+        return AdminPayoutListResponse(
+            success=True,
+            message="Pending payouts retrieved successfully",
+            data=payout_responses,
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_count": len(payout_responses),
+                "total_pages": 1,
+                "has_next": False,
+                "has_prev": False
+            }
+        )
+        
+    except Exception as e:
+        log_error(admin_logger, f"Failed to get pending payouts", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve pending payouts"
+        )
+
+@router.post("/payouts/process", response_model=PayoutProcessResponse)
+async def process_payout(
+    request: PayoutProcessRequest,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Process a pending payout"""
+    try:
+        success = seller_payout_service.process_payout(db=db, payout_id=request.payout_id)
+        
+        if success:
+            return PayoutProcessResponse(
+                success=True,
+                message="Payout processing initiated successfully",
+                data={"payout_id": request.payout_id, "status": "processing"}
+            )
+        else:
+            return PayoutProcessResponse(
+                success=False,
+                message="Failed to process payout",
+                data={"payout_id": request.payout_id, "status": "failed"}
+            )
+        
+    except Exception as e:
+        log_error(admin_logger, f"Failed to process payout {request.payout_id}", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process payout"
+        )

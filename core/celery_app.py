@@ -39,8 +39,7 @@ celery_app.conf.update(
     },
 )
 
-# Required for rediss:// on Railway/Upstash/etc.
-celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": "CERT_NONE"}
-celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": "CERT_NONE"}
+# SSL configuration only for production with rediss:// URLs
+# For local development with redis://, SSL is not needed
 
 celery_app.autodiscover_tasks(["core"], force=True)

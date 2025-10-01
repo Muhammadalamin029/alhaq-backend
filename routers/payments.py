@@ -24,6 +24,7 @@ from schemas.payment import (
     PaymentListResponse
 )
 from core.logging_config import get_logger, log_error
+from core.notifications_service import create_notification
 
 # Get logger for payment routes
 payment_logger = get_logger("routers.payments")
@@ -174,10 +175,49 @@ async def verify_payment(
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
                 order.status = "processing"
+                
+                # Create notification for successful payment
+                try:
+                    create_notification(db, {
+                        "user_id": str(payment.buyer_id),
+                        "type": "payment_successful",
+                        "title": "Payment Successful",
+                        "message": f"Your payment of ₦{payment.amount:,.2f} has been processed successfully. Order #{str(order.id)[:8]} is now being processed.",
+                        "priority": "high",
+                        "channels": ["in_app", "email"],
+                        "to_email": request.email if hasattr(request, 'email') else None,
+                        "data": {
+                            "order_id": str(order.id),
+                            "payment_id": str(payment.id),
+                            "amount": float(payment.amount)
+                        }
+                    })
+                except Exception as e:
+                    payment_logger.error(f"Failed to create payment success notification: {e}")
             
             payment_logger.info(f"Payment verified successfully: {request.reference}")
         else:
             payment.status = "failed"
+            
+            # Create notification for failed payment
+            try:
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_failed",
+                    "title": "Payment Failed",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} could not be processed. Please try again or contact support.",
+                    "priority": "high",
+                    "channels": ["in_app", "email"],
+                    "to_email": request.email if hasattr(request, 'email') else None,
+                    "data": {
+                        "order_id": str(payment.order_id),
+                        "payment_id": str(payment.id),
+                        "amount": float(payment.amount)
+                    }
+                })
+            except Exception as e:
+                payment_logger.error(f"Failed to create payment failure notification: {e}")
+            
             payment_logger.warning(f"Payment verification failed: {request.reference}")
         
         db.commit()
@@ -207,50 +247,103 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         # Verify webhook signature
         signature = request.headers.get("x-paystack-signature")
         if not signature:
+            payment_logger.warning("Webhook request missing signature")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Missing signature"
             )
         
-        # Verify signature (implement proper verification)
-        # For now, we'll process the webhook without verification
-        # In production, implement proper HMAC verification
+        # Verify signature
+        if not paystack_service.verify_webhook_signature(body, signature):
+            payment_logger.warning("Webhook signature verification failed")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid signature"
+            )
         
         webhook_data = json.loads(body)
         event = webhook_data.get("event")
         data = webhook_data.get("data", {})
         
+        payment_logger.info(f"Processing webhook event: {event}")
+        
+        # Handle different webhook events
+        reference = data.get("reference")
+        if not reference:
+            payment_logger.warning(f"No reference found in webhook event: {event}")
+            return {"status": "ignored", "reason": "no_reference"}
+        
+        # Find payment record
+        payment = db.query(Payment).filter(
+            Payment.transaction_id == reference
+        ).first()
+        
+        if not payment:
+            payment_logger.warning(f"Payment not found for reference: {reference}")
+            return {"status": "ignored", "reason": "payment_not_found"}
+        
+        # Check if already processed (idempotency)
+        if payment.status in ["completed", "failed"]:
+            payment_logger.info(f"Payment {reference} already processed with status: {payment.status}")
+            return {"status": "ignored", "reason": "already_processed"}
+        
         if event == "charge.success":
             # Handle successful payment
-            reference = data.get("reference")
-            if reference:
-                payment = db.query(Payment).filter(
-                    Payment.transaction_id == reference
-                ).first()
+            payment.status = "completed"
+            
+            # Update order status
+            order = db.query(Order).filter(Order.id == payment.order_id).first()
+            if order:
+                order.status = "processing"
                 
-                if payment and payment.status == "pending":
-                    payment.status = "completed"
-                    
-                    # Update order status
-                    order = db.query(Order).filter(Order.id == payment.order_id).first()
-                    if order:
-                        order.status = "processing"
-                    
-                    db.commit()
-                    payment_logger.info(f"Webhook: Payment completed for {reference}")
-        
+                # Create notification for successful payment
+                try:
+                    create_notification(db, {
+                        "user_id": str(payment.buyer_id),
+                        "type": "payment_successful",
+                        "title": "Payment Successful",
+                        "message": f"Your payment of ₦{payment.amount:,.2f} has been processed successfully. Order #{str(order.id)[:8]} is now being processed.",
+                        "priority": "high",
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "order_id": str(order.id),
+                            "payment_id": str(payment.id),
+                            "amount": float(payment.amount)
+                        }
+                    })
+                except Exception as e:
+                    payment_logger.error(f"Failed to create webhook payment success notification: {e}")
+            
+            db.commit()
+            payment_logger.info(f"Webhook: Payment completed for {reference}")
+            
         elif event == "charge.failed":
             # Handle failed payment
-            reference = data.get("reference")
-            if reference:
-                payment = db.query(Payment).filter(
-                    Payment.transaction_id == reference
-                ).first()
-                
-                if payment and payment.status == "pending":
-                    payment.status = "failed"
-                    db.commit()
-                    payment_logger.warning(f"Webhook: Payment failed for {reference}")
+            payment.status = "failed"
+            db.commit()
+            payment_logger.warning(f"Webhook: Payment failed for {reference}")
+            
+        elif event == "charge.dispute.create":
+            # Handle dispute creation
+            payment.status = "disputed"
+            db.commit()
+            payment_logger.warning(f"Webhook: Payment disputed for {reference}")
+            
+        elif event == "transfer.success":
+            # Handle successful transfer (seller payout)
+            from core.seller_payout_service import seller_payout_service
+            seller_payout_service.handle_payout_webhook(db, data)
+            payment_logger.info(f"Webhook: Transfer successful for {reference}")
+            
+        elif event == "transfer.failed":
+            # Handle failed transfer (seller payout)
+            from core.seller_payout_service import seller_payout_service
+            seller_payout_service.handle_payout_webhook(db, data)
+            payment_logger.warning(f"Webhook: Transfer failed for {reference}")
+            
+        else:
+            # Log unhandled events
+            payment_logger.info(f"Unhandled webhook event: {event} for reference: {reference}")
         
         return {"status": "success"}
         
@@ -259,6 +352,28 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Webhook processing failed"
+        )
+
+@router.post("/webhook/test")
+async def test_webhook(request: Request, db: Session = Depends(get_db)):
+    """Test webhook endpoint for development"""
+    try:
+        body = await request.body()
+        webhook_data = json.loads(body)
+        
+        payment_logger.info(f"Test webhook received: {webhook_data}")
+        
+        return {
+            "status": "success",
+            "message": "Test webhook processed",
+            "received_data": webhook_data
+        }
+        
+    except Exception as e:
+        log_error(payment_logger, "Test webhook failed", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Test webhook failed"
         )
 
 @router.get("/banks", response_model=BankResponse)

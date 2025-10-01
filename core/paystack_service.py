@@ -1,5 +1,7 @@
 import requests
 import logging
+import hmac
+import hashlib
 from typing import Dict, Any, Optional
 from core.config import settings
 
@@ -18,6 +20,8 @@ class PaystackService:
         # Check if keys are configured
         if not self.secret_key or not self.public_key:
             logger.warning("Paystack keys not configured. Payment functionality will not work.")
+        
+        self.webhook_secret = settings.PAYSTACK_WEBHOOK_SECRET
 
     def initialize_transaction(self, email: str, amount: int, reference: str, metadata: Optional[Dict] = None) -> Dict[str, Any]:
         """
@@ -261,6 +265,36 @@ class PaystackService:
         except requests.exceptions.RequestException as e:
             logger.error(f"Paystack status error: {str(e)}")
             raise Exception(f"Failed to get transaction status: {str(e)}")
+
+    def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """
+        Verify Paystack webhook signature using HMAC SHA512
+        
+        Args:
+            payload: Raw webhook payload
+            signature: X-Paystack-Signature header value
+            
+        Returns:
+            bool: True if signature is valid
+        """
+        if not self.webhook_secret:
+            logger.warning("Webhook secret not configured. Skipping signature verification.")
+            return True  # Allow in development
+        
+        try:
+            # Create HMAC signature
+            expected_signature = hmac.new(
+                self.webhook_secret.encode('utf-8'),
+                payload,
+                hashlib.sha512
+            ).hexdigest()
+            
+            # Compare signatures using constant-time comparison
+            return hmac.compare_digest(expected_signature, signature)
+            
+        except Exception as e:
+            logger.error(f"Webhook signature verification failed: {str(e)}")
+            return False
 
 # Global instance
 paystack_service = PaystackService()

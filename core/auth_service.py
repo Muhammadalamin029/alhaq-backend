@@ -9,6 +9,7 @@ from core.model import User, Profile, SellerProfile
 from core.auth import hashpassword, verify_password
 from core.password_policy import PasswordPolicy, validate_password_change
 from schemas.auth import UserRole, UserProfileResponse, CustomerProfileResponse, SellerProfileResponse
+from core.notifications_service import create_notification
 
 
 class AuthService:
@@ -54,6 +55,26 @@ class AuthService:
         db.add(profile)
         db.commit()
         db.refresh(user)
+        
+        # Create welcome notification
+        try:
+            create_notification(db, {
+                "user_id": str(user.id),
+                "type": "account_verified",
+                "title": "Welcome to Alhaq!",
+                "message": f"Welcome {full_name}! Your account has been created successfully. Start exploring our marketplace.",
+                "priority": "medium",
+                "channels": ["in_app", "email"],
+                "data": {
+                    "user_id": str(user.id),
+                    "role": role.value,
+                    "welcome": True
+                }
+            })
+        except Exception as e:
+            # Log error but don't fail user creation
+            print(f"Failed to create welcome notification: {e}")
+        
         return str(user.id)
 
     def create_seller(self, db: Session, email: str, password: str, business_name: str, 

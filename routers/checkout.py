@@ -16,6 +16,7 @@ from schemas.checkout import (
     OrderConfirmationResponse
 )
 from schemas.order import OrderResponse
+from core.notifications_service import create_notification
 
 router = APIRouter()
 
@@ -140,6 +141,26 @@ async def process_checkout(
         estimated_delivery=estimated_delivery,
         tracking_number=tracking_number
     )
+    
+    # Create order confirmation notification
+    try:
+        create_notification(db, {
+            "user_id": str(pending_order.buyer_id),
+            "type": "order_confirmed",
+            "title": "Order Confirmed",
+            "message": f"Your order #{str(pending_order.id)[:8]} has been confirmed and is ready for payment. Total: ₦{pending_order.total_amount:,.2f}",
+            "priority": "high",
+            "channels": ["in_app", "email"],
+            "data": {
+                "order_id": str(pending_order.id),
+                "total_amount": float(pending_order.total_amount),
+                "tracking_number": tracking_number,
+                "estimated_delivery": estimated_delivery
+            }
+        })
+    except Exception as e:
+        # Log error but don't fail the checkout
+        print(f"Failed to create order confirmation notification: {e}")
     
     return OrderConfirmationResponse(
         success=True,

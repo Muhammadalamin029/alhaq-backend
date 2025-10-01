@@ -94,10 +94,19 @@ class SellerProfile(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
 
+    # Payout and earnings tracking
+    available_balance = Column(DECIMAL(12, 2), default=0)  # Available for payout
+    pending_balance = Column(DECIMAL(12, 2), default=0)    # Pending from recent orders
+    total_paid = Column(DECIMAL(12, 2), default=0)         # Total amount paid out
+    payout_account_number = Column(String(20), nullable=True)
+    payout_bank_code = Column(String(10), nullable=True)
+    payout_recipient_code = Column(String(50), nullable=True)  # Paystack recipient code
+    
     # Relationships
     user = relationship("User", back_populates="seller_profile")
     products = relationship("Product", back_populates="seller")
     payments = relationship("Payment", back_populates="seller")
+    payouts = relationship("SellerPayout", back_populates="seller")
 
 
 # ---------------- CATEGORIES ----------------
@@ -227,6 +236,41 @@ class Payment(Base):
     order = relationship("Order", back_populates="payments")
     buyer = relationship("Profile", back_populates="payments")
     seller = relationship("SellerProfile", back_populates="payments")
+
+
+# ---------------- SELLER PAYOUTS ----------------
+class SellerPayout(Base):
+    __tablename__ = "seller_payouts"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False, index=True)
+    amount = Column(DECIMAL(12, 2), nullable=False)
+    platform_fee = Column(DECIMAL(12, 2), default=0)  # Platform commission
+    net_amount = Column(DECIMAL(12, 2), nullable=False)  # Amount after fees
+    
+    status = Column(Enum("pending", "processing", "completed", "failed", "cancelled",
+                        name="payout_status"), default="pending")
+    
+    # Paystack transfer details
+    transfer_reference = Column(String(100), nullable=True, unique=True)
+    paystack_transfer_id = Column(String(100), nullable=True)
+    recipient_code = Column(String(50), nullable=True)
+    
+    # Bank details used for payout
+    account_number = Column(String(20), nullable=True)
+    bank_code = Column(String(10), nullable=True)
+    bank_name = Column(String(100), nullable=True)
+    
+    # Processing details
+    processed_at = Column(TIMESTAMP, nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
+                       onupdate=func.current_timestamp())
+    
+    # Relationships
+    seller = relationship("SellerProfile", back_populates="payouts")
 
 
 # ---------------- REVIEWS ----------------
