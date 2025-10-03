@@ -676,15 +676,16 @@ class OrderService:
         """Get valid status transitions from current status"""
         transitions = {
             "pending": ["processing", "cancelled"],
-            "processing": ["shipped", "cancelled"],
+            "processing": ["paid", "cancelled"],
+            "paid": ["shipped", "cancelled"],
             "shipped": ["delivered"],
             "delivered": [],  # Final state
             "cancelled": []  # Final state
         }
         if user_role == "seller":
-            # More flexible transitions for sellers until we implement item-level status
-            transitions["pending"].append("shipped")
-            transitions["processing"].append("delivered")
+            # Sellers can only transition through the proper flow: processing -> paid -> shipped -> delivered
+            # No shortcuts allowed - must follow the payment flow
+            pass
         return transitions.get(current_status, [])
 
     def validate_status_transition(self, current_status: str, new_status: str, user_role: str = None) -> bool:
@@ -980,11 +981,11 @@ class OrderService:
                         pass
                     
                     # Fallback: Update entire order status (temporary until DB is updated)
-                    # Sellers can only mark orders as processing, shipped or delivered
-                    if new_status not in ["processing", "shipped", "delivered"]:
+                    # Sellers can only mark orders as shipped or delivered (paid status is set by payment system)
+                    if new_status not in ["shipped", "delivered"]:
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Sellers can only mark orders as processing, shipped or delivered"
+                            detail="Sellers can only mark orders as shipped or delivered. Processing and paid statuses are managed by the payment system."
                         )
 
                 elif user_role == "customer":

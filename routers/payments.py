@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional
 import hashlib
 import hmac
@@ -51,10 +52,23 @@ async def initialize_payment(
                 detail="Order not found"
             )
         
-        if order.status != "pending":
+        if order.status not in ["pending", "processing"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Order is not in pending status"
+                detail="Order is not in pending or processing status"
+            )
+        
+        # Check if payment URL already exists and reuse it
+        if order.payment_url and order.status == "processing":
+            payment_logger.info(f"Reusing existing payment URL for order {order.id}")
+            return PaymentInitializeResponse(
+                success=True,
+                message="Payment URL retrieved successfully",
+                data={
+                    "authorization_url": order.payment_url,
+                    "access_code": order.payment_reference,
+                    "reference": order.payment_reference
+                }
             )
         
         # Generate unique reference
@@ -105,7 +119,10 @@ async def initialize_payment(
                 amount=request.amount / 100,  # Convert from kobo to NGN
                 status="pending",
                 payment_method="paystack",
-                transaction_id=reference
+                transaction_id=reference,
+                authorization_url=paystack_response["data"]["authorization_url"],
+                access_code=paystack_response["data"]["access_code"],
+                reference=reference
             )
         except Exception as db_error:
             if "seller_id" in str(db_error) and "null value" in str(db_error):
@@ -118,6 +135,13 @@ async def initialize_payment(
             else:
                 raise db_error
         db.add(payment)
+        
+        # Update order status to processing and store payment URLs
+        order.status = "processing"
+        order.payment_url = paystack_response["data"]["authorization_url"]
+        order.payment_reference = reference
+        order.payment_initialized_at = func.current_timestamp()
+        
         db.commit()
         
         payment_logger.info(f"Payment initialized for order {order.id}: {reference}")
@@ -175,12 +199,12 @@ async def verify_payment(
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
                 old_status = order.status
-                order.status = "processing"
+                order.status = "paid"
                 
                 # Update seller balances for this order
                 from core.seller_payout_service import seller_payout_service
                 from core.order import order_service
-                order_service.update_seller_balances_for_order(db, order.id, "processing", old_status)
+                order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
                 
                 # Create notification for successful payment (Customer)
                 try:
@@ -344,12 +368,12 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
                 old_status = order.status
-                order.status = "processing"
+                order.status = "paid"
                 
                 # Update seller balances for this order
                 from core.seller_payout_service import seller_payout_service
                 from core.order import order_service
-                order_service.update_seller_balances_for_order(db, order.id, "processing", old_status)
+                order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
                 
                 # Create notification for successful payment (Customer)
                 try:

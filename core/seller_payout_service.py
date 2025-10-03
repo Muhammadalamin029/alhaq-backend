@@ -102,6 +102,14 @@ class SellerPayoutService:
                     seller.available_balance += earnings["net_amount"]
                     logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available (shipped)")
                 
+            elif order_status == "paid":
+                # Move from processing to available balance when payment is confirmed
+                if old_status == "processing":
+                    seller.pending_balance -= earnings["net_amount"]
+                    seller.available_balance += earnings["net_amount"]
+                    seller.total_revenue += earnings["gross_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available (paid)")
+                
             elif order_status == "processing":
                 # Move to pending balance
                 if old_status in ["pending", None]:
@@ -113,6 +121,10 @@ class SellerPayoutService:
                 if old_status == "processing":
                     seller.pending_balance -= earnings["net_amount"]
                     logger.info(f"Updated seller {seller_id} balance: -{earnings['net_amount']} pending (cancelled)")
+                elif old_status == "paid":
+                    seller.available_balance -= earnings["net_amount"]
+                    seller.total_revenue -= earnings["gross_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: -{earnings['net_amount']} available (cancelled from paid)")
                 elif old_status == "shipped":
                     seller.available_balance -= earnings["net_amount"]
                     logger.info(f"Updated seller {seller_id} balance: -{earnings['net_amount']} available (cancelled)")

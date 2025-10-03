@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, Category
+from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, Category, Payment
 from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
     AdminSellerListResponse, AdminProductListResponse, AdminOrderListResponse,
@@ -100,11 +100,11 @@ async def get_admin_dashboard_stats(
         total_products = db.query(Product).count()
         total_orders = db.query(Order).count()
         
-        # Revenue calculation
+        # Revenue calculation - include all paid orders (processing, shipped, delivered)
         total_revenue = (
             db.query(func.sum(OrderItem.quantity * OrderItem.price))
             .join(Order)
-            .filter(Order.status == "delivered")
+            .filter(Order.status.in_(["processing", "shipped", "delivered"]))
             .scalar() or 0
         )
         
@@ -127,7 +127,7 @@ async def get_admin_dashboard_stats(
             .join(Order)
             .filter(
                 func.date(Order.created_at) == today,
-                Order.status == "delivered"
+                Order.status.in_(["processing", "shipped", "delivered"])
             )
             .scalar() or 0
         )
@@ -157,11 +157,18 @@ async def get_admin_dashboard_stats(
             .count()
         )
         
+        # Calculate actual total payments
+        total_payments = (
+            db.query(Payment)
+            .filter(Payment.status == "completed")
+            .count()
+        )
+        
         stats = AdminDashboardStats(
             total_users=total_users,
             total_products=total_products,
             total_orders=total_orders,
-            total_payments=total_orders,  # Simplified
+            total_payments=total_payments,  # Actual payment count
             total_revenue=float(total_revenue),
             new_users_today=new_users_today,
             new_orders_today=new_orders_today,
@@ -181,6 +188,48 @@ async def get_admin_dashboard_stats(
     except Exception as e:
         log_error(admin_logger, f"Failed to fetch admin dashboard stats", e)
         raise HTTPException(status_code=500, detail="Failed to fetch dashboard stats")
+
+
+@router.get("/analytics/order-status", response_model=AdminResponse)
+async def get_admin_order_status_analytics(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get order status breakdown for admin analytics"""
+    try:
+        # Order status counts
+        order_status_counts = (
+            db.query(
+                Order.status,
+                func.count(Order.id).label('count')
+            )
+            .group_by(Order.status)
+            .all()
+        )
+        
+        # Convert to dictionary for easier access
+        status_breakdown = {status: count for status, count in order_status_counts}
+        
+        # Calculate percentages
+        total_orders = sum(status_breakdown.values())
+        status_percentages = {
+            status: (count / total_orders * 100) if total_orders > 0 else 0
+            for status, count in status_breakdown.items()
+        }
+        
+        return AdminResponse(
+            success=True,
+            message="Order status analytics retrieved successfully",
+            data={
+                "status_breakdown": status_breakdown,
+                "status_percentages": status_percentages,
+                "total_orders": total_orders
+            }
+        )
+        
+    except Exception as e:
+        log_error(admin_logger, f"Failed to fetch order status analytics", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch order status analytics")
 
 
 @router.get("/users", response_model=AdminListResponse)
@@ -567,7 +616,7 @@ async def get_admin_orders(
         query = (
             db.query(Order)
             .join(Profile, Order.buyer_id == Profile.id)
-            .join(User, Profile.user_id == User.id)
+            .join(User, Profile.id == User.id)
             .options(
                 joinedload(Order.buyer).joinedload(Profile.user),
                 joinedload(Order.order_items)
@@ -627,12 +676,106 @@ async def get_admin_orders(
     except Exception as e:
         log_error(admin_logger, f"Failed to fetch orders for admin", e)
         raise HTTPException(status_code=500, detail="Failed to fetch orders")
+
+
+@router.get("/orders/{order_id}", response_model=AdminResponse)
+async def get_admin_order_details(
+    order_id: UUID,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get detailed information about a specific order for admin"""
+    try:
+        # Get order with all related data (excluding payments - we'll query them separately)
+        order = (
+            db.query(Order)
+            .join(Profile, Order.buyer_id == Profile.id)
+            .join(User, Profile.id == User.id)
+            .options(
+                joinedload(Order.buyer).joinedload(Profile.user),
+                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.images),
+                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.seller),
+                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.category),
+                joinedload(Order.delivery_addr),
+                # Removed joinedload(Order.payments) - we'll query payments separately
+            )
+            .filter(Order.id == order_id)
+            .first()
+        )
+        
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        
+        # Query payments separately to ensure we get only payments for this order
+        order_payments = (
+            db.query(Payment)
+            .filter(Payment.order_id == order.id)
+            .all()
+        )
+        
+        # Format order data
+        order_data = {
+            "id": str(order.id),
+            "buyer_id": str(order.buyer_id),
+            "buyer_name": order.buyer.name if order.buyer else "Unknown",
+            "buyer_email": order.buyer.user.email if order.buyer and order.buyer.user else "Unknown",
+            "total_amount": float(order.total_amount),
+            "status": order.status,
+            "delivery_address": order.delivery_address,
+            "created_at": order.created_at.isoformat(),
+            "updated_at": order.updated_at.isoformat(),
+            "order_items": [
+                {
+                    "id": str(item.id),
+                    "product": {
+                        "id": str(item.product.id),
+                        "name": item.product.name,
+                        "description": item.product.description,
+                        "price": float(item.product.price),
+                        "images": [
+                            {
+                                "id": str(img.id),
+                                "image_url": img.image_url
+                            } for img in item.product.images
+                        ],
+                        "seller": {
+                            "id": str(item.product.seller.id),
+                            "business_name": item.product.seller.business_name,
+                            "contact_email": item.product.seller.contact_email
+                        } if item.product.seller else None,
+                        "category": {
+                            "id": str(item.product.category.id),
+                            "name": item.product.category.name
+                        } if item.product.category else None
+                    },
+                    "quantity": item.quantity,
+                    "price": float(item.price),
+                    "status": item.status
+                } for item in order.order_items
+            ],
+            "payments": [
+                {
+                    "id": str(payment.id),
+                    "amount": float(payment.amount),
+                    "status": payment.status,
+                    "payment_method": payment.payment_method,
+                    "transaction_id": payment.transaction_id,
+                    "created_at": payment.created_at.isoformat()
+                } for payment in order_payments
+            ]
+        }
+        
+        return AdminResponse(
+            success=True,
+            message="Order details retrieved successfully",
+            data=order_data
+        )
         
     except HTTPException:
         raise
     except Exception as e:
-        log_error(admin_logger, f"Failed to perform user action", e)
-        raise HTTPException(status_code=500, detail="Failed to perform user action")
+        log_error(admin_logger, f"Failed to fetch order details for {order_id}", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch order details")
 
 
 @router.get("/products", response_model=AdminListResponse)

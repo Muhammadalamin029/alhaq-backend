@@ -173,10 +173,16 @@ class Order(Base):
                 default=func.gen_random_uuid())
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     total_amount = Column(Numeric(15, 2), nullable=False)
-    status = Column(Enum("pending", "processing", "shipped", "delivered",
+    status = Column(Enum("pending", "processing", "paid", "shipped", "delivered",
                     "cancelled", "partially_shipped", "partially_delivered", 
                     "partially_cancelled", name="order_status"), default="pending")
     delivery_address = Column(UUID, ForeignKey("addresses.id"), nullable=True)
+    
+    # Payment URL fields
+    payment_url = Column(Text, nullable=True)  # Paystack authorization URL
+    payment_reference = Column(String(100), nullable=True)  # Paystack reference
+    payment_initialized_at = Column(TIMESTAMP, nullable=True)  # When payment was first initialized
+    
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
@@ -227,6 +233,11 @@ class Payment(Base):
                     "refunded", name="payment_status"), default="pending")
     payment_method = Column(String(50), nullable=False)
     transaction_id = Column(String(100), unique=True, nullable=False)
+    
+    # Payment URL fields
+    authorization_url = Column(Text, nullable=True)  # Paystack authorization URL
+    access_code = Column(String(100), nullable=True)  # Paystack access code
+    reference = Column(String(100), nullable=True)  # Paystack reference
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(

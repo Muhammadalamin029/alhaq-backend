@@ -454,11 +454,13 @@ async def get_seller_analytics(
             start_date = now - timedelta(days=30)
             prev_start_date = now - timedelta(days=60)
         
-        # 1. Revenue analytics with order count
+        # 1. Revenue analytics with order count - using seller earnings (after platform fee)
         revenue_query = (
             db.query(
                 func.date(Order.created_at).label('date'),
-                func.sum(OrderItem.quantity * OrderItem.price).label('revenue'),
+                func.sum(
+                    (OrderItem.quantity * OrderItem.price) * 0.95  # 5% platform fee deducted
+                ).label('revenue'),
                 func.count(func.distinct(Order.id)).label('orders')
             )
             .join(OrderItem)
@@ -477,12 +479,14 @@ async def get_seller_analytics(
             .all()
         )
         
-        # 2. Order analytics with total value
+        # 2. Order analytics with total value - using seller earnings
         order_query = (
             db.query(
                 func.date(Order.created_at).label('date'),
                 func.count(func.distinct(Order.id)).label('orders'),
-                func.sum(OrderItem.quantity * OrderItem.price).label('total_value')
+                func.sum(
+                    (OrderItem.quantity * OrderItem.price) * 0.95  # 5% platform fee deducted
+                ).label('total_value')
             )
             .join(OrderItem)
             .join(Product)
@@ -499,14 +503,16 @@ async def get_seller_analytics(
             .all()
         )
         
-        # 3. Top selling products with stock info
+        # 3. Top selling products with stock info - using seller earnings
         top_products_query = (
             db.query(
                 Product.id,
                 Product.name,
                 Product.stock_quantity,
                 func.sum(OrderItem.quantity).label('total_sold'),
-                func.sum(OrderItem.quantity * OrderItem.price).label('revenue')
+                func.sum(
+                    (OrderItem.quantity * OrderItem.price) * 0.95  # 5% platform fee deducted
+                ).label('revenue')
             )
             .join(OrderItem)
             .join(Order)
@@ -524,13 +530,15 @@ async def get_seller_analytics(
             .all()
         )
         
-        # 4. Product performance (for products with orders)
+        # 4. Product performance (for products with orders) - using seller earnings
         product_performance_query = (
             db.query(
                 Product.id,
                 Product.name,
                 func.sum(OrderItem.quantity).label('orders'),
-                func.sum(OrderItem.quantity * OrderItem.price).label('revenue')
+                func.sum(
+                    (OrderItem.quantity * OrderItem.price) * 0.95  # 5% platform fee deducted
+                ).label('revenue')
             )
             .join(OrderItem)
             .join(Order)
@@ -548,11 +556,13 @@ async def get_seller_analytics(
             .all()
         )
         
-        # 5. Customer insights
+        # 5. Customer insights - calculate correct average order value
         customer_stats_query = (
             db.query(
                 func.count(func.distinct(Order.buyer_id)).label('total_customers'),
-                func.avg(OrderItem.quantity * OrderItem.price).label('avg_order_value')
+                func.avg(
+                    (OrderItem.quantity * OrderItem.price) * 0.95  # 5% platform fee deducted
+                ).label('avg_order_value')
             )
             .join(OrderItem)
             .join(Product)
@@ -602,11 +612,24 @@ async def get_seller_analytics(
         
         # 7. Calculate growth metrics
         current_revenue = sum(r.revenue or 0 for r in revenue_data)
-        current_orders = sum(r.orders or 0 for r in revenue_data)
         
-        # Previous period metrics for growth calculation
+        # Calculate total orders for the period (all orders, not just revenue-generating ones)
+        total_orders_query = (
+            db.query(func.count(func.distinct(Order.id)))
+            .join(OrderItem)
+            .join(Product)
+            .filter(
+                Product.seller_id == seller_id,
+                Order.created_at >= start_date
+            )
+        )
+        current_orders = total_orders_query.scalar() or 0
+        
+        # Previous period metrics for growth calculation - using seller earnings
         prev_revenue_query = (
-            db.query(func.sum(OrderItem.quantity * OrderItem.price))
+            db.query(func.sum(
+                (OrderItem.quantity * OrderItem.price) * 0.95  # 5% platform fee deducted
+            ))
             .join(Order)
             .join(Product)
             .filter(
