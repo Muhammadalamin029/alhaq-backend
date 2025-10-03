@@ -35,9 +35,11 @@ router = APIRouter()
 
 def calculate_seller_item_status(order, seller_id: str) -> str:
     """
-    Calculate seller item status based on actual OrderItem statuses for this seller
+    Calculate seller item status based ONLY on OrderItem statuses for this seller
+    Completely ignores the main order status
     """
     if not order.order_items:
+        print(f"DEBUG: No order items for order {order.id}")
         return "pending"
     
     # Get items belonging to this seller
@@ -47,49 +49,58 @@ def calculate_seller_item_status(order, seller_id: str) -> str:
     ]
     
     if not seller_items:
+        print(f"DEBUG: No seller items found for seller {seller_id} in order {order.id}")
+        # If no seller items found, check if order is cancelled
+        if order.status == "cancelled":
+            return "cancelled"
         return "pending"
     
-    # Check overall order status first - this takes priority
+    # Check if order is cancelled first - this takes priority
     if order.status == "cancelled":
+        print(f"DEBUG: Order is cancelled, returning cancelled")
         return "cancelled"
-    elif order.status == "processing":
-        return "processing"
-    elif order.status == "shipped":
-        return "shipped"
-    elif order.status == "delivered":
-        return "delivered"
     
-    # For other statuses (pending, partially_*, etc.), check individual item statuses
+    # Use seller item statuses for non-cancelled orders
     item_statuses = [item.status for item in seller_items]
+    print(f"DEBUG: Seller {seller_id} items statuses: {item_statuses}")
     
     # If all items are cancelled, seller status is cancelled
     if all(status == "cancelled" for status in item_statuses):
+        print(f"DEBUG: All items cancelled, returning cancelled")
         return "cancelled"
     
     # If all items are delivered, seller status is delivered
     if all(status == "delivered" for status in item_statuses):
+        print(f"DEBUG: All items delivered, returning delivered")
         return "delivered"
     
     # If all items are shipped, seller status is shipped
     if all(status == "shipped" for status in item_statuses):
+        print(f"DEBUG: All items shipped, returning shipped")
         return "shipped"
     
     # If all items are processing, seller status is processing
     if all(status == "processing" for status in item_statuses):
+        print(f"DEBUG: All items processing, returning processing")
         return "processing"
     
     # If all items are pending, seller status is pending
     if all(status == "pending" for status in item_statuses):
+        print(f"DEBUG: All items pending, returning pending")
         return "pending"
     
     # Mixed statuses - determine the most advanced status
     if "delivered" in item_statuses:
+        print(f"DEBUG: Mixed statuses with delivered, returning delivered")
         return "delivered"
     elif "shipped" in item_statuses:
+        print(f"DEBUG: Mixed statuses with shipped, returning shipped")
         return "shipped"
     elif "processing" in item_statuses:
+        print(f"DEBUG: Mixed statuses with processing, returning processing")
         return "processing"
     else:
+        print(f"DEBUG: Mixed statuses, returning pending")
         return "pending"
 
 
@@ -162,6 +173,14 @@ async def get_seller_stats(
         
         for order in all_seller_orders:
             seller_item_status = calculate_seller_item_status(order, seller_id)
+            
+            # Debug logging to see what's happening
+            print(f"DEBUG: Order {order.id}, Status: {seller_item_status}")
+            if order.order_items:
+                for item in order.order_items:
+                    if item.product and str(item.product.seller_id) == str(seller_id):
+                        print(f"  - Item {item.id}: {item.status}")
+            
             if seller_item_status == "pending":
                 pending_orders += 1
             elif seller_item_status == "processing":
@@ -172,6 +191,15 @@ async def get_seller_stats(
                 delivered_orders += 1
             elif seller_item_status == "cancelled":
                 cancelled_orders += 1
+        
+        # Debug: Print final counts
+        print(f"DEBUG: Final counts for seller {seller_id}:")
+        print(f"  - Pending: {pending_orders}")
+        print(f"  - Processing: {processing_orders}")
+        print(f"  - Shipped: {shipped_orders}")
+        print(f"  - Delivered: {delivered_orders}")
+        print(f"  - Cancelled: {cancelled_orders}")
+        print(f"  - Total orders: {total_orders}")
         
         # Use stored total_revenue from seller profile for consistency with payout system
         total_revenue = float(seller_profile.total_revenue) if seller_profile.total_revenue else 0.0
@@ -237,6 +265,14 @@ async def get_seller_stats(
                 "stock_quantity": product.stock_quantity,
                 "status": product.status
             })
+        
+        # Debug: Print values right before API response
+        print(f"DEBUG: Values right before API response:")
+        print(f"  - pending_orders: {pending_orders}")
+        print(f"  - processing_orders: {processing_orders}")
+        print(f"  - shipped_orders: {shipped_orders}")
+        print(f"  - delivered_orders: {delivered_orders}")
+        print(f"  - cancelled_orders: {cancelled_orders}")
         
         return SellerStatsResponse(
             success=True,

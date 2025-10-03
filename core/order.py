@@ -241,19 +241,17 @@ class OrderService:
             ]
             
             if not seller_items_for_status:
-                filtered_order.seller_item_status = "pending"
-            else:
-                # Check overall order status first - this takes priority
+                # If no seller items found, check if order is cancelled
                 if order.status == "cancelled":
                     filtered_order.seller_item_status = "cancelled"
-                elif order.status == "processing":
-                    filtered_order.seller_item_status = "processing"
-                elif order.status == "shipped":
-                    filtered_order.seller_item_status = "shipped"
-                elif order.status == "delivered":
-                    filtered_order.seller_item_status = "delivered"
                 else:
-                    # For other statuses (pending, partially_*, etc.), check individual item statuses
+                    filtered_order.seller_item_status = "pending"
+            else:
+                # Check if order is cancelled first - this takes priority
+                if order.status == "cancelled":
+                    filtered_order.seller_item_status = "cancelled"
+                else:
+                    # Use seller item statuses for non-cancelled orders
                     item_statuses = [item.status for item in seller_items_for_status]
                     
                     # If all items are cancelled, seller status is cancelled
@@ -346,19 +344,17 @@ class OrderService:
                 ]
                 
                 if not seller_items:
-                    filtered_order.seller_item_status = "pending"
-                else:
-                    # Check overall order status first - this takes priority
+                    # If no seller items found, check if order is cancelled
                     if order.status == "cancelled":
                         filtered_order.seller_item_status = "cancelled"
-                    elif order.status == "processing":
-                        filtered_order.seller_item_status = "processing"
-                    elif order.status == "shipped":
-                        filtered_order.seller_item_status = "shipped"
-                    elif order.status == "delivered":
-                        filtered_order.seller_item_status = "delivered"
                     else:
-                        # For other statuses (pending, partially_*, etc.), check individual item statuses
+                        filtered_order.seller_item_status = "pending"
+                else:
+                    # Check if order is cancelled first - this takes priority
+                    if order.status == "cancelled":
+                        filtered_order.seller_item_status = "cancelled"
+                    else:
+                        # Use seller item statuses for non-cancelled orders
                         item_statuses = [item.status for item in seller_items]
                         
                         # If all items are cancelled, seller status is cancelled

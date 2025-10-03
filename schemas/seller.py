@@ -52,6 +52,10 @@ class SellerStatsData(BaseModel):
     out_of_stock_products: int
     total_orders: int
     pending_orders: int
+    processing_orders: int
+    shipped_orders: int
+    delivered_orders: int
+    cancelled_orders: int
     total_revenue: float
     kyc_status: str
     business_name: str
