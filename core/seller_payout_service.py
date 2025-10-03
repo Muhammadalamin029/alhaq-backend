@@ -63,7 +63,7 @@ class SellerPayoutService:
             "item_count": len(order_items)
         }
     
-    def update_seller_balance(self, db: Session, seller_id: str, order_id: str, order_status: str):
+    def update_seller_balance(self, db: Session, seller_id: str, order_id: str, order_status: str, old_status: str = None):
         """
         Update seller balance when order status changes
         
@@ -71,6 +71,7 @@ class SellerPayoutService:
             seller_id: Seller ID
             order_id: Order ID
             order_status: New order status
+            old_status: Previous order status (for rollbacks)
         """
         try:
             seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
@@ -81,19 +82,52 @@ class SellerPayoutService:
             # Calculate earnings for this order
             earnings = self.calculate_seller_earnings(db, seller_id, order_id)
             
+            # Handle status transitions
             if order_status == "delivered":
                 # Move from pending to available balance
-                seller.pending_balance -= earnings["net_amount"]
-                seller.available_balance += earnings["net_amount"]
-                seller.total_revenue += earnings["gross_amount"]
+                if old_status == "processing":
+                    seller.pending_balance -= earnings["net_amount"]
+                    seller.available_balance += earnings["net_amount"]
+                    seller.total_revenue += earnings["gross_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available (delivered)")
+                elif old_status == "shipped":
+                    # Already moved to available, just update total revenue
+                    seller.total_revenue += earnings["gross_amount"]
+                    logger.info(f"Updated seller {seller_id} total revenue: +{earnings['gross_amount']}")
                 
-                logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available")
+            elif order_status == "shipped":
+                # Move from pending to available balance
+                if old_status == "processing":
+                    seller.pending_balance -= earnings["net_amount"]
+                    seller.available_balance += earnings["net_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available (shipped)")
                 
             elif order_status == "processing":
                 # Move to pending balance
-                seller.pending_balance += earnings["net_amount"]
+                if old_status in ["pending", None]:
+                    seller.pending_balance += earnings["net_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} pending")
                 
-                logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} pending")
+            elif order_status == "cancelled":
+                # Reverse any pending balance
+                if old_status == "processing":
+                    seller.pending_balance -= earnings["net_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: -{earnings['net_amount']} pending (cancelled)")
+                elif old_status == "shipped":
+                    seller.available_balance -= earnings["net_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: -{earnings['net_amount']} available (cancelled)")
+                elif old_status == "delivered":
+                    seller.available_balance -= earnings["net_amount"]
+                    seller.total_revenue -= earnings["gross_amount"]
+                    logger.info(f"Updated seller {seller_id} balance: -{earnings['net_amount']} available (cancelled)")
+            
+            # Ensure balances don't go negative
+            if seller.pending_balance < 0:
+                logger.warning(f"Seller {seller_id} pending balance would be negative: {seller.pending_balance}")
+                seller.pending_balance = 0
+            if seller.available_balance < 0:
+                logger.warning(f"Seller {seller_id} available balance would be negative: {seller.available_balance}")
+                seller.available_balance = 0
             
             db.commit()
             
@@ -125,9 +159,10 @@ class SellerPayoutService:
             if seller.available_balance < amount:
                 raise ValueError("Insufficient balance for payout")
             
-            # Calculate platform fee for payout
-            platform_fee = amount * self.PLATFORM_FEE_RATE
-            net_amount = amount - platform_fee
+            # No additional platform fee for payout - already deducted from earnings
+            # The platform fee was already applied when calculating seller earnings
+            platform_fee = Decimal('0')  # No additional fee for payout
+            net_amount = amount  # Seller gets the full amount they're requesting
             
             # Create payout record
             payout = SellerPayout(

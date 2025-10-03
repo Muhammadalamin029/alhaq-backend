@@ -787,6 +787,15 @@ class OrderService:
                 order.status = new_order_status
                 order.updated_at = func.current_timestamp()
 
+                # Update seller balance for this status change
+                seller_payout_service.update_seller_balance(
+                    db=db,
+                    seller_id=str(seller_id),
+                    order_id=str(order_id),
+                    order_status=new_status,
+                    old_status=current_item_status
+                )
+
                 # Note: commit is handled by transaction_context
 
                 return {
@@ -914,7 +923,7 @@ class OrderService:
                 db.refresh(order)
 
                 # Update seller balances for this order
-                self.update_seller_balances_for_order(db, order_id, new_status)
+                self.update_seller_balances_for_order(db, order_id, new_status, old_status)
 
                 logger.info(
                     f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
@@ -988,7 +997,7 @@ class OrderService:
             "valid_transitions": self.get_valid_status_transitions(order.status)
         }
     
-    def update_seller_balances_for_order(self, db: Session, order_id: UUID, new_status: str):
+    def update_seller_balances_for_order(self, db: Session, order_id: UUID, new_status: str, old_status: str = None):
         """
         Update seller balances when order status changes
         
@@ -996,6 +1005,7 @@ class OrderService:
             db: Database session
             order_id: Order ID
             new_status: New order status
+            old_status: Previous order status
         """
         try:
             # Get all sellers involved in this order
@@ -1018,10 +1028,11 @@ class OrderService:
                     db=db,
                     seller_id=seller_id,
                     order_id=str(order_id),
-                    order_status=new_status
+                    order_status=new_status,
+                    old_status=old_status
                 )
                 
-            logger.info(f"Updated seller balances for order {order_id} with status {new_status}")
+            logger.info(f"Updated seller balances for order {order_id} from {old_status} to {new_status}")
             
         except Exception as e:
             logger.error(f"Failed to update seller balances for order {order_id}: {e}")
