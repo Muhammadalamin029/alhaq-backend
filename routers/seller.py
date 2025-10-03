@@ -49,11 +49,17 @@ def calculate_seller_item_status(order, seller_id: str) -> str:
     if not seller_items:
         return "pending"
     
-    # Check overall order status first - if order is cancelled, seller status is cancelled
+    # Check overall order status first - this takes priority
     if order.status == "cancelled":
         return "cancelled"
+    elif order.status == "processing":
+        return "processing"
+    elif order.status == "shipped":
+        return "shipped"
+    elif order.status == "delivered":
+        return "delivered"
     
-    # Check the status of seller's items
+    # For other statuses (pending, partially_*, etc.), check individual item statuses
     item_statuses = [item.status for item in seller_items]
     
     # If all items are cancelled, seller status is cancelled

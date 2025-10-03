@@ -199,6 +199,7 @@ class OrderService:
         return orders, count
 
     def get_orders_by_seller(self, db: Session, seller_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
+        # Get ALL orders for this seller first
         query = (
             db.query(Order)
             .join(Order.order_items)
@@ -213,16 +214,13 @@ class OrderService:
                 joinedload(Order.payments),
             )
         )
-        if status:
-            query = query.filter(Order.status == status)
 
-        count = query.distinct(Order.id).count()
-        offset = (page - 1) * limit
-        orders = query.offset(offset).limit(limit).all()
+        # Get all orders first
+        all_orders = query.distinct(Order.id).all()
 
         # Filter items and calculate seller's portion for each order
         filtered_orders = []
-        for order in orders:
+        for order in all_orders:
             # Create a copy of the order to avoid modifying the original
             filtered_order = deepcopy(order)
             
@@ -236,67 +234,65 @@ class OrderService:
             # Calculate seller's portion of the order total
             filtered_order.total_amount = sum(item.quantity * item.price for item in seller_items)
             
-            # Determine seller's item status based on order progression
-            if seller_items:
-                overall_status = order.status
-                
-                # Get all sellers in this order to understand multi-vendor context
-                all_sellers = set()
-                for item in order.order_items:
-                    if item.product and item.product.seller_id:
-                        all_sellers.add(str(item.product.seller_id))
-                
-                current_seller_id_str = str(seller_id)
-                total_sellers = len(all_sellers)
-                
-                # Calculate seller item status based on actual OrderItem statuses
-                seller_items = [
-                    item for item in order.order_items 
-                    if item.product and str(item.product.seller_id) == str(seller_id)
-                ]
-                
-                if not seller_items:
-                    filtered_order.seller_item_status = "pending"
-                else:
-                    # Check overall order status first - if order is cancelled, seller status is cancelled
-                    if order.status == "cancelled":
-                        filtered_order.seller_item_status = "cancelled"
-                    else:
-                        # Check the status of seller's items
-                        item_statuses = [item.status for item in seller_items]
-                        
-                        # If all items are cancelled, seller status is cancelled
-                        if all(status == "cancelled" for status in item_statuses):
-                            filtered_order.seller_item_status = "cancelled"
-                        # If all items are delivered, seller status is delivered
-                        elif all(status == "delivered" for status in item_statuses):
-                            filtered_order.seller_item_status = "delivered"
-                        # If all items are shipped, seller status is shipped
-                        elif all(status == "shipped" for status in item_statuses):
-                            filtered_order.seller_item_status = "shipped"
-                        # If all items are processing, seller status is processing
-                        elif all(status == "processing" for status in item_statuses):
-                            filtered_order.seller_item_status = "processing"
-                        # If all items are pending, seller status is pending
-                        elif all(status == "pending" for status in item_statuses):
-                            filtered_order.seller_item_status = "pending"
-                        # Mixed statuses - determine the most advanced status
-                        elif "delivered" in item_statuses:
-                            filtered_order.seller_item_status = "delivered"
-                        elif "shipped" in item_statuses:
-                            filtered_order.seller_item_status = "shipped"
-                        elif "processing" in item_statuses:
-                            filtered_order.seller_item_status = "processing"
-                        else:
-                            filtered_order.seller_item_status = "pending"
-            else:
-                filtered_order.seller_item_status = "pending"
+            # Calculate seller item status based on actual OrderItem statuses
+            seller_items_for_status = [
+                item for item in order.order_items 
+                if item.product and str(item.product.seller_id) == str(seller_id)
+            ]
             
+            if not seller_items_for_status:
+                filtered_order.seller_item_status = "pending"
+            else:
+                # Check overall order status first - this takes priority
+                if order.status == "cancelled":
+                    filtered_order.seller_item_status = "cancelled"
+                elif order.status == "processing":
+                    filtered_order.seller_item_status = "processing"
+                elif order.status == "shipped":
+                    filtered_order.seller_item_status = "shipped"
+                elif order.status == "delivered":
+                    filtered_order.seller_item_status = "delivered"
+                else:
+                    # For other statuses (pending, partially_*, etc.), check individual item statuses
+                    item_statuses = [item.status for item in seller_items_for_status]
+                    
+                    # If all items are cancelled, seller status is cancelled
+                    if all(status == "cancelled" for status in item_statuses):
+                        filtered_order.seller_item_status = "cancelled"
+                    # If all items are delivered, seller status is delivered
+                    elif all(status == "delivered" for status in item_statuses):
+                        filtered_order.seller_item_status = "delivered"
+                    # If all items are shipped, seller status is shipped
+                    elif all(status == "shipped" for status in item_statuses):
+                        filtered_order.seller_item_status = "shipped"
+                    # If all items are processing, seller status is processing
+                    elif all(status == "processing" for status in item_statuses):
+                        filtered_order.seller_item_status = "processing"
+                    # If all items are pending, seller status is pending
+                    elif all(status == "pending" for status in item_statuses):
+                        filtered_order.seller_item_status = "pending"
+                    # Mixed statuses - determine the most advanced status
+                    elif "delivered" in item_statuses:
+                        filtered_order.seller_item_status = "delivered"
+                    elif "shipped" in item_statuses:
+                        filtered_order.seller_item_status = "shipped"
+                    elif "processing" in item_statuses:
+                        filtered_order.seller_item_status = "processing"
+                    else:
+                        filtered_order.seller_item_status = "pending"
+            
+            # Apply status filter based on seller_item_status
+            if status and filtered_order.seller_item_status != status:
+                continue
+                
             filtered_orders.append(filtered_order)
         
-        orders = filtered_orders
+        # Apply pagination AFTER filtering
+        total_count = len(filtered_orders)
+        offset = (page - 1) * limit
+        paginated_orders = filtered_orders[offset:offset + limit]
             
-        return orders, count
+        return paginated_orders, total_count
 
     def get_seller_order_by_id(self, db: Session, order_id: UUID, seller_id: UUID):
         """Get a specific order with only the seller's items"""
@@ -352,11 +348,17 @@ class OrderService:
                 if not seller_items:
                     filtered_order.seller_item_status = "pending"
                 else:
-                    # Check overall order status first - if order is cancelled, seller status is cancelled
+                    # Check overall order status first - this takes priority
                     if order.status == "cancelled":
                         filtered_order.seller_item_status = "cancelled"
+                    elif order.status == "processing":
+                        filtered_order.seller_item_status = "processing"
+                    elif order.status == "shipped":
+                        filtered_order.seller_item_status = "shipped"
+                    elif order.status == "delivered":
+                        filtered_order.seller_item_status = "delivered"
                     else:
-                        # Check the status of seller's items
+                        # For other statuses (pending, partially_*, etc.), check individual item statuses
                         item_statuses = [item.status for item in seller_items]
                         
                         # If all items are cancelled, seller status is cancelled
