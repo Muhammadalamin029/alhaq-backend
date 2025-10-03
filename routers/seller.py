@@ -35,58 +35,56 @@ router = APIRouter()
 
 def calculate_seller_item_status(order, seller_id: str) -> str:
     """
-    Calculate seller item status using the same logic as seller orders page
+    Calculate seller item status based on actual OrderItem statuses for this seller
     """
     if not order.order_items:
         return "pending"
     
-    # Get all sellers in this order to understand multi-vendor context
-    all_sellers = set()
-    for item in order.order_items:
-        if item.product and item.product.seller_id:
-            all_sellers.add(str(item.product.seller_id))
+    # Get items belonging to this seller
+    seller_items = [
+        item for item in order.order_items 
+        if item.product and str(item.product.seller_id) == str(seller_id)
+    ]
     
-    current_seller_id_str = str(seller_id)
-    overall_status = order.status
-    
-    # Determine seller's individual status based on order progression
-    if overall_status == "pending":
+    if not seller_items:
         return "pending"
-    elif overall_status == "processing":
-        return "processing"
-    elif overall_status == "shipped":
-        # All sellers have shipped
-        return "shipped"
-    elif overall_status == "delivered":
-        # All sellers have delivered
-        return "delivered"
-    elif overall_status == "cancelled":
+    
+    # Check overall order status first - if order is cancelled, seller status is cancelled
+    if order.status == "cancelled":
         return "cancelled"
-    elif overall_status == "partially_shipped":
-        seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
-        if seller_index % 2 == 0:
-            # Even indexed sellers have shipped
-            return "shipped"
-        else:
-            # Odd indexed sellers are still processing
-            return "processing"
-    elif overall_status == "partially_delivered":
-        # Some sellers delivered, some didn't
-        seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
-        if seller_index % 3 == 0:
-            # Every 3rd seller has delivered
-            return "delivered"
-        elif seller_index % 3 == 1:
-            # Next seller has shipped but not delivered
-            return "shipped"
-        else:
-            # Remaining sellers are still processing
-            return "processing"
-    elif overall_status == "partially_cancelled":
-        # Some sellers cancelled, assume this seller is still active
+    
+    # Check the status of seller's items
+    item_statuses = [item.status for item in seller_items]
+    
+    # If all items are cancelled, seller status is cancelled
+    if all(status == "cancelled" for status in item_statuses):
+        return "cancelled"
+    
+    # If all items are delivered, seller status is delivered
+    if all(status == "delivered" for status in item_statuses):
+        return "delivered"
+    
+    # If all items are shipped, seller status is shipped
+    if all(status == "shipped" for status in item_statuses):
+        return "shipped"
+    
+    # If all items are processing, seller status is processing
+    if all(status == "processing" for status in item_statuses):
+        return "processing"
+    
+    # If all items are pending, seller status is pending
+    if all(status == "pending" for status in item_statuses):
+        return "pending"
+    
+    # Mixed statuses - determine the most advanced status
+    if "delivered" in item_statuses:
+        return "delivered"
+    elif "shipped" in item_statuses:
+        return "shipped"
+    elif "processing" in item_statuses:
         return "processing"
     else:
-        return "processing"
+        return "pending"
 
 
 # NOTE: Profile management (GET/PUT /profile) has been moved to /auth/me
@@ -135,22 +133,39 @@ async def get_seller_stats(
             .count()
         )
         
-        # Get order stats
-        total_orders = (
+        # Get all orders that have items from this seller
+        seller_orders_query = (
             db.query(Order)
             .join(OrderItem)
             .join(Product)
             .filter(Product.seller_id == seller_id)
-            .count()
+            .distinct()
         )
         
-        pending_orders = (
-            db.query(Order)
-            .join(OrderItem)
-            .join(Product)
-            .filter(Product.seller_id == seller_id, Order.status == "processing")
-            .count()
-        )
+        total_orders = seller_orders_query.count()
+        
+        # Count orders based on seller item status, not general order status
+        pending_orders = 0
+        processing_orders = 0
+        shipped_orders = 0
+        delivered_orders = 0
+        cancelled_orders = 0
+        
+        # Get all orders for this seller to calculate accurate stats
+        all_seller_orders = seller_orders_query.all()
+        
+        for order in all_seller_orders:
+            seller_item_status = calculate_seller_item_status(order, seller_id)
+            if seller_item_status == "pending":
+                pending_orders += 1
+            elif seller_item_status == "processing":
+                processing_orders += 1
+            elif seller_item_status == "shipped":
+                shipped_orders += 1
+            elif seller_item_status == "delivered":
+                delivered_orders += 1
+            elif seller_item_status == "cancelled":
+                cancelled_orders += 1
         
         # Use stored total_revenue from seller profile for consistency with payout system
         total_revenue = float(seller_profile.total_revenue) if seller_profile.total_revenue else 0.0
@@ -226,6 +241,10 @@ async def get_seller_stats(
                 "out_of_stock_products": out_of_stock_products,
                 "total_orders": total_orders,
                 "pending_orders": pending_orders,
+                "processing_orders": processing_orders,
+                "shipped_orders": shipped_orders,
+                "delivered_orders": delivered_orders,
+                "cancelled_orders": cancelled_orders,
                 "total_revenue": total_revenue,
                 "kyc_status": seller_profile.kyc_status,
                 "business_name": seller_profile.business_name,

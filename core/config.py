@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
     JSON_LOGS: bool = False
-    LOG_TO_FILE: bool = True
+    LOG_TO_FILE: bool = False  # Disabled file-based logging
     LOG_TO_CONSOLE: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)

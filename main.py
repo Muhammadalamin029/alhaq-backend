@@ -31,9 +31,7 @@ from core.middleware import LoggingMiddleware, UserContextMiddleware
 # ------------------------------------------------------
 setup_logging(
     log_level=settings.LOG_LEVEL,
-    log_to_file=settings.LOG_TO_FILE,
     log_to_console=settings.LOG_TO_CONSOLE,
-    json_logs=settings.JSON_LOGS,
 )
 logger = get_logger("alhaq_backend")
 
@@ -49,8 +47,7 @@ app.add_middleware(LoggingMiddleware)
 # Log startup
 logger.info(f"Starting {settings.PROJECT_NAME} application", extra={
     "log_level": settings.LOG_LEVEL,
-    "json_logs": settings.JSON_LOGS,
-    "log_to_file": settings.LOG_TO_FILE,
+    "log_to_console": settings.LOG_TO_CONSOLE,
 })
 
 # ------------------------------------------------------

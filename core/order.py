@@ -249,46 +249,46 @@ class OrderService:
                 current_seller_id_str = str(seller_id)
                 total_sellers = len(all_sellers)
                 
-                # Determine seller's individual status based on order progression
-                # We need to infer each seller's status from the overall order status
-                if overall_status == "pending":
+                # Calculate seller item status based on actual OrderItem statuses
+                seller_items = [
+                    item for item in order.order_items 
+                    if item.product and str(item.product.seller_id) == str(seller_id)
+                ]
+                
+                if not seller_items:
                     filtered_order.seller_item_status = "pending"
-                elif overall_status == "processing":
-                    filtered_order.seller_item_status = "processing"
-                elif overall_status == "shipped":
-                    # All sellers have shipped
-                    filtered_order.seller_item_status = "shipped"
-                elif overall_status == "delivered":
-                    # All sellers have delivered
-                    filtered_order.seller_item_status = "delivered"
-                elif overall_status == "cancelled":
-                    filtered_order.seller_item_status = "cancelled"
-                elif overall_status == "partially_shipped":
-                    seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
-                    if seller_index % 2 == 0:
-                        # Even indexed sellers have shipped
-                        filtered_order.seller_item_status = "shipped"
-                    else:
-                        # Odd indexed sellers are still processing
-                        filtered_order.seller_item_status = "processing"
-                elif overall_status == "partially_delivered":
-                    # Some sellers delivered, some didn't
-                    # Similar rotation logic for delivered status
-                    seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
-                    if seller_index % 3 == 0:
-                        # Every 3rd seller has delivered
-                        filtered_order.seller_item_status = "delivered"
-                    elif seller_index % 3 == 1:
-                        # Next seller has shipped but not delivered
-                        filtered_order.seller_item_status = "shipped"
-                    else:
-                        # Remaining sellers are still processing
-                        filtered_order.seller_item_status = "processing"
-                elif overall_status == "partially_cancelled":
-                    # Some sellers cancelled, assume this seller is still active
-                    filtered_order.seller_item_status = "processing"
                 else:
-                    filtered_order.seller_item_status = "processing"
+                    # Check overall order status first - if order is cancelled, seller status is cancelled
+                    if order.status == "cancelled":
+                        filtered_order.seller_item_status = "cancelled"
+                    else:
+                        # Check the status of seller's items
+                        item_statuses = [item.status for item in seller_items]
+                        
+                        # If all items are cancelled, seller status is cancelled
+                        if all(status == "cancelled" for status in item_statuses):
+                            filtered_order.seller_item_status = "cancelled"
+                        # If all items are delivered, seller status is delivered
+                        elif all(status == "delivered" for status in item_statuses):
+                            filtered_order.seller_item_status = "delivered"
+                        # If all items are shipped, seller status is shipped
+                        elif all(status == "shipped" for status in item_statuses):
+                            filtered_order.seller_item_status = "shipped"
+                        # If all items are processing, seller status is processing
+                        elif all(status == "processing" for status in item_statuses):
+                            filtered_order.seller_item_status = "processing"
+                        # If all items are pending, seller status is pending
+                        elif all(status == "pending" for status in item_statuses):
+                            filtered_order.seller_item_status = "pending"
+                        # Mixed statuses - determine the most advanced status
+                        elif "delivered" in item_statuses:
+                            filtered_order.seller_item_status = "delivered"
+                        elif "shipped" in item_statuses:
+                            filtered_order.seller_item_status = "shipped"
+                        elif "processing" in item_statuses:
+                            filtered_order.seller_item_status = "processing"
+                        else:
+                            filtered_order.seller_item_status = "pending"
             else:
                 filtered_order.seller_item_status = "pending"
             
@@ -343,49 +343,46 @@ class OrderService:
                 current_seller_id_str = str(seller_id)
                 total_sellers = len(all_sellers)
                 
-                # Determine seller's individual status based on order progression
-                # We need to infer each seller's status from the overall order status
-                if overall_status == "pending":
+                # Calculate seller item status based on actual OrderItem statuses
+                seller_items = [
+                    item for item in order.order_items 
+                    if item.product and str(item.product.seller_id) == str(seller_id)
+                ]
+                
+                if not seller_items:
                     filtered_order.seller_item_status = "pending"
-                elif overall_status == "processing":
-                    filtered_order.seller_item_status = "processing"
-                elif overall_status == "shipped":
-                    # All sellers have shipped
-                    filtered_order.seller_item_status = "shipped"
-                elif overall_status == "delivered":
-                    # All sellers have delivered
-                    filtered_order.seller_item_status = "delivered"
-                elif overall_status == "cancelled":
-                    filtered_order.seller_item_status = "cancelled"
-                elif overall_status == "partially_shipped":
-                    # Some sellers shipped, some didn't
-                    # Since we can't determine which sellers have shipped,
-                    # we'll rotate the status based on seller position to simulate different states
-                    seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
-                    if seller_index % 2 == 0:
-                        # Even indexed sellers have shipped
-                        filtered_order.seller_item_status = "shipped"
-                    else:
-                        # Odd indexed sellers are still processing
-                        filtered_order.seller_item_status = "processing"
-                elif overall_status == "partially_delivered":
-                    # Some sellers delivered, some didn't
-                    # Similar rotation logic for delivered status
-                    seller_index = list(all_sellers).index(current_seller_id_str) if current_seller_id_str in all_sellers else 0
-                    if seller_index % 3 == 0:
-                        # Every 3rd seller has delivered
-                        filtered_order.seller_item_status = "delivered"
-                    elif seller_index % 3 == 1:
-                        # Next seller has shipped but not delivered
-                        filtered_order.seller_item_status = "shipped"
-                    else:
-                        # Remaining sellers are still processing
-                        filtered_order.seller_item_status = "processing"
-                elif overall_status == "partially_cancelled":
-                    # Some sellers cancelled, assume this seller is still active
-                    filtered_order.seller_item_status = "processing"
                 else:
-                    filtered_order.seller_item_status = "processing"
+                    # Check overall order status first - if order is cancelled, seller status is cancelled
+                    if order.status == "cancelled":
+                        filtered_order.seller_item_status = "cancelled"
+                    else:
+                        # Check the status of seller's items
+                        item_statuses = [item.status for item in seller_items]
+                        
+                        # If all items are cancelled, seller status is cancelled
+                        if all(status == "cancelled" for status in item_statuses):
+                            filtered_order.seller_item_status = "cancelled"
+                        # If all items are delivered, seller status is delivered
+                        elif all(status == "delivered" for status in item_statuses):
+                            filtered_order.seller_item_status = "delivered"
+                        # If all items are shipped, seller status is shipped
+                        elif all(status == "shipped" for status in item_statuses):
+                            filtered_order.seller_item_status = "shipped"
+                        # If all items are processing, seller status is processing
+                        elif all(status == "processing" for status in item_statuses):
+                            filtered_order.seller_item_status = "processing"
+                        # If all items are pending, seller status is pending
+                        elif all(status == "pending" for status in item_statuses):
+                            filtered_order.seller_item_status = "pending"
+                        # Mixed statuses - determine the most advanced status
+                        elif "delivered" in item_statuses:
+                            filtered_order.seller_item_status = "delivered"
+                        elif "shipped" in item_statuses:
+                            filtered_order.seller_item_status = "shipped"
+                        elif "processing" in item_statuses:
+                            filtered_order.seller_item_status = "processing"
+                        else:
+                            filtered_order.seller_item_status = "pending"
             else:
                 filtered_order.seller_item_status = "pending"
             

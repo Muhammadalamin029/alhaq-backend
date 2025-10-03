@@ -1,7 +1,6 @@
 import logging
 import logging.config
 import sys
-from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 import json
@@ -73,7 +72,7 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_logging(
     log_level: str = "INFO",
-    log_to_file: bool = True,
+    log_to_file: bool = False,
     log_to_console: bool = True,
     json_logs: bool = False
 ) -> None:
@@ -82,171 +81,84 @@ def setup_logging(
     
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_to_file: Whether to log to files
+        log_to_file: Whether to log to files (disabled)
         log_to_console: Whether to log to console
-        json_logs: Whether to use JSON format for file logs
+        json_logs: Whether to use JSON format (unused when file logging disabled)
     """
     
-    # Create logs directory if it doesn't exist
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    
-    # Base logging configuration
+    # Simplified logging configuration - console only
     config: Dict[str, Any] = {
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
-            "detailed": {
-                "format": "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
-                "datefmt": "%Y-%m-%d %H:%M:%S"
-            },
-            "simple": {
-                "format": "%(levelname)s - %(name)s - %(message)s"
-            },
             "colored": {
                 "()": ColoredFormatter,
                 "format": "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
                 "datefmt": "%Y-%m-%d %H:%M:%S"
             }
         },
-        "handlers": {},
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "stream": sys.stdout,
+                "formatter": "colored",
+                "level": log_level
+            }
+        },
         "loggers": {
             # Application loggers
             "": {  # Root logger
                 "level": log_level,
-                "handlers": [],
+                "handlers": ["console"],
                 "propagate": False
             },
             "alhaq_backend": {
                 "level": log_level,
-                "handlers": [],
+                "handlers": ["console"],
                 "propagate": False
             },
             "core": {
                 "level": log_level,
-                "handlers": [],
+                "handlers": ["console"],
                 "propagate": False
             },
             "routers": {
                 "level": log_level,
-                "handlers": [],
+                "handlers": ["console"],
+                "propagate": False
+            },
+            "auth": {
+                "level": log_level,
+                "handlers": ["console"],
                 "propagate": False
             },
             # Third party loggers (reduce noise)
             "uvicorn": {
                 "level": "INFO",
-                "handlers": [],
+                "handlers": ["console"],
                 "propagate": False
             },
             "sqlalchemy.engine": {
                 "level": "WARNING",
-                "handlers": [],
+                "handlers": ["console"],
                 "propagate": False
             },
             "celery": {
                 "level": "INFO", 
-                "handlers": [],
+                "handlers": ["console"],
                 "propagate": False
             }
         }
     }
-    
-    handlers_to_add = []
-    
-    # Console handler
-    if log_to_console:
-        config["handlers"]["console"] = {
-            "class": "logging.StreamHandler",
-            "stream": sys.stdout,
-            "formatter": "colored",
-            "level": log_level
-        }
-        handlers_to_add.append("console")
-    
-    # File handlers
-    if log_to_file:
-        if json_logs:
-            # JSON formatter for file logs
-            config["formatters"]["json"] = {
-                "()": JSONFormatter
-            }
-            
-            config["handlers"]["file_json"] = {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": "logs/app.json",
-                "maxBytes": 10485760,  # 10MB
-                "backupCount": 5,
-                "formatter": "json",
-                "level": log_level
-            }
-            handlers_to_add.append("file_json")
-        else:
-            config["handlers"]["file"] = {
-                "class": "logging.handlers.RotatingFileHandler", 
-                "filename": "logs/app.log",
-                "maxBytes": 10485760,  # 10MB
-                "backupCount": 5,
-                "formatter": "detailed",
-                "level": log_level
-            }
-            handlers_to_add.append("file")
-        
-        # Error file handler (only errors and above)
-        config["handlers"]["error_file"] = {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": "logs/errors.log", 
-            "maxBytes": 10485760,  # 10MB
-            "backupCount": 10,
-            "formatter": "detailed" if not json_logs else "json",
-            "level": "ERROR"
-        }
-        handlers_to_add.append("error_file")
-        
-        # Auth specific logs
-        config["handlers"]["auth_file"] = {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": "logs/auth.log",
-            "maxBytes": 5242880,  # 5MB  
-            "backupCount": 5,
-            "formatter": "detailed" if not json_logs else "json",
-            "level": log_level
-        }
-        
-        # Celery specific logs
-        config["handlers"]["celery_file"] = {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": "logs/celery.log",
-            "maxBytes": 5242880,  # 5MB
-            "backupCount": 5, 
-            "formatter": "detailed" if not json_logs else "json",
-            "level": log_level
-        }
-    
-    # Assign handlers to loggers
-    for logger_name in config["loggers"]:
-        if logger_name == "celery" and log_to_file:
-            config["loggers"][logger_name]["handlers"] = handlers_to_add + ["celery_file"]
-        else:
-            config["loggers"][logger_name]["handlers"] = handlers_to_add
-    
-    # Special auth logger
-    if log_to_file:
-        config["loggers"]["auth"] = {
-            "level": log_level,
-            "handlers": handlers_to_add + ["auth_file"],
-            "propagate": False
-        }
     
     # Apply the configuration
     logging.config.dictConfig(config)
     
     # Log the startup
     logger = logging.getLogger("alhaq_backend")
-    logger.info("Logging system initialized", extra={
+    logger.info("Logging system initialized (console only)", extra={
         "log_level": log_level,
-        "log_to_file": log_to_file,
-        "log_to_console": log_to_console,
-        "json_logs": json_logs
+        "log_to_console": log_to_console
     })
 
 

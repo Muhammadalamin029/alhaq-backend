@@ -41,7 +41,9 @@ async def get_checkout_summary(
     
     # Calculate totals
     subtotal = Decimal(str(pending_order.total_amount))
-    shipping_fee = Decimal("2000.00")  # Fixed shipping fee for now
+    # Note: Customer pays delivery directly to logistics provider
+    # No delivery fee included in order total
+    shipping_fee = Decimal("0.00")  # Customer pays delivery separately
     tax = Decimal("0.00")  # No tax for now
     total = subtotal + shipping_fee + tax
     

@@ -131,7 +131,7 @@ After creating an admin user, verify it was created successfully:
 ### **Getting Help:**
 
 If you encounter issues:
-1. Check the application logs in `logs/` directory
+1. Check the application logs in the console output
 2. Verify database connectivity
 3. Ensure all dependencies are installed
 4. Check file permissions on scripts
