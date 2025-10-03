@@ -8,7 +8,7 @@ import json
 from core.auth import role_required, get_current_user
 from db.session import get_db
 from core.paystack_service import paystack_service
-from core.model import Payment, Order, User
+from core.model import Payment, Order, OrderItem, Product, User
 from schemas.payment import (
     PaymentInitializeRequest,
     PaymentInitializeResponse,
@@ -174,9 +174,15 @@ async def verify_payment(
             # Update order status
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
+                old_status = order.status
                 order.status = "processing"
                 
-                # Create notification for successful payment
+                # Update seller balances for this order
+                from core.seller_payout_service import seller_payout_service
+                from core.order import order_service
+                order_service.update_seller_balances_for_order(db, order.id, "processing", old_status)
+                
+                # Create notification for successful payment (Customer)
                 try:
                     create_notification(db, {
                         "user_id": str(payment.buyer_id),
@@ -194,6 +200,49 @@ async def verify_payment(
                     })
                 except Exception as e:
                     payment_logger.error(f"Failed to create payment success notification: {e}")
+                
+                # Create notifications for sellers involved in this order
+                try:
+                    # Get all sellers involved in this order
+                    order_items = db.query(OrderItem).join(Product).filter(OrderItem.order_id == order.id).all()
+                    sellers_involved = set()
+                    for item in order_items:
+                        if item.product and item.product.seller_id:
+                            sellers_involved.add(str(item.product.seller_id))
+                    
+                    # Send notification to each seller
+                    for seller_id in sellers_involved:
+                        # Get seller's items in this order
+                        seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
+                        seller_total = sum(item.quantity * item.price for item in seller_items)
+                        
+                        # Create seller-specific message showing their amount only
+                        seller_message = f"Payment of ₦{seller_total:,.2f} received for your items in order #{str(order.id)[:8]}. Order is now being processed."
+                        if len(sellers_involved) > 1:
+                            seller_message += f" (This order involves {len(sellers_involved)} sellers - you received ₦{seller_total:,.2f})"
+                        
+                        create_notification(db, {
+                            "user_id": seller_id,
+                            "type": "payment_successful",
+                            "title": "New Order Payment Received",
+                            "message": seller_message,
+                            "priority": "high",
+                            "channels": ["in_app", "email"],
+                            "data": {
+                                "order_id": str(order.id),
+                                "payment_id": str(payment.id),
+                                "amount": float(seller_total),
+                                "total_order_amount": float(payment.amount),
+                                "is_seller_notification": True,
+                                "sellers_count": len(sellers_involved),
+                                "is_multi_seller": len(sellers_involved) > 1
+                            }
+                        })
+                        
+                    payment_logger.info(f"Sent payment notifications to {len(sellers_involved)} sellers for order {order.id}")
+                    
+                except Exception as e:
+                    payment_logger.error(f"Failed to create seller payment notifications: {e}")
             
             payment_logger.info(f"Payment verified successfully: {request.reference}")
         else:
@@ -294,9 +343,15 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
             # Update order status
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
+                old_status = order.status
                 order.status = "processing"
                 
-                # Create notification for successful payment
+                # Update seller balances for this order
+                from core.seller_payout_service import seller_payout_service
+                from core.order import order_service
+                order_service.update_seller_balances_for_order(db, order.id, "processing", old_status)
+                
+                # Create notification for successful payment (Customer)
                 try:
                     create_notification(db, {
                         "user_id": str(payment.buyer_id),
@@ -313,6 +368,49 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
                     })
                 except Exception as e:
                     payment_logger.error(f"Failed to create webhook payment success notification: {e}")
+                
+                # Create notifications for sellers involved in this order
+                try:
+                    # Get all sellers involved in this order
+                    order_items = db.query(OrderItem).join(Product).filter(OrderItem.order_id == order.id).all()
+                    sellers_involved = set()
+                    for item in order_items:
+                        if item.product and item.product.seller_id:
+                            sellers_involved.add(str(item.product.seller_id))
+                    
+                    # Send notification to each seller
+                    for seller_id in sellers_involved:
+                        # Get seller's items in this order
+                        seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
+                        seller_total = sum(item.quantity * item.price for item in seller_items)
+                        
+                        # Create seller-specific message showing their amount only
+                        seller_message = f"Payment of ₦{seller_total:,.2f} received for your items in order #{str(order.id)[:8]}. Order is now being processed."
+                        if len(sellers_involved) > 1:
+                            seller_message += f" (This order involves {len(sellers_involved)} sellers - you received ₦{seller_total:,.2f})"
+                        
+                        create_notification(db, {
+                            "user_id": seller_id,
+                            "type": "payment_successful",
+                            "title": "New Order Payment Received",
+                            "message": seller_message,
+                            "priority": "high",
+                            "channels": ["in_app", "email"],
+                            "data": {
+                                "order_id": str(order.id),
+                                "payment_id": str(payment.id),
+                                "amount": float(seller_total),
+                                "total_order_amount": float(payment.amount),
+                                "is_seller_notification": True,
+                                "sellers_count": len(sellers_involved),
+                                "is_multi_seller": len(sellers_involved) > 1
+                            }
+                        })
+                        
+                    payment_logger.info(f"Webhook: Sent payment notifications to {len(sellers_involved)} sellers for order {order.id}")
+                    
+                except Exception as e:
+                    payment_logger.error(f"Webhook: Failed to create seller payment notifications: {e}")
             
             db.commit()
             payment_logger.info(f"Webhook: Payment completed for {reference}")

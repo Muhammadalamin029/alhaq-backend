@@ -118,27 +118,107 @@ def send_welcome_email(self, user_email: str, user_name: str):
         dict: Task result with success status and details
     """
     try:
-        # Simple welcome email template
+        # Welcome email template with Black & Gold theme
         html_body = f"""
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="utf-8">
             <title>Welcome to {email_service.from_name}</title>
+            <style>
+                body {{ 
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                    line-height: 1.6; 
+                    color: #ffffff; 
+                    background: linear-gradient(135deg, #000000, #0a0a0a);
+                    margin: 0;
+                    padding: 0;
+                }}
+                .container {{ 
+                    max-width: 600px; 
+                    margin: 0 auto; 
+                    padding: 20px; 
+                    background: #000000;
+                    border-radius: 12px;
+                    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+                }}
+                .header {{ 
+                    background: linear-gradient(135deg, #FFD700, #FFA500); 
+                    color: #000000; 
+                    padding: 30px 20px; 
+                    text-align: center; 
+                    border-radius: 12px 12px 0 0;
+                    box-shadow: 0 4px 20px rgba(255, 215, 0, 0.3);
+                }}
+                .header h1 {{
+                    margin: 0;
+                    font-size: 28px;
+                    font-weight: bold;
+                    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+                }}
+                .header h2 {{
+                    margin: 10px 0 0 0;
+                    font-size: 20px;
+                    font-weight: 500;
+                }}
+                .content {{ 
+                    padding: 40px 30px; 
+                    background: #0a0a0a; 
+                    border-radius: 0 0 12px 12px;
+                }}
+                .content h3 {{
+                    color: #FFD700;
+                    margin-bottom: 20px;
+                    font-size: 24px;
+                }}
+                .content p {{
+                    color: #e0e0e0;
+                    margin-bottom: 20px;
+                    font-size: 16px;
+                }}
+                .welcome-box {{
+                    background: linear-gradient(135deg, #1a1a1a, #0f0f0f);
+                    border: 2px solid #FFD700;
+                    padding: 30px;
+                    text-align: center;
+                    margin: 30px 0;
+                    border-radius: 12px;
+                    box-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
+                }}
+                .welcome-icon {{
+                    font-size: 48px;
+                    color: #FFD700;
+                    margin-bottom: 15px;
+                }}
+                .footer {{ 
+                    padding: 30px; 
+                    text-align: center; 
+                    color: #888; 
+                    font-size: 14px; 
+                    background: #000000;
+                    border-radius: 0 0 12px 12px;
+                }}
+            </style>
         </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                <div style="background-color: #4CAF50; color: white; padding: 20px; text-align: center;">
+        <body>
+            <div class="container">
+                <div class="header">
                     <h1>{email_service.from_name}</h1>
                     <h2>Welcome!</h2>
                 </div>
-                <div style="padding: 30px 20px; background-color: #f9f9f9;">
+                <div class="content">
                     <h3>Hello {user_name},</h3>
                     <p>Welcome to {email_service.from_name}! Your email has been successfully verified and your account is now active.</p>
+                    
+                    <div class="welcome-box">
+                        <div class="welcome-icon">🎉</div>
+                        <p style="color: #FFD700; font-size: 18px; margin: 0;">Your account is now ready!</p>
+                    </div>
+                    
                     <p>You can now enjoy all the features of our platform. Thank you for joining our community!</p>
                     <p>If you have any questions, please don't hesitate to contact our support team.</p>
                 </div>
-                <div style="padding: 20px; text-align: center; color: #666; font-size: 14px;">
+                <div class="footer">
                     <p>© {email_service.from_name} - Welcome to the community!</p>
                 </div>
             </div>
