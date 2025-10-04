@@ -14,6 +14,10 @@ from copy import deepcopy
 logger = logging.getLogger(__name__)
 
 
+# Import notification utilities
+from core.notification_utils import send_order_notification
+
+
 class OrderService:
     @contextmanager
     def transaction_context(self, db: Session):
@@ -266,12 +270,12 @@ class OrderService:
                     # If all items are processing, seller status is processing
                     elif all(status == "processing" for status in item_statuses):
                         filtered_order.seller_item_status = "processing"
+                    # If all items are paid, seller status is paid
+                    elif all(status == "paid" for status in item_statuses):
+                        filtered_order.seller_item_status = "paid"
                     # If all items are pending, seller status is pending
                     elif all(status == "pending" for status in item_statuses):
                         filtered_order.seller_item_status = "pending"
-                     # If all items are pending, seller status is pending
-                    elif all(status == "paid" for status in item_statuses):
-                        filtered_order.seller_item_status = "paid"
                     # Mixed statuses - determine the most advanced status
                     elif "delivered" in item_statuses:
                         filtered_order.seller_item_status = "delivered"
@@ -815,103 +819,70 @@ class OrderService:
                     old_status=current_item_status
                 )
 
-                # Send notification to customer about seller item status change
-                try:
-                    from core.notifications_service import create_notification
-                    
-                    # Map status to notification type
-                    status_to_notification = {
-                        "processing": "order_processing",
-                        "shipped": "order_shipped", 
-                        "delivered": "order_delivered",
-                        "cancelled": "order_cancelled"
+                # Prepare notification data for background tasks
+                notification_data = {
+                    "order_id": str(order.id),
+                    "seller_id": str(seller_id),
+                    "old_status": current_item_status,
+                    "new_status": new_status,
+                    "updated_by": str(seller_id),
+                    "notes": notes,
+                    "is_seller_update": True
+                }
+                
+                # Map status to notification type
+                status_to_notification = {
+                    "processing": "order_processing",
+                    "paid": "payment_successful",
+                    "shipped": "order_shipped", 
+                    "delivered": "order_delivered",
+                    "cancelled": "order_cancelled"
+                }
+                
+                # Send notifications as Celery tasks to prevent transaction rollbacks
+                if new_status in status_to_notification:
+                    # Customer notification
+                    customer_messages = {
+                        "processing": f"Your order #{str(order.id)[:8]} items are being prepared by the seller.",
+                        "paid": f"Your order #{str(order.id)[:8]} items payment has been confirmed by the seller.",
+                        "shipped": f"Your order #{str(order.id)[:8]} items have been shipped by the seller and are on their way.",
+                        "delivered": f"🎉 Your order #{str(order.id)[:8]} items have been delivered by the seller!",
+                        "cancelled": f"Some items in your order #{str(order.id)[:8]} have been cancelled by the seller."
                     }
                     
-                    if new_status in status_to_notification:
-                        notification_type = status_to_notification[new_status]
-                        
-                        # Create seller-specific messages
-                        seller_messages = {
-                            "processing": f"Your order #{str(order.id)[:8]} items are being prepared by the seller.",
-                            "shipped": f"Your order #{str(order.id)[:8]} items have been shipped by the seller and are on their way.",
-                            "delivered": f"🎉 Your order #{str(order.id)[:8]} items have been delivered by the seller!",
-                            "cancelled": f"Some items in your order #{str(order.id)[:8]} have been cancelled by the seller."
-                        }
-                        
-                        create_notification(db, {
-                            "user_id": str(order.buyer_id),
-                            "type": notification_type,
-                            "title": f"Order Items {new_status.title()}",
-                            "message": seller_messages.get(new_status, f"Your order #{str(order.id)[:8]} items status has been updated to {new_status}."),
-                            "priority": "high" if new_status in ["shipped", "delivered", "cancelled"] else "medium",
-                            "channels": ["in_app", "email"],
-                            "data": {
-                                "order_id": str(order.id),
-                                "seller_id": str(seller_id),
-                                "old_status": current_item_status,
-                                "new_status": new_status,
-                                "updated_by": str(seller_id),
-                                "notes": notes,
-                                "is_seller_update": True
-                            }
-                        })
-                        
-                        logger.info(f"Sent {notification_type} notification for seller item status change in order {order_id}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to send notification for seller item status change in order {order_id}: {e}")
-                
-                # Send notification to seller about their item status change
-                try:
-                    from core.notifications_service import create_notification
+                    # Queue customer notification
+                    customer_task_id = send_order_notification(
+                        user_id=str(order.buyer_id),
+                        order_id=str(order.id),
+                        status=new_status,
+                        message=customer_messages.get(new_status, f"Your order #{str(order.id)[:8]} items status has been updated to {new_status}."),
+                        is_seller=False,
+                        order_data=notification_data
+                    )
                     
-                    # Calculate seller's total for this order
+                    # Seller self-notification
                     seller_total = sum(item.quantity * item.price for item in seller_items)
-                    
-                    # Check if this is a multi-seller order
-                    all_order_items = db.query(OrderItem).join(Product).filter(OrderItem.order_id == order_id).all()
-                    all_sellers = set()
-                    for item in all_order_items:
-                        if item.product and item.product.seller_id:
-                            all_sellers.add(str(item.product.seller_id))
-                    
-                    # Create seller-specific messages
                     seller_self_messages = {
                         "processing": f"You've updated your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}) to processing status.",
+                        "paid": f"You've confirmed payment for your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}).",
                         "shipped": f"You've shipped your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}) to the customer.",
                         "delivered": f"🎉 You've marked your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}) as delivered!",
                         "cancelled": f"You've cancelled your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f})."
                     }
                     
-                    # Add multi-seller context if applicable
-                    seller_message = seller_self_messages.get(new_status, f"Your items in order #{str(order.id)[:8]} status updated to {new_status}.")
-                    if len(all_sellers) > 1:
-                        seller_message += f" (This order involves {len(all_sellers)} sellers - your items: ₦{seller_total:,.2f})"
+                    # Queue seller notification
+                    seller_task_id = send_order_notification(
+                        user_id=str(seller_id),
+                        order_id=str(order.id),
+                        status=new_status,
+                        message=seller_self_messages.get(new_status, f"Your items in order #{str(order.id)[:8]} status updated to {new_status}."),
+                        is_seller=True,
+                        order_data=notification_data
+                    )
                     
-                    create_notification(db, {
-                        "user_id": str(seller_id),
-                        "type": status_to_notification.get(new_status, "order_processing"),
-                        "title": f"Your Items {new_status.title()}",
-                        "message": seller_message,
-                        "priority": "medium",
-                        "channels": ["in_app", "email"],
-                        "data": {
-                            "order_id": str(order.id),
-                            "old_status": current_item_status,
-                            "new_status": new_status,
-                            "updated_by": str(seller_id),
-                            "notes": notes,
-                            "is_seller_self_notification": True,
-                            "seller_amount": float(seller_total),
-                            "sellers_count": len(all_sellers),
-                            "is_multi_seller": len(all_sellers) > 1
-                        }
-                    })
-                    
-                    logger.info(f"Sent seller self-notification for item status change in order {order_id}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to send seller self-notification for order {order_id}: {e}")
+                    logger.info(f"Queued Celery notification tasks for seller item status change in order {order_id}: customer={customer_task_id}, seller={seller_task_id}")
+                else:
+                    logger.warning(f"No notification type mapping for status {new_status} in order {order_id}")
 
                 # Note: commit is handled by transaction_context
 
@@ -1091,49 +1062,9 @@ class OrderService:
                 # Update seller balances for this order
                 self.update_seller_balances_for_order(db, order_id, new_status, old_status)
 
-                # Send notification to customer about status change
-                try:
-                    from core.notifications_service import create_notification
-                    
-                    # Map status to notification type
-                    status_to_notification = {
-                        "processing": "order_processing",
-                        "shipped": "order_shipped", 
-                        "delivered": "order_delivered",
-                        "cancelled": "order_cancelled"
-                    }
-                    
-                    if new_status in status_to_notification:
-                        notification_type = status_to_notification[new_status]
-                        
-                        # Create status-specific messages
-                        status_messages = {
-                            "processing": f"Your order #{str(order.id)[:8]} is now being processed and will be prepared for shipping.",
-                            "shipped": f"Great news! Your order #{str(order.id)[:8]} has been shipped and is on its way to you.",
-                            "delivered": f"🎉 Your order #{str(order.id)[:8]} has been delivered successfully! Thank you for shopping with us.",
-                            "cancelled": f"Your order #{str(order.id)[:8]} has been cancelled. If you have any questions, please contact support."
-                        }
-                        
-                        create_notification(db, {
-                            "user_id": str(order.buyer_id),
-                            "type": notification_type,
-                            "title": f"Order {new_status.title()}",
-                            "message": status_messages.get(new_status, f"Your order #{str(order.id)[:8]} status has been updated to {new_status}."),
-                            "priority": "high" if new_status in ["shipped", "delivered", "cancelled"] else "medium",
-                            "channels": ["in_app", "email"],
-                            "data": {
-                                "order_id": str(order.id),
-                                "old_status": old_status,
-                                "new_status": new_status,
-                                "updated_by": user_id,
-                                "notes": notes
-                            }
-                        })
-                        
-                        logger.info(f"Sent {notification_type} notification for order {order_id}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to send notification for order {order_id}: {e}")
+                # Note: Notifications are now handled by Celery tasks in update_seller_items_status
+                # This prevents duplicate notifications
+                logger.info(f"Order {order_id} status updated to {new_status} - notifications handled by Celery")
                 
                 logger.info(
                     f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
@@ -1167,74 +1098,9 @@ class OrderService:
 
     def _send_seller_notifications_async(self, db: Session, order_id: UUID, order: Order, old_status: str, new_status: str, user_id: str, notes: str):
         """Send notifications to sellers in a separate transaction (non-blocking)"""
-        try:
-            from core.notifications_service import create_notification
-            from core.database import get_db
-            
-            # Create a new database session for notifications
-            notification_db = next(get_db())
-            
-            try:
-                # Get all sellers involved in this order
-                order_items = notification_db.query(OrderItem).join(Product).filter(OrderItem.order_id == order_id).all()
-                sellers_involved = set()
-                for item in order_items:
-                    if item.product and item.product.seller_id:
-                        sellers_involved.add(str(item.product.seller_id))
-                
-                # Send notification to each seller
-                for seller_id in sellers_involved:
-                    # Check if seller profile exists before sending notification
-                    seller_profile = notification_db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
-                    if not seller_profile:
-                        logger.warning(f"Seller profile {seller_id} not found, skipping notification for order {order_id}")
-                        continue
-                        
-                    # Get seller's items in this order
-                    seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
-                    seller_total = sum(item.quantity * item.price for item in seller_items)
-                    
-                    # Create seller-specific messages showing their amount only
-                    seller_messages = {
-                        "processing": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) is now being processed.",
-                        "shipped": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been shipped to the customer.",
-                        "delivered": f"🎉 Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been delivered successfully!",
-                        "cancelled": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been cancelled."
-                    }
-                    
-                    # Add multi-seller context if applicable
-                    seller_message = seller_messages.get(new_status, f"Order #{str(order.id)[:8]} with your items status updated to {new_status}.")
-                    if len(sellers_involved) > 1:
-                        seller_message += f" (This order involves {len(sellers_involved)} sellers - your items: ₦{seller_total:,.2f})"
-                    
-                    create_notification(notification_db, {
-                        "user_id": seller_id,
-                        "type": "order_processing",  # Default type
-                        "title": f"Order {new_status.title()} - Your Items",
-                        "message": seller_message,
-                        "priority": "high" if new_status in ["shipped", "delivered", "cancelled"] else "medium",
-                        "channels": ["in_app", "email"],
-                        "data": {
-                            "order_id": str(order.id),
-                            "old_status": old_status,
-                            "new_status": new_status,
-                            "updated_by": user_id,
-                            "notes": notes,
-                            "is_seller_notification": True,
-                            "seller_amount": float(seller_total),
-                            "sellers_count": len(sellers_involved),
-                            "is_multi_seller": len(sellers_involved) > 1
-                        }
-                    })
-                    
-                logger.info(f"Sent order status notifications to {len(sellers_involved)} sellers for order {order_id}")
-                
-            finally:
-                notification_db.close()
-                
-        except Exception as e:
-            logger.error(f"Failed to send seller notifications for order {order_id}: {e}")
-            # Don't re-raise the exception as this is non-blocking
+        # Note: Notifications are now handled by Celery tasks in update_seller_items_status
+        # This prevents duplicate notifications
+        logger.info(f"Seller notifications for order {order_id} handled by Celery tasks")
 
     def bulk_update_order_status(
         self,

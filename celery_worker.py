@@ -1,59 +1,57 @@
 #!/usr/bin/env python3
 """
-Celery worker entry point
-
-This module provides the entry point for running Celery workers.
-It handles importing all necessary modules and configurations.
-
-Usage:
-    # Run worker with default concurrency
-    celery -A celery_worker worker --loglevel=info
-    
-    # Run worker with specific concurrency
-    celery -A celery_worker worker --loglevel=info --concurrency=4
-    
-    # Run worker with specific queues
-    celery -A celery_worker worker --loglevel=info --queues=emails,default
-    
-    # Run flower for monitoring (optional)
-    celery -A celery_worker flower
+Script to start Celery worker with proper configuration
 """
 
-import logging
 import os
+import sys
+import subprocess
+from pathlib import Path
 
-try:
-    # Use the application's logging configuration
-    from core.logging_config import setup_logging, get_logger
-    setup_logging(log_level="INFO")
-    logger = get_logger("celery_worker")
-except ImportError:
-    # Fallback to basic logging if app logging is not available
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-
-try:
-    # Import the celery app
-    from core.celery_app import celery_app
+def start_celery_worker():
+    """Start Celery worker with recommended settings"""
     
-    # Import all task modules to ensure they're registered
-    from core import tasks
+    # Change to project directory
+    project_dir = Path(__file__).parent
+    os.chdir(project_dir)
     
-    logger.info("Celery worker starting...")
-    logger.info(f"Registered tasks: {list(celery_app.tasks.keys())}")
+    print("🚀 Starting Celery Worker for Email & Notification Processing...")
+    print(f"📁 Working directory: {project_dir}")
+    print("=" * 50)
     
-except ImportError as e:
-    logger.error(f"Failed to import celery app or tasks: {e}")
+    # Celery worker command
+    cmd = [
+        ".venv/bin/celery",
+        "-A", "core.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=2",
+        "--queues=default,emails,notifications",
+        "--prefetch-multiplier=1"
+    ]
+    
+    print(f"📋 Command: {' '.join(cmd)}")
+    print("=" * 50)
+    print("📧 The worker will process email and notification tasks from the queue")
+    print("🔄 Press Ctrl+C to stop the worker")
+    print("=" * 50)
+    
+    try:
+        # Start the Celery worker
+        subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        print("\n⏹️  Celery worker stopped by user")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Celery worker failed to start: {e}")
+        print("\n💡 Troubleshooting:")
+        print("   - Make sure you're in the project directory")
+        print("   - Check if Redis is running: redis-cli ping")
+        print("   - Verify virtual environment is activated")
+        sys.exit(1)
+    except FileNotFoundError:
+        print("❌ Celery not found. Make sure it's installed in the virtual environment")
+        print("💡 Install with: .venv/bin/pip install celery")
+        sys.exit(1)
 
-# Export the celery app for the celery command
-app = celery_app
-
-if __name__ == '__main__':
-    """
-    This allows running the worker directly with:
-    python celery_worker.py
-    """
-    celery_app.worker_main()
+if __name__ == "__main__":
+    start_celery_worker()

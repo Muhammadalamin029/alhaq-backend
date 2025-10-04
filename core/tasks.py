@@ -1,3 +1,5 @@
+from core.notifications_service import create_notification
+from db.session import get_db
 from celery import current_task
 from core.celery_app import celery_app
 from core.email_service import email_service
@@ -334,4 +336,61 @@ def send_notification_email(self, to_email: str, subject: str, html_body: str, t
             raise self.retry(countdown=60, max_retries=3)
     except Exception as exc:
         logger.error(f"Error sending notification email to {to_email}: {str(exc)}")
+        raise self.retry(exc=exc, countdown=60, max_retries=3)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_notification')
+def send_notification(self, user_id: str, notification_type: str, title: str, message: str, data: dict = None, priority: str = "medium", channels: list = None):
+    """
+    Generic Celery task to send notifications
+    
+    Args:
+        user_id: User ID to send notification to
+        notification_type: Type of notification (order_processing, order_shipped, payment_successful, etc.)
+        title: Notification title
+        message: Notification message
+        data: Additional notification data
+        priority: Notification priority (low, medium, high)
+        channels: Notification channels (in_app, email, sms, push)
+    
+    Returns:
+        dict: Task result with success status and details
+    """
+    try:
+        
+        # Note: Celery tasks run in separate processes, so we need a new DB session
+        # This is necessary for process isolation and reliability
+        db = next(get_db())
+        try:
+            # Prepare notification payload
+            notification_payload = {
+                "user_id": user_id,
+                "type": notification_type,
+                "title": title,
+                "message": message,
+                "priority": priority,
+                "channels": channels or ["in_app", "email"],
+                "data": data
+            }
+            
+            # Send notification
+            create_notification(db, notification_payload)
+            db.commit()
+            
+            logger.info(f"Notification sent to user {user_id} for {notification_type}")
+            return {
+                "success": True,
+                "message": f"Notification sent to user {user_id}",
+                "task_id": self.request.id,
+                "user_id": user_id,
+                "notification_type": notification_type
+            }
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.error(f"Error sending notification to user {user_id}: {str(exc)}")
+        # Retry the task with exponential backoff
         raise self.retry(exc=exc, countdown=60, max_retries=3)

@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 
 from core.model import Notification, NotificationPreferences
-from core.tasks import send_notification_email
+# Removed circular import - email sending is handled separately
 from core.email_service import email_service
 
 
@@ -86,7 +86,13 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
                 </body></html>
                 """
                 try:
-                    send_notification_email.delay(to_email, subject, html_body)
+                    # Send email directly to avoid circular import
+                    email_service.send_email_sync(
+                        to_email=to_email,
+                        subject=subject,
+                        html_body=html_body,
+                        text_body=html_body
+                    )
                 except Exception:
                     pass
     return notification

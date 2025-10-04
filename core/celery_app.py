@@ -25,6 +25,8 @@ celery_app.conf.update(
     task_routes={
         "core.tasks.send_verification_email": {"queue": "emails"},
         "core.tasks.send_password_reset_email": {"queue": "emails"},
+        "core.tasks.send_notification_email": {"queue": "emails"},
+        "core.tasks.send_notification": {"queue": "notifications"},
     },
     task_default_queue="default",
     task_annotations={
@@ -34,6 +36,14 @@ celery_app.conf.update(
         },
         "core.tasks.send_password_reset_email": {
             "rate_limit": "10/m",
+            "retry_policy": {"max_retries": 3, "interval_start": 0, "interval_step": 0.2, "interval_max": 0.2},
+        },
+        "core.tasks.send_notification_email": {
+            "rate_limit": "20/m",
+            "retry_policy": {"max_retries": 3, "interval_start": 0, "interval_step": 0.2, "interval_max": 0.2},
+        },
+        "core.tasks.send_notification": {
+            "rate_limit": "50/m",
             "retry_policy": {"max_retries": 3, "interval_start": 0, "interval_step": 0.2, "interval_max": 0.2},
         },
     },
