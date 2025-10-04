@@ -778,6 +778,93 @@ async def get_admin_order_details(
         raise HTTPException(status_code=500, detail="Failed to fetch order details")
 
 
+@router.patch("/orders/{order_id}/mark-paid", response_model=AdminResponse)
+async def mark_order_as_paid(
+    order_id: UUID,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Mark an order as paid (admin only)"""
+    try:
+        from core.order import OrderService
+        from schemas.order import OrderStatusResponse
+        
+        order_service = OrderService()
+        
+        # Update order status to paid
+        result = order_service.update_order_status(
+            db=db,
+            order_id=order_id,
+            new_status="paid",
+            user_id=user["id"],
+            user_role="admin",
+            notes="Order marked as paid by admin"
+        )
+        
+        admin_logger.info(f"Order {order_id} marked as paid by admin {user['id']}")
+        
+        return AdminResponse(
+            success=True,
+            message="Order marked as paid successfully",
+            data=result
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to mark order {order_id} as paid", e)
+        raise HTTPException(status_code=500, detail="Failed to mark order as paid")
+
+
+@router.patch("/orders/bulk/mark-paid", response_model=AdminResponse)
+async def bulk_mark_orders_as_paid(
+    order_ids: List[UUID],
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Bulk mark multiple orders as paid (admin only)"""
+    try:
+        from core.order import OrderService
+        
+        order_service = OrderService()
+        results = []
+        successful_count = 0
+        failed_count = 0
+        
+        for order_id in order_ids:
+            try:
+                result = order_service.update_order_status(
+                    db=db,
+                    order_id=order_id,
+                    new_status="paid",
+                    user_id=user["id"],
+                    user_role="admin",
+                    notes="Order marked as paid by admin (bulk action)"
+                )
+                results.append({"order_id": str(order_id), "success": True, "data": result})
+                successful_count += 1
+            except Exception as e:
+                results.append({"order_id": str(order_id), "success": False, "error": str(e)})
+                failed_count += 1
+        
+        admin_logger.info(f"Bulk mark as paid: {successful_count} successful, {failed_count} failed by admin {user['id']}")
+        
+        return AdminResponse(
+            success=failed_count == 0,
+            message=f"Bulk mark as paid completed: {successful_count} successful, {failed_count} failed",
+            data={
+                "total_processed": len(order_ids),
+                "successful_count": successful_count,
+                "failed_count": failed_count,
+                "results": results
+            }
+        )
+        
+    except Exception as e:
+        log_error(admin_logger, f"Failed to bulk mark orders as paid", e)
+        raise HTTPException(status_code=500, detail="Failed to bulk mark orders as paid")
+
+
 @router.get("/products", response_model=AdminListResponse)
 async def get_admin_products(
     current_admin=Depends(role_required(["admin"])),

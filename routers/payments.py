@@ -142,6 +142,11 @@ async def initialize_payment(
         order.payment_reference = reference
         order.payment_initialized_at = func.current_timestamp()
         
+        # Update order items status to processing as well
+        from core.order import OrderService
+        order_service = OrderService()
+        order_service.update_all_order_items_status(db, order.id, "processing")
+        
         db.commit()
         
         payment_logger.info(f"Payment initialized for order {order.id}: {reference}")
@@ -201,9 +206,13 @@ async def verify_payment(
                 old_status = order.status
                 order.status = "paid"
                 
+                # Update order items status to paid as well
+                from core.order import OrderService
+                order_service = OrderService()
+                order_service.update_all_order_items_status(db, order.id, "paid")
+                
                 # Update seller balances for this order
                 from core.seller_payout_service import seller_payout_service
-                from core.order import order_service
                 order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
                 
                 # Create notification for successful payment (Customer)
@@ -370,9 +379,13 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
                 old_status = order.status
                 order.status = "paid"
                 
+                # Update order items status to paid as well
+                from core.order import OrderService
+                order_service = OrderService()
+                order_service.update_all_order_items_status(db, order.id, "paid")
+                
                 # Update seller balances for this order
                 from core.seller_payout_service import seller_payout_service
-                from core.order import order_service
                 order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
                 
                 # Create notification for successful payment (Customer)

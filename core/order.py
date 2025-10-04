@@ -1,4 +1,4 @@
-from core.model import Order, OrderItem, Product
+from core.model import Order, OrderItem, Product, SellerProfile
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID, func
 from typing import List, Optional, Tuple, Dict
@@ -682,10 +682,23 @@ class OrderService:
             "delivered": [],  # Final state
             "cancelled": []  # Final state
         }
+        
         if user_role == "seller":
-            # Sellers can only transition through the proper flow: processing -> paid -> shipped -> delivered
-            # No shortcuts allowed - must follow the payment flow
-            pass
+            # Sellers cannot change to "paid" - only admin can do that
+            # Sellers can only change from paid to shipped, or shipped to delivered
+            seller_transitions = {
+                "pending": ["cancelled"],
+                "processing": ["cancelled"],  # Cannot change to paid
+                "paid": ["shipped", "cancelled"],  # Can change from paid to shipped
+                "shipped": ["delivered"],
+                "delivered": [],
+                "cancelled": []
+            }
+            return seller_transitions.get(current_status, [])
+        elif user_role == "admin":
+            # Admin can change any status, including processing to paid
+            return transitions.get(current_status, [])
+        
         return transitions.get(current_status, [])
 
     def validate_status_transition(self, current_status: str, new_status: str, user_role: str = None) -> bool:
@@ -915,6 +928,51 @@ class OrderService:
                 detail="Failed to update seller items status"
             )
 
+    def update_all_order_items_status(
+        self,
+        db: Session,
+        order_id: UUID,
+        new_status: str
+    ) -> Dict:
+        """Update status for all items in an order to match the order status"""
+        try:
+            # Get all order items for this order
+            order_items = db.query(OrderItem).filter(OrderItem.order_id == order_id).all()
+            
+            if not order_items:
+                logger.warning(f"No order items found for order {order_id}")
+                return {"items_updated": 0, "status": new_status}
+            
+            # Update all items to the new status
+            items_updated = 0
+            for item in order_items:
+                # Check if the item has a status column (for backward compatibility)
+                if hasattr(item, 'status'):
+                    old_item_status = item.status
+                    item.status = new_status
+                    items_updated += 1
+                    logger.info(f"Updated item {item.id} status from {old_item_status} to {new_status}")
+                else:
+                    logger.warning(f"Order item {item.id} does not have status column")
+            
+            # Commit the changes
+            db.flush()
+            
+            logger.info(f"Updated {items_updated} order items to status {new_status} for order {order_id}")
+            
+            return {
+                "items_updated": items_updated,
+                "status": new_status,
+                "order_id": str(order_id)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to update all order items status: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update order items status"
+            )
+
     def update_order_status(
         self,
         db: Session,
@@ -1021,6 +1079,10 @@ class OrderService:
                 db.flush()  # Ensure changes are written to DB
                 db.refresh(order)
 
+                # Update all order items status to match the order status
+                # This ensures consistency between order and item statuses
+                self.update_all_order_items_status(db, order_id, new_status)
+
                 # Update seller balances for this order
                 self.update_seller_balances_for_order(db, order_id, new_status, old_status)
 
@@ -1068,71 +1130,26 @@ class OrderService:
                 except Exception as e:
                     logger.error(f"Failed to send notification for order {order_id}: {e}")
                 
-                # Send notification to sellers involved in this order
-                try:
-                    from core.notifications_service import create_notification
-                    
-                    # Get all sellers involved in this order
-                    order_items = db.query(OrderItem).join(Product).filter(OrderItem.order_id == order_id).all()
-                    sellers_involved = set()
-                    for item in order_items:
-                        if item.product and item.product.seller_id:
-                            sellers_involved.add(str(item.product.seller_id))
-                    
-                    # Send notification to each seller
-                    for seller_id in sellers_involved:
-                        # Get seller's items in this order
-                        seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
-                        seller_total = sum(item.quantity * item.price for item in seller_items)
-                        
-                        # Create seller-specific messages showing their amount only
-                        seller_messages = {
-                            "processing": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) is now being processed.",
-                            "shipped": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been shipped to the customer.",
-                            "delivered": f"🎉 Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been delivered successfully!",
-                            "cancelled": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been cancelled."
-                        }
-                        
-                        # Add multi-seller context if applicable
-                        seller_message = seller_messages.get(new_status, f"Order #{str(order.id)[:8]} with your items status updated to {new_status}.")
-                        if len(sellers_involved) > 1:
-                            seller_message += f" (This order involves {len(sellers_involved)} sellers - your items: ₦{seller_total:,.2f})"
-                        
-                        create_notification(db, {
-                            "user_id": seller_id,
-                            "type": status_to_notification.get(new_status, "order_processing"),
-                            "title": f"Order {new_status.title()} - Your Items",
-                            "message": seller_message,
-                            "priority": "high" if new_status in ["shipped", "delivered", "cancelled"] else "medium",
-                            "channels": ["in_app", "email"],
-                            "data": {
-                                "order_id": str(order.id),
-                                "old_status": old_status,
-                                "new_status": new_status,
-                                "updated_by": user_id,
-                                "notes": notes,
-                                "is_seller_notification": True,
-                                "seller_amount": float(seller_total),
-                                "sellers_count": len(sellers_involved),
-                                "is_multi_seller": len(sellers_involved) > 1
-                            }
-                        })
-                        
-                    logger.info(f"Sent order status notifications to {len(sellers_involved)} sellers for order {order_id}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to send seller notifications for order {order_id}: {e}")
-
                 logger.info(
                     f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
 
-                return {
+                # Return success response first
+                result = {
                     "order_id": str(order_id),
                     "old_status": old_status,
                     "new_status": new_status,
                     "updated_at": order.updated_at.isoformat() if order.updated_at else None,
                     "notes": notes
                 }
+                
+                # Send notifications to sellers in a separate transaction (non-blocking)
+                try:
+                    self._send_seller_notifications_async(db, order_id, order, old_status, new_status, user_id, notes)
+                except Exception as e:
+                    logger.error(f"Failed to send seller notifications for order {order_id}: {e}")
+                    # Don't fail the main operation if notifications fail
+                
+                return result
 
         except HTTPException:
             raise
@@ -1142,6 +1159,77 @@ class OrderService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update order status"
             )
+
+    def _send_seller_notifications_async(self, db: Session, order_id: UUID, order: Order, old_status: str, new_status: str, user_id: str, notes: str):
+        """Send notifications to sellers in a separate transaction (non-blocking)"""
+        try:
+            from core.notifications_service import create_notification
+            from core.database import get_db
+            
+            # Create a new database session for notifications
+            notification_db = next(get_db())
+            
+            try:
+                # Get all sellers involved in this order
+                order_items = notification_db.query(OrderItem).join(Product).filter(OrderItem.order_id == order_id).all()
+                sellers_involved = set()
+                for item in order_items:
+                    if item.product and item.product.seller_id:
+                        sellers_involved.add(str(item.product.seller_id))
+                
+                # Send notification to each seller
+                for seller_id in sellers_involved:
+                    # Check if seller profile exists before sending notification
+                    seller_profile = notification_db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
+                    if not seller_profile:
+                        logger.warning(f"Seller profile {seller_id} not found, skipping notification for order {order_id}")
+                        continue
+                        
+                    # Get seller's items in this order
+                    seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
+                    seller_total = sum(item.quantity * item.price for item in seller_items)
+                    
+                    # Create seller-specific messages showing their amount only
+                    seller_messages = {
+                        "processing": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) is now being processed.",
+                        "shipped": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been shipped to the customer.",
+                        "delivered": f"🎉 Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been delivered successfully!",
+                        "cancelled": f"Order #{str(order.id)[:8]} with your items (₦{seller_total:,.2f}) has been cancelled."
+                    }
+                    
+                    # Add multi-seller context if applicable
+                    seller_message = seller_messages.get(new_status, f"Order #{str(order.id)[:8]} with your items status updated to {new_status}.")
+                    if len(sellers_involved) > 1:
+                        seller_message += f" (This order involves {len(sellers_involved)} sellers - your items: ₦{seller_total:,.2f})"
+                    
+                    create_notification(notification_db, {
+                        "user_id": seller_id,
+                        "type": "order_processing",  # Default type
+                        "title": f"Order {new_status.title()} - Your Items",
+                        "message": seller_message,
+                        "priority": "high" if new_status in ["shipped", "delivered", "cancelled"] else "medium",
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "order_id": str(order.id),
+                            "old_status": old_status,
+                            "new_status": new_status,
+                            "updated_by": user_id,
+                            "notes": notes,
+                            "is_seller_notification": True,
+                            "seller_amount": float(seller_total),
+                            "sellers_count": len(sellers_involved),
+                            "is_multi_seller": len(sellers_involved) > 1
+                        }
+                    })
+                    
+                logger.info(f"Sent order status notifications to {len(sellers_involved)} sellers for order {order_id}")
+                
+            finally:
+                notification_db.close()
+                
+        except Exception as e:
+            logger.error(f"Failed to send seller notifications for order {order_id}: {e}")
+            # Don't re-raise the exception as this is non-blocking
 
     def bulk_update_order_status(
         self,

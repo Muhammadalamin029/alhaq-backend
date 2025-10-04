@@ -11,6 +11,7 @@ from schemas.products import ProductResponse, SellerResponse
 class OrderStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
+    PAID = "paid"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"

@@ -207,7 +207,7 @@ class OrderItem(Base):
         "products.id", ondelete="CASCADE"), nullable=False)
     quantity = Column(Integer, nullable=False)
     price = Column(Numeric(15, 2), nullable=False)
-    status = Column(Enum("pending", "processing", "shipped", "delivered", "cancelled", 
+    status = Column(Enum("pending", "processing", "paid", "shipped", "delivered", "cancelled", 
                         name="order_item_status"), default="pending", nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
@@ -383,7 +383,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False, index=True)
+    user_id = Column(UUID, nullable=False, index=True)  # References either profiles.id or seller_profiles.id
 
     type = Column(Enum(
         "order_confirmed",

@@ -79,6 +79,11 @@ def calculate_seller_item_status(order, seller_id: str) -> str:
         print(f"DEBUG: All items shipped, returning shipped")
         return "shipped"
     
+    # If all items are paid, seller status is paid
+    if all(status == "paid" for status in item_statuses):
+        print(f"DEBUG: All items paid, returning paid")
+        return "paid"
+    
     # If all items are processing, seller status is processing
     if all(status == "processing" for status in item_statuses):
         print(f"DEBUG: All items processing, returning processing")
@@ -96,6 +101,9 @@ def calculate_seller_item_status(order, seller_id: str) -> str:
     elif "shipped" in item_statuses:
         print(f"DEBUG: Mixed statuses with shipped, returning shipped")
         return "shipped"
+    elif "paid" in item_statuses:
+        print(f"DEBUG: Mixed statuses with paid, returning paid")
+        return "paid"
     elif "processing" in item_statuses:
         print(f"DEBUG: Mixed statuses with processing, returning processing")
         return "processing"
@@ -164,6 +172,7 @@ async def get_seller_stats(
         # Count orders based on seller item status, not general order status
         pending_orders = 0
         processing_orders = 0
+        paid_orders = 0
         shipped_orders = 0
         delivered_orders = 0
         cancelled_orders = 0
@@ -185,6 +194,8 @@ async def get_seller_stats(
                 pending_orders += 1
             elif seller_item_status == "processing":
                 processing_orders += 1
+            elif seller_item_status == "paid":
+                paid_orders += 1
             elif seller_item_status == "shipped":
                 shipped_orders += 1
             elif seller_item_status == "delivered":
@@ -196,6 +207,7 @@ async def get_seller_stats(
         print(f"DEBUG: Final counts for seller {seller_id}:")
         print(f"  - Pending: {pending_orders}")
         print(f"  - Processing: {processing_orders}")
+        print(f"  - Paid: {paid_orders}")
         print(f"  - Shipped: {shipped_orders}")
         print(f"  - Delivered: {delivered_orders}")
         print(f"  - Cancelled: {cancelled_orders}")
@@ -270,6 +282,7 @@ async def get_seller_stats(
         print(f"DEBUG: Values right before API response:")
         print(f"  - pending_orders: {pending_orders}")
         print(f"  - processing_orders: {processing_orders}")
+        print(f"  - paid_orders: {paid_orders}")
         print(f"  - shipped_orders: {shipped_orders}")
         print(f"  - delivered_orders: {delivered_orders}")
         print(f"  - cancelled_orders: {cancelled_orders}")
