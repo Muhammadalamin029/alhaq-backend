@@ -297,6 +297,7 @@ async def get_seller_stats(
                 "total_orders": total_orders,
                 "pending_orders": pending_orders,
                 "processing_orders": processing_orders,
+                "paid_orders": paid_orders,
                 "shipped_orders": shipped_orders,
                 "delivered_orders": delivered_orders,
                 "cancelled_orders": cancelled_orders,
@@ -481,7 +482,7 @@ async def get_seller_analytics(
             .filter(
                 Product.seller_id == seller_id,
                 Order.created_at >= start_date,
-                Order.status.in_(["delivered", "shipped", "processing"])
+                Order.status.in_(["delivered", "shipped", "paid", "processing"])
             )
         )
         
@@ -532,7 +533,7 @@ async def get_seller_analytics(
             .filter(
                 Product.seller_id == seller_id,
                 Order.created_at >= start_date,
-                Order.status.in_(["delivered", "shipped", "processing"])
+                Order.status.in_(["delivered", "shipped", "paid", "processing"])
             )
         )
         
@@ -649,7 +650,7 @@ async def get_seller_analytics(
                 Product.seller_id == seller_id,
                 Order.created_at >= prev_start_date,
                 Order.created_at < start_date,
-                Order.status.in_(["delivered", "shipped", "processing"])
+                Order.status.in_(["delivered", "shipped", "paid", "processing"])
             )
         )
         

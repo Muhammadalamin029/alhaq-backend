@@ -53,6 +53,7 @@ class SellerStatsData(BaseModel):
     total_orders: int
     pending_orders: int
     processing_orders: int
+    paid_orders: int
     shipped_orders: int
     delivered_orders: int
     cancelled_orders: int

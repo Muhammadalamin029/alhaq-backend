@@ -269,11 +269,16 @@ class OrderService:
                     # If all items are pending, seller status is pending
                     elif all(status == "pending" for status in item_statuses):
                         filtered_order.seller_item_status = "pending"
+                     # If all items are pending, seller status is pending
+                    elif all(status == "paid" for status in item_statuses):
+                        filtered_order.seller_item_status = "paid"
                     # Mixed statuses - determine the most advanced status
                     elif "delivered" in item_statuses:
                         filtered_order.seller_item_status = "delivered"
                     elif "shipped" in item_statuses:
                         filtered_order.seller_item_status = "shipped"
+                    elif "paid" in item_statuses:
+                        filtered_order.seller_item_status = "paid"
                     elif "processing" in item_statuses:
                         filtered_order.seller_item_status = "processing"
                     else:
@@ -684,11 +689,11 @@ class OrderService:
         }
         
         if user_role == "seller":
-            # Sellers cannot change to "paid" - only admin can do that
-            # Sellers can only change from paid to shipped, or shipped to delivered
+            # Sellers can handle paid status for their items
+            # Sellers can change from processing to paid, paid to shipped, or shipped to delivered
             seller_transitions = {
                 "pending": ["cancelled"],
-                "processing": ["cancelled"],  # Cannot change to paid
+                "processing": ["paid", "cancelled"],  # Can change to paid
                 "paid": ["shipped", "cancelled"],  # Can change from paid to shipped
                 "shipped": ["delivered"],
                 "delivered": [],
@@ -1039,11 +1044,11 @@ class OrderService:
                         pass
                     
                     # Fallback: Update entire order status (temporary until DB is updated)
-                    # Sellers can only mark orders as shipped or delivered (paid status is set by payment system)
-                    if new_status not in ["shipped", "delivered"]:
+                    # Sellers can mark orders as paid, shipped, or delivered
+                    if new_status not in ["paid", "shipped", "delivered"]:
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Sellers can only mark orders as shipped or delivered. Processing and paid statuses are managed by the payment system."
+                            detail="Sellers can only mark orders as paid, shipped, or delivered. Processing status is managed by the payment system."
                         )
 
                 elif user_role == "customer":
