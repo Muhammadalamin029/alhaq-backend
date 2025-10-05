@@ -196,8 +196,11 @@ async def verify_payment(
                 detail="Payment record not found"
             )
         
-        # Update payment status
-        if transaction_data["status"] == "success":
+        # Handle different payment statuses from Paystack
+        transaction_status = transaction_data["status"]
+        
+        if transaction_status == "success":
+            # Payment successful - update to completed
             payment.status = "completed"
             
             # Update order status
@@ -278,7 +281,9 @@ async def verify_payment(
                     payment_logger.error(f"Failed to create seller payment notifications: {e}")
             
             payment_logger.info(f"Payment verified successfully: {request.reference}")
-        else:
+            
+        elif transaction_status == "failed":
+            # Payment failed
             payment.status = "failed"
             
             # Create notification for failed payment
@@ -301,6 +306,118 @@ async def verify_payment(
                 payment_logger.error(f"Failed to create payment failure notification: {e}")
             
             payment_logger.warning(f"Payment verification failed: {request.reference}")
+            
+        elif transaction_status == "abandoned":
+            # Payment abandoned by customer
+            payment.status = "failed"  # Mark as failed since it was abandoned
+            
+            # Create notification for abandoned payment
+            try:
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_failed",
+                    "title": "Payment Abandoned",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} was not completed. Please try again to complete your order.",
+                    "priority": "medium",
+                    "channels": ["in_app", "email"],
+                    "to_email": request.email if hasattr(request, 'email') else None,
+                    "data": {
+                        "order_id": str(payment.order_id),
+                        "payment_id": str(payment.id),
+                        "amount": float(payment.amount),
+                        "reason": "abandoned"
+                    }
+                })
+            except Exception as e:
+                payment_logger.error(f"Failed to create payment abandonment notification: {e}")
+            
+            payment_logger.warning(f"Payment abandoned: {request.reference}")
+            
+        elif transaction_status == "reversed":
+            # Payment reversed (refunded or chargeback)
+            payment.status = "refunded"
+            
+            # Update order status to cancelled if it was paid
+            order = db.query(Order).filter(Order.id == payment.order_id).first()
+            if order and order.status == "paid":
+                order.status = "cancelled"
+                
+                # Update order items status to cancelled as well
+                from core.order import OrderService
+                order_service = OrderService()
+                order_service.update_all_order_items_status(db, order.id, "cancelled")
+            
+            # Create notification for reversed payment
+            try:
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_failed",
+                    "title": "Payment Reversed",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} has been reversed. Your order has been cancelled. Please contact support for more information.",
+                    "priority": "high",
+                    "channels": ["in_app", "email"],
+                    "to_email": request.email if hasattr(request, 'email') else None,
+                    "data": {
+                        "order_id": str(payment.order_id),
+                        "payment_id": str(payment.id),
+                        "amount": float(payment.amount),
+                        "reason": "reversed"
+                    }
+                })
+            except Exception as e:
+                payment_logger.error(f"Failed to create payment reversal notification: {e}")
+            
+            payment_logger.warning(f"Payment reversed: {request.reference}")
+            
+        elif transaction_status in ["pending", "ongoing", "processing", "queued"]:
+            # Payment still in progress - keep as pending
+            payment.status = "pending"
+            
+            # Create notification for pending payment
+            try:
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_pending",
+                    "title": "Payment Pending",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} is still being processed. We'll notify you once it's confirmed.",
+                    "priority": "medium",
+                    "channels": ["in_app"],
+                    "data": {
+                        "order_id": str(payment.order_id),
+                        "payment_id": str(payment.id),
+                        "amount": float(payment.amount),
+                        "status": transaction_status
+                    }
+                })
+            except Exception as e:
+                payment_logger.error(f"Failed to create payment pending notification: {e}")
+            
+            payment_logger.info(f"Payment still pending: {request.reference} (status: {transaction_status})")
+            
+        else:
+            # Unknown status - log and mark as failed
+            payment.status = "failed"
+            payment_logger.warning(f"Unknown payment status: {transaction_status} for reference: {request.reference}")
+            
+            # Create notification for unknown status
+            try:
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_failed",
+                    "title": "Payment Status Unknown",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} has an unknown status. Please contact support for assistance.",
+                    "priority": "high",
+                    "channels": ["in_app", "email"],
+                    "to_email": request.email if hasattr(request, 'email') else None,
+                    "data": {
+                        "order_id": str(payment.order_id),
+                        "payment_id": str(payment.id),
+                        "amount": float(payment.amount),
+                        "status": transaction_status
+                    }
+                })
+            except Exception as e:
+                payment_logger.error(f"Failed to create unknown status notification: {e}")
         
         db.commit()
         
