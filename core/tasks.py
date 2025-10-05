@@ -362,6 +362,11 @@ def send_notification(self, user_id: str, notification_type: str, title: str, me
         # This is necessary for process isolation and reliability
         db = next(get_db())
         try:
+            # Get user's email address
+            from core.model import User
+            user = db.query(User).filter(User.id == user_id).first()
+            user_email = user.email if user else None
+            
             # Prepare notification payload
             notification_payload = {
                 "user_id": user_id,
@@ -370,7 +375,8 @@ def send_notification(self, user_id: str, notification_type: str, title: str, me
                 "message": message,
                 "priority": priority,
                 "channels": channels or ["in_app", "email"],
-                "data": data
+                "data": data,
+                "to_email": user_email  # Include user's email for email sending
             }
             
             # Send notification

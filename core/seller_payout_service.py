@@ -79,6 +79,11 @@ class SellerPayoutService:
                 logger.error(f"Seller not found: {seller_id}")
                 return
             
+            # Prevent duplicate processing for same status
+            if order_status == old_status:
+                logger.info(f"Skipping duplicate balance update for seller {seller_id}, order {order_id}: {order_status}")
+                return
+            
             # Calculate earnings for this order
             earnings = self.calculate_seller_earnings(db, seller_id, order_id)
             
@@ -91,16 +96,23 @@ class SellerPayoutService:
                     seller.total_revenue += earnings["gross_amount"]
                     logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available (delivered)")
                 elif old_status == "shipped":
-                    # Already moved to available, just update total revenue
-                    seller.total_revenue += earnings["gross_amount"]
-                    logger.info(f"Updated seller {seller_id} total revenue: +{earnings['gross_amount']}")
+                    # Already moved to available, no need to add revenue again
+                    # Revenue was already added when status changed to "paid" or "shipped"
+                    logger.info(f"Updated seller {seller_id} status to delivered (revenue already added)")
+                elif old_status == "paid":
+                    # Already moved to available and revenue added, no need to add again
+                    logger.info(f"Updated seller {seller_id} status to delivered (revenue already added)")
                 
             elif order_status == "shipped":
                 # Move from pending to available balance
                 if old_status == "processing":
                     seller.pending_balance -= earnings["net_amount"]
                     seller.available_balance += earnings["net_amount"]
+                    seller.total_revenue += earnings["gross_amount"]
                     logger.info(f"Updated seller {seller_id} balance: +{earnings['net_amount']} available (shipped)")
+                elif old_status == "paid":
+                    # Already moved to available and revenue added, no need to add again
+                    logger.info(f"Updated seller {seller_id} status to shipped (revenue already added)")
                 
             elif order_status == "paid":
                 # Move from processing to available balance when payment is confirmed

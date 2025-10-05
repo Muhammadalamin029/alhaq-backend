@@ -94,6 +94,16 @@ def patch_preferences(
     return _prefs_to_out(prefs)
 
 
+@router.patch("/mark-all-read")
+def patch_mark_all_read(
+    payload: dict = None,  # Accept optional empty body
+    db: Session = Depends(get_db), 
+    current_user=Depends(get_current_user)
+):
+    count = mark_all_as_read(db, current_user["id"])
+    return {"updated": count}
+
+
 @router.patch("/{notification_id}")
 def patch_notification(notification_id: str, payload: NotificationUpdate, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     if payload.is_read is True:
@@ -102,12 +112,6 @@ def patch_notification(notification_id: str, payload: NotificationUpdate, db: Se
             raise HTTPException(status_code=404, detail="Notification not found")
         return {"success": True}
     raise HTTPException(status_code=400, detail="No supported fields to update")
-
-
-@router.patch("/mark-all-read")
-def patch_mark_all_read(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    count = mark_all_as_read(db, current_user["id"])
-    return {"updated": count}
 
 
 @router.patch("/bulk-update")

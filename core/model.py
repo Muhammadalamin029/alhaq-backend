@@ -424,7 +424,7 @@ class NotificationPreferences(Base):
     __tablename__ = "notification_preferences"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, ForeignKey("profiles.id"), unique=True, nullable=False, index=True)
+    user_id = Column(UUID, unique=True, nullable=False, index=True)  # References either profiles.id or seller_profiles.id
 
     # Email
     email_order_updates = Column(Boolean, default=True)

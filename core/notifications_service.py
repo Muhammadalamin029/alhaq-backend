@@ -3,10 +3,24 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from datetime import datetime
 import json
+import logging
 
 from core.model import Notification, NotificationPreferences
 # Removed circular import - email sending is handled separately
 from core.email_service import email_service
+
+logger = logging.getLogger(__name__)
+
+
+def _get_user_email(db: Session, user_id: str) -> Optional[str]:
+    """Get user email address by user ID"""
+    try:
+        from core.model import User
+        user = db.query(User).filter(User.id == user_id).first()
+        return user.email if user else None
+    except Exception as e:
+        logger.error(f"Failed to get user email for user_id {user_id}: {e}")
+        return None
 
 
 def _serialize_channels(channels: Optional[List[str]]) -> str:
@@ -74,8 +88,8 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
         if group:
             allowed = bool(getattr(prefs, f"email_{group}", False))
         if allowed:
-            # We need the user's email. Join via Profile->User is not direct here; caller should provide.
-            to_email = payload.get('to_email')
+            # Get user's email - try from payload first, then fetch from database
+            to_email = payload.get('to_email') or _get_user_email(db, str(notification.user_id))
             if to_email:
                 subject = notification.title
                 # Simple HTML body; can be templated later
@@ -87,14 +101,18 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
                 """
                 try:
                     # Send email directly to avoid circular import
-                    email_service.send_email_sync(
+                    success = email_service.send_email_sync(
                         to_email=to_email,
                         subject=subject,
                         html_body=html_body,
                         text_body=html_body
                     )
-                except Exception:
-                    pass
+                    if success:
+                        logger.info(f"Notification email sent to {to_email} for notification {notification.id}")
+                    else:
+                        logger.warning(f"Failed to send notification email to {to_email} for notification {notification.id}")
+                except Exception as e:
+                    logger.error(f"Error sending notification email to {to_email} for notification {notification.id}: {e}")
     return notification
 
 
