@@ -449,11 +449,11 @@ class OrderService:
                 db.add(order_item)
                 db.flush()
 
-                # Don't commit here - context manager handles it
-                db.refresh(new_order)
                 # Ensure total is consistent (already set), but recalc in case of float/decimal quirks
+                db.refresh(new_order)
                 recalc_total = sum(Decimal(str(i.price)) * i.quantity for i in new_order.order_items)
                 new_order.total_amount = float(recalc_total)
+                db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(new_order)
                 return new_order
 
@@ -507,6 +507,7 @@ class OrderService:
                 db.refresh(order)
                 new_total = sum(Decimal(str(item.price)) * item.quantity for item in order.order_items)
                 order.total_amount = float(new_total)
+                db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(order)
                 return order
 
@@ -582,7 +583,7 @@ class OrderService:
                 )
                 order.total_amount = float(new_total)
 
-                db.flush()  # ensures pending changes are visible
+                db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(order)  # refresh with latest DB state
                 return order
 
@@ -672,6 +673,7 @@ class OrderService:
                 )
                 order.total_amount = float(new_total)
 
+                db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(order)
                 return order
 
