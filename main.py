@@ -106,7 +106,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 # ------------------------------------------------------
 # Health check
 # ------------------------------------------------------
-@app.get("/")
+@app.head("/")
 def health_check():
     logger.debug("Health check endpoint accessed")
     return {
