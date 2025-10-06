@@ -16,4 +16,4 @@ primary_region = "iad"
   strategy = "rolling"
 
 [processes]
-  celery = "uv run celery -A core.tasks worker --loglevel=info"
+  celery = "python start_celery_only.py"
