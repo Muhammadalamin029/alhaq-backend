@@ -6,8 +6,12 @@ Base = declarative_base()
 
 engine = create_engine(
     settings.DATABASE_URL,
-    echo=True,
-    future=True
+    echo=False,  # Disable SQL logging in production
+    future=True,
+    pool_size=20,  # Increase connection pool
+    max_overflow=30,  # Allow more connections
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=3600,  # Recycle connections every hour
 )
 
 SessionLocal = sessionmaker(
