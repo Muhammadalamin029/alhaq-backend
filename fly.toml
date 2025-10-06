@@ -1,31 +1,18 @@
-# Fly.io configuration for Celery worker only
+# fly.toml for Celery worker only
 app = "alhaq-backend"
 primary_region = "iad"
 
 [build]
-  builder = "buildpacks"
+  builder = "paketobuildpacks/builder:base"  # ✅ Valid buildpack builder for Python
 
 [env]
-  # Celery doesn't need a PORT, but we set it for consistency
-  PORT = "8000"
+  PYTHONUNBUFFERED = "1"
+  PORT = "8000"  # Fly requires a port even if Celery doesn't use HTTP
 
-# No HTTP service needed for Celery worker
-# Celery runs as a background process
-
-[[vm]]
+[vm]
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 256
 
-[deploy]
-  # Start command for Celery worker
-  release_command = "uv run start_celery_only.py 1"
-
-# Process groups - define what runs
 [processes]
-  celery = "uv run start_celery_only.py 1"
-
-# Health check (optional for Celery)
-[checks]
-  # Celery doesn't have HTTP endpoints, so we skip health checks
-  # or we could check if Celery process is running
+  celery = "uv run start_celery_only.py"
