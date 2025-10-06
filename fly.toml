@@ -3,6 +3,7 @@ primary_region = "iad"
 
 [build]
   builder = "paketobuildpacks/builder:base"
+  buildpacks = ["paketo-buildpacks/python"]
 
 [env]
   PORT = "8000"
