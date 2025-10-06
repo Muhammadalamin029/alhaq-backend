@@ -1,0 +1,30 @@
+# Fly.io configuration for Celery worker only
+app = "alhaq-celery-worker"
+primary_region = "iad"
+
+[build]
+
+[env]
+  # Celery doesn't need a PORT, but we set it for consistency
+  PORT = "8000"
+
+# No HTTP service needed for Celery worker
+# Celery runs as a background process
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
+
+[deploy]
+  # Start command for Celery worker
+  release_command = "uv run start_celery_only.py 1"
+
+# Process groups - define what runs
+[processes]
+  celery = "uv run start_celery_only.py 1"
+
+# Health check (optional for Celery)
+[checks]
+  # Celery doesn't have HTTP endpoints, so we skip health checks
+  # or we could check if Celery process is running
