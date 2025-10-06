@@ -86,6 +86,7 @@ class OrderResponse(BaseModel):
     delivery_addr: Optional[AddressResponse] = None
     order_items: List[OrderItemResponse]
     seller_groups: Optional[List[dict]] = None  # For customer orders - use dict for now
+    formatted_payments: Optional[List[dict]] = None  # Payment information
 
     class Config:
         from_attributes = True

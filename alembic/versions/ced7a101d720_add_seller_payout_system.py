@@ -45,7 +45,7 @@ def upgrade() -> None:
         sa.Column('amount', sa.DECIMAL(precision=12, scale=2), nullable=False),
         sa.Column('platform_fee', sa.DECIMAL(precision=12, scale=2), nullable=True, default=0),
         sa.Column('net_amount', sa.DECIMAL(precision=12, scale=2), nullable=False),
-        sa.Column('status', sa.String(length=20), nullable=True, default='pending'),
+        sa.Column('status', sa.Enum('pending', 'processing', 'completed', 'failed', 'cancelled', name='payout_status'), nullable=True, default='pending'),
         sa.Column('transfer_reference', sa.String(length=100), nullable=True),
         sa.Column('paystack_transfer_id', sa.String(length=100), nullable=True),
         sa.Column('recipient_code', sa.String(length=50), nullable=True),
@@ -61,11 +61,6 @@ def upgrade() -> None:
         sa.UniqueConstraint('transfer_reference')
     )
     
-    # Alter the status column to use the enum
-    op.alter_column('seller_payouts', 'status',
-                    existing_type=sa.String(length=20),
-                    type_=sa.Enum('pending', 'processing', 'completed', 'failed', 'cancelled', name='payout_status'),
-                    existing_nullable=True)
     op.create_index(op.f('ix_seller_payouts_id'), 'seller_payouts', ['id'], unique=False)
     op.create_index(op.f('ix_seller_payouts_seller_id'), 'seller_payouts', ['seller_id'], unique=False)
 

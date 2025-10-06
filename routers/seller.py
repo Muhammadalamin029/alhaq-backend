@@ -119,7 +119,7 @@ def calculate_seller_item_status(order, seller_id: str) -> str:
 
 @router.get("/stats", response_model=SellerStatsResponse)
 async def get_seller_stats(
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Get seller statistics"""
@@ -319,7 +319,7 @@ async def get_seller_stats(
 
 @router.get("/products", response_model=SellerProductsResponse)
 async def get_seller_products(
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -378,7 +378,7 @@ async def get_seller_products(
 
 @router.get("/orders", response_model=SellerOrdersResponse)
 async def get_seller_orders(
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -413,7 +413,7 @@ async def get_seller_orders(
 @router.get("/orders/{order_id}", response_model=OrderResponse)
 async def get_seller_order_details(
     order_id: str,
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Get detailed information for a specific order containing seller's products"""
@@ -440,7 +440,7 @@ async def get_seller_order_details(
 
 @router.get("/analytics", response_model=SellerAnalyticsResponse)
 async def get_seller_analytics(
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db),
     period: str = Query("30d", description="Analytics period: 7d, 30d, 90d, 1y")
 ):
@@ -755,7 +755,7 @@ async def get_seller_analytics(
 
 @router.post("/kyc/submit")
 async def submit_kyc_documents(
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Submit KYC documents for verification"""
@@ -791,7 +791,7 @@ async def submit_kyc_documents(
 async def update_seller_order_status(
     order_id: str,
     payload: OrderStatusUpdate,
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Update order status for seller's items only (seller-specific endpoint)"""
@@ -873,7 +873,7 @@ async def update_seller_order_status(
 
 @router.get("/balance", response_model=SellerBalanceResponse)
 async def get_seller_balance(
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Get seller balance and payout information"""
@@ -914,7 +914,7 @@ async def get_seller_balance(
 @router.post("/payouts", response_model=PayoutRequestResponse)
 async def request_payout(
     payout_data: SellerPayoutCreate,
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Request a payout for seller earnings"""
@@ -978,7 +978,7 @@ async def request_payout(
 async def get_seller_payouts(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    user=Depends(role_required(["seller"])),
+    user=Depends(role_required(["seller", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Get seller payout history"""

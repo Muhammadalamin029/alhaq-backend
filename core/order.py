@@ -179,13 +179,37 @@ class OrderService:
             )
             if order:
                 order.seller_groups = self._group_items_by_seller(order.order_items)
+                # Format payments for customer orders (create a new attribute to avoid SQLAlchemy conflicts)
+                order.formatted_payments = [
+                    {
+                        "id": str(payment.id),
+                        "amount": float(payment.amount),
+                        "status": payment.status,
+                        "payment_method": payment.payment_method,
+                        "transaction_id": payment.transaction_id,
+                        "created_at": payment.created_at.isoformat()
+                    } for payment in order.payments
+                ] if order.payments else []
             return order
         else:
-            return (
+            order = (
                 self._with_relationships(db.query(Order))
                 .filter(Order.id == order_id)
                 .first()
             )
+            if order:
+                # Format payments for admin/seller orders (create a new attribute to avoid SQLAlchemy conflicts)
+                order.formatted_payments = [
+                    {
+                        "id": str(payment.id),
+                        "amount": float(payment.amount),
+                        "status": payment.status,
+                        "payment_method": payment.payment_method,
+                        "transaction_id": payment.transaction_id,
+                        "created_at": payment.created_at.isoformat()
+                    } for payment in order.payments
+                ] if order.payments else []
+            return order
 
     def get_orders_by_buyer(self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
         query = self._with_relationships_and_sellers(
@@ -196,9 +220,20 @@ class OrderService:
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()
         
-        # Group order items by seller for each order
+        # Group order items by seller for each order and format payments
         for order in orders:
             order.seller_groups = self._group_items_by_seller(order.order_items)
+            # Format payments for customer orders (create a new attribute to avoid SQLAlchemy conflicts)
+            order.formatted_payments = [
+                {
+                    "id": str(payment.id),
+                    "amount": float(payment.amount),
+                    "status": payment.status,
+                    "payment_method": payment.payment_method,
+                    "transaction_id": payment.transaction_id,
+                    "created_at": payment.created_at.isoformat()
+                } for payment in order.payments
+            ] if order.payments else []
         
         return orders, count
 
