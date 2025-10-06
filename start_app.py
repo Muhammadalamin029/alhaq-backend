@@ -15,21 +15,28 @@ from pathlib import Path
 
 def start_celery(env="dev"):
     """Start Celery worker"""
-    # Use virtual environment celery
-    celery_cmd = ".venv/bin/celery"
+    # Check if we're in a virtual environment or using uv
+    if os.path.exists(".venv/bin/celery"):
+        celery_cmd = ".venv/bin/celery"
+    elif os.path.exists("uv"):
+        celery_cmd = "uv"
+        celery_args = ["run", "celery"]
+    else:
+        celery_cmd = "celery"
+        celery_args = []
     
     if env == "prod":
         # Production: Use gunicorn for FastAPI and celery for worker
-        cmd = [
-            celery_cmd, "-A", "core.celery_app", "worker",
+        cmd = [celery_cmd] + celery_args + [
+            "-A", "core.celery_app", "worker",
             "--loglevel=info",
             "--concurrency=4",
             "--queues=default,emails,notifications"
         ]
     else:
         # Development: Use uvicorn for FastAPI and celery for worker
-        cmd = [
-            celery_cmd, "-A", "core.celery_app", "worker",
+        cmd = [celery_cmd] + celery_args + [
+            "-A", "core.celery_app", "worker",
             "--loglevel=info",
             "--concurrency=2",
             "--queues=default,emails,notifications"
@@ -40,27 +47,55 @@ def start_celery(env="dev"):
 
 def start_fastapi(env="dev"):
     """Start FastAPI server"""
-    # Use virtual environment python
-    python_cmd = ".venv/bin/python"
-    
-    if env == "prod":
-        # Production: Use gunicorn with uvicorn workers
-        cmd = [
-            ".venv/bin/gunicorn", "main:app",
-            "-w", "4",
-            "-k", "uvicorn.workers.UvicornWorker",
-            "--bind", "0.0.0.0:8000",
-            "--access-logfile", "-",
-            "--error-logfile", "-"
-        ]
+    # Check if we're in a virtual environment or using uv
+    if os.path.exists(".venv/bin/uvicorn"):
+        # Local development with virtual environment
+        if env == "prod":
+            cmd = [
+                ".venv/bin/uvicorn", "main:app",
+                "--host", "0.0.0.0",
+                "--port", "8000",
+                "--workers", "4"
+            ]
+        else:
+            cmd = [
+                ".venv/bin/uvicorn", "main:app",
+                "--host", "0.0.0.0",
+                "--port", "8000",
+                "--reload"
+            ]
+    elif os.path.exists("uv"):
+        # Production with uv
+        if env == "prod":
+            cmd = [
+                "uv", "run", "uvicorn", "main:app",
+                "--host", "0.0.0.0",
+                "--port", "8000",
+                "--workers", "4"
+            ]
+        else:
+            cmd = [
+                "uv", "run", "uvicorn", "main:app",
+                "--host", "0.0.0.0",
+                "--port", "8000",
+                "--reload"
+            ]
     else:
-        # Development: Use uvicorn directly
-        cmd = [
-            ".venv/bin/uvicorn", "main:app",
-            "--host", "0.0.0.0",
-            "--port", "8000",
-            "--reload"
-        ]
+        # Fallback to system commands
+        if env == "prod":
+            cmd = [
+                "uvicorn", "main:app",
+                "--host", "0.0.0.0",
+                "--port", "8000",
+                "--workers", "4"
+            ]
+        else:
+            cmd = [
+                "uvicorn", "main:app",
+                "--host", "0.0.0.0",
+                "--port", "8000",
+                "--reload"
+            ]
     
     print(f"🚀 Starting FastAPI server ({env} mode)...")
     return subprocess.Popen(cmd)
