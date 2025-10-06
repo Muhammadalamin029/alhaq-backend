@@ -15,4 +15,5 @@ primary_region = "iad"
   memory_mb = 256
 
 [processes]
-  celery = "uv run start_celery_only.py"
+  celery = "python start_celery_only.py"
+
