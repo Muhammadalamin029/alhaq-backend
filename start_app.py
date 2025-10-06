@@ -105,28 +105,39 @@ def main():
     if len(sys.argv) != 2 or sys.argv[1] not in ["dev", "prod"]:
         print("Usage: python3 start_app.py [dev|prod]")
         print("  dev  - Development mode (uvicorn + celery with reload)")
-        print("  prod - Production mode (gunicorn + celery)")
+        print("  prod - Production mode (uvicorn + celery)")
         sys.exit(1)
     
     env = sys.argv[1]
     processes = []
     
     try:
-        # Start Celery worker
-        celery_proc = start_celery(env)
-        processes.append(celery_proc)
+        # Start Celery worker (with error handling)
+        celery_proc = None
+        try:
+            celery_proc = start_celery(env)
+            processes.append(celery_proc)
+            print("✅ Celery worker started successfully!")
+        except Exception as e:
+            print(f"⚠️  Warning: Failed to start Celery worker: {e}")
+            print("   Continuing with FastAPI only...")
+            celery_proc = None
         
-        # Wait a moment for Celery to start
-        time.sleep(2)
+        # Wait a moment for Celery to start (if it started)
+        if celery_proc:
+            time.sleep(2)
         
         # Start FastAPI server
         fastapi_proc = start_fastapi(env)
         processes.append(fastapi_proc)
         
-        print(f"\n✅ Both services started in {env} mode!")
+        if celery_proc:
+            print(f"\n✅ Both services started in {env} mode!")
+            print("🔄 Celery: Running in background")
+        else:
+            print(f"\n✅ FastAPI started in {env} mode! (Celery unavailable)")
         print("🌐 FastAPI: http://localhost:8000")
         print("📚 API Docs: http://localhost:8000/docs")
-        print("🔄 Celery: Running in background")
         print("\nPress Ctrl+C to stop all services...")
         
         # Wait for processes
