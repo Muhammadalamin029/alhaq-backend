@@ -46,17 +46,18 @@ def start_celery(env="dev"):
     print(f"🚀 Starting Celery worker ({env} mode)...")
     return subprocess.Popen(cmd)
 
-def start_fastapi(env="dev"):
+def start_fastapi(env="dev", memory_optimized=False):
     """Start FastAPI server"""
     # Check if we're in a virtual environment or using uv
     if os.path.exists(".venv/bin/uvicorn"):
         # Local development with virtual environment
         if env == "prod":
+            workers = "1" if memory_optimized else "4"
             cmd = [
                 ".venv/bin/uvicorn", "main:app",
                 "--host", "0.0.0.0",
                 "--port", "8000",
-                "--workers", "4"
+                "--workers", workers
             ]
         else:
             cmd = [
@@ -68,11 +69,12 @@ def start_fastapi(env="dev"):
     elif os.path.exists("uv"):
         # Production with uv
         if env == "prod":
+            workers = "1" if memory_optimized else "4"
             cmd = [
                 "uv", "run", "uvicorn", "main:app",
                 "--host", "0.0.0.0",
                 "--port", "8000",
-                "--workers", "4"
+                "--workers", workers
             ]
         else:
             cmd = [
@@ -84,11 +86,12 @@ def start_fastapi(env="dev"):
     else:
         # Fallback to system commands
         if env == "prod":
+            workers = "1" if memory_optimized else "4"
             cmd = [
                 "uvicorn", "main:app",
                 "--host", "0.0.0.0",
                 "--port", "8000",
-                "--workers", "4"
+                "--workers", workers
             ]
         else:
             cmd = [
@@ -98,17 +101,23 @@ def start_fastapi(env="dev"):
                 "--reload"
             ]
     
-    print(f"🚀 Starting FastAPI server ({env} mode)...")
+    mode_text = f"{env} mode" + (" (memory-optimized)" if memory_optimized else "")
+    print(f"🚀 Starting FastAPI server ({mode_text})...")
     return subprocess.Popen(cmd)
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ["dev", "prod"]:
-        print("Usage: python3 start_app.py [dev|prod]")
-        print("  dev  - Development mode (uvicorn + celery with reload)")
-        print("  prod - Production mode (uvicorn + celery)")
+    if len(sys.argv) < 2 or sys.argv[1] not in ["dev", "prod", "prod-memory"]:
+        print("Usage: python3 start_app.py [dev|prod|prod-memory]")
+        print("  dev         - Development mode (uvicorn + celery with reload)")
+        print("  prod        - Production mode (uvicorn + celery, 4 workers)")
+        print("  prod-memory - Memory-optimized production (1 worker each)")
         sys.exit(1)
     
     env = sys.argv[1]
+    memory_optimized = env == "prod-memory"
+    if memory_optimized:
+        env = "prod"  # Use prod settings but with memory optimization
+    
     processes = []
     
     try:
@@ -128,14 +137,16 @@ def main():
             time.sleep(2)
         
         # Start FastAPI server
-        fastapi_proc = start_fastapi(env)
+        fastapi_proc = start_fastapi(env, memory_optimized)
         processes.append(fastapi_proc)
         
         if celery_proc:
-            print(f"\n✅ Both services started in {env} mode!")
+            mode_text = f"{env} mode" + (" (memory-optimized)" if memory_optimized else "")
+            print(f"\n✅ Both services started in {mode_text}!")
             print("🔄 Celery: Running in background")
         else:
-            print(f"\n✅ FastAPI started in {env} mode! (Celery unavailable)")
+            mode_text = f"{env} mode" + (" (memory-optimized)" if memory_optimized else "")
+            print(f"\n✅ FastAPI started in {mode_text}! (Celery unavailable)")
         print("🌐 FastAPI: http://localhost:8000")
         print("📚 API Docs: http://localhost:8000/docs")
         print("\nPress Ctrl+C to stop all services...")
