@@ -3,7 +3,7 @@ app = "alhaq-backend"
 primary_region = "iad"
 
 [build]
-  builder = "nixpacks"
+  builder = "buildpacks"
 
 [env]
   # Celery doesn't need a PORT, but we set it for consistency
