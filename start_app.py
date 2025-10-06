@@ -18,6 +18,7 @@ def start_celery(env="dev"):
     # Check if we're in a virtual environment or using uv
     if os.path.exists(".venv/bin/celery"):
         celery_cmd = ".venv/bin/celery"
+        celery_args = []
     elif os.path.exists("uv"):
         celery_cmd = "uv"
         celery_args = ["run", "celery"]
