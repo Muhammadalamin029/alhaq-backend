@@ -2,8 +2,7 @@ app = "alhaq-backend"
 primary_region = "iad"
 
 [build]
-  # We skip buildpacks; Fly will use your image or system build
-  image = "registry.fly.io/alhaq-backend:latest"
+  builder = "paketobuildpacks/builder:base"
 
 [env]
   PORT = "8000"
