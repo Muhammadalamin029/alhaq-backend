@@ -206,36 +206,46 @@ async def verify_payment(
             # Update order status
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
-                old_status = order.status
-                order.status = "paid"
-                
-                # Update order items status to paid as well
-                from core.order import OrderService
-                order_service = OrderService()
-                order_service.update_all_order_items_status(db, order.id, "paid")
-                
-                # Update seller balances for this order
-                from core.seller_payout_service import seller_payout_service
-                order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
-                
-                # Create notification for successful payment (Customer)
                 try:
-                    create_notification(db, {
-                        "user_id": str(payment.buyer_id),
-                        "type": "payment_successful",
-                        "title": "Payment Successful",
-                        "message": f"Your payment of ₦{payment.amount:,.2f} has been processed successfully. Order #{str(order.id)[:8]} is now being processed.",
-                        "priority": "high",
-                        "channels": ["in_app", "email"],
-                        "to_email": request.email if hasattr(request, 'email') else None,
-                        "data": {
-                            "order_id": str(order.id),
-                            "payment_id": str(payment.id),
-                            "amount": float(payment.amount)
-                        }
-                    })
+                    old_status = order.status
+                    order.status = "paid"
+                    
+                    # Update order items status to paid as well
+                    from core.order import OrderService
+                    order_service = OrderService()
+                    order_service.update_all_order_items_status(db, order.id, "paid")
+                    
+                    # Update seller balances for this order
+                    from core.seller_payout_service import seller_payout_service
+                    order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
+                    
+                    # Log the status change for debugging
+                    payment_logger.info(f"Order {order.id} status changed from '{old_status}' to 'paid' after successful payment verification")
+                    
                 except Exception as e:
-                    payment_logger.error(f"Failed to create payment success notification: {e}")
+                    payment_logger.error(f"Failed to update order {order.id} status to 'paid': {e}")
+                    # Don't raise the exception here as payment is still successful
+            else:
+                payment_logger.error(f"Order {payment.order_id} not found when trying to update status to 'paid'")
+            
+            # Create notification for successful payment (Customer)
+            try:
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_successful",
+                    "title": "Payment Successful",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} has been processed successfully. Order #{str(order.id)[:8]} is now being processed.",
+                    "priority": "high",
+                    "channels": ["in_app", "email"],
+                    "to_email": request.email if hasattr(request, 'email') else None,
+                    "data": {
+                        "order_id": str(order.id),
+                        "payment_id": str(payment.id),
+                        "amount": float(payment.amount)
+                    }
+                })
+            except Exception as e:
+                payment_logger.error(f"Failed to create payment success notification: {e}")
                 
                 # Create notifications for sellers involved in this order
                 try:

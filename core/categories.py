@@ -1,14 +1,27 @@
 from core.model import Category
-from sqlalchemy.orm import Session
-from sqlalchemy import UUID
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import UUID, func
 
 
 class CategoryService:
     def fetch_categories(self, db: Session, limit: int = 10, page: int = 1):
         offset = (page - 1) * limit
-        query = db.query(Category)
-        count = query.count()
-        categories = query.offset(offset).limit(limit).all()
+        
+        # Query categories with product count
+        query = db.query(
+            Category,
+            func.count(Category.products).label('product_count')
+        ).outerjoin(Category.products).group_by(Category.id)
+        
+        count = db.query(Category).count()
+        categories_with_count = query.offset(offset).limit(limit).all()
+        
+        # Convert to list of categories with product_count attribute
+        categories = []
+        for category, product_count in categories_with_count:
+            category.product_count = product_count
+            categories.append(category)
+        
         return categories, count
 
     def add_category(self, db: Session, name: str, description: str = None):

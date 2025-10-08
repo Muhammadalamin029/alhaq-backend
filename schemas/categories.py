@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 from uuid import UUID
+from datetime import datetime
 
 
 class CategoryBase(BaseModel):
@@ -21,6 +22,8 @@ class CategoryResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str] = None
+    created_at: datetime
+    product_count: Optional[int] = 0
 
     class Config:
         from_attributes = True

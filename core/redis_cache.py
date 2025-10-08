@@ -1,74 +1,98 @@
-import redis
 import json
-import hashlib
+import asyncio
 from typing import Optional, Any
-from core.config import settings
-import logging
+from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
+import redis.asyncio as aioredis
+from redis.asyncio import Redis
+from core.config import settings
+from core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 class RedisCache:
-    def __init__(self):
-        self.redis_client = redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-            health_check_interval=30
-        )
-    
-    def get(self, key: str) -> Optional[Any]:
-        """Get value from cache"""
+    _instance: Optional[Redis] = None
+    _lock = asyncio.Lock()
+
+    @classmethod
+    async def get_instance(cls) -> Redis:
+        if cls._instance is None:
+            async with cls._lock:
+                if cls._instance is None:
+                    try:
+                        # Simple connection without complex SSL handling
+                        cls._instance = await aioredis.from_url(
+                            settings.REDIS_URL,
+                            password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None,
+                            encoding="utf-8",
+                            decode_responses=True,
+                            health_check_interval=30,
+                            socket_connect_timeout=5,
+                            socket_timeout=5,
+                            retry_on_timeout=True
+                        )
+                        logger.info("Redis cache client initialized successfully.")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize Redis cache client: {e}")
+                        # Don't raise the exception, let the fallback cache handle it
+                        cls._instance = None
+        return cls._instance
+
+    @classmethod
+    async def get(cls, key: str) -> Optional[Any]:
         try:
-            value = self.redis_client.get(key)
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return None
+            value = await redis_client.get(key)
             if value:
                 return json.loads(value)
-            return None
         except Exception as e:
-            logger.error(f"Redis get error for key {key}: {e}")
-            return None
-    
-    def set(self, key: str, value: Any, ttl: int = 300) -> bool:
-        """Set value in cache with TTL"""
+            logger.error(f"Error getting key '{key}' from Redis cache: {e}")
+        return None
+
+    @classmethod
+    async def set(cls, key: str, value: Any, ttl: int = 300):
         try:
-            serialized_value = json.dumps(value, default=str)
-            return self.redis_client.setex(key, ttl, serialized_value)
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return
+            await redis_client.setex(key, ttl, json.dumps(value, default=str))
         except Exception as e:
-            logger.error(f"Redis set error for key {key}: {e}")
-            return False
-    
-    def delete(self, key: str) -> bool:
-        """Delete key from cache"""
+            logger.error(f"Error setting key '{key}' in Redis cache: {e}")
+
+    @classmethod
+    async def delete(cls, key: str):
         try:
-            return bool(self.redis_client.delete(key))
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return
+            await redis_client.delete(key)
         except Exception as e:
-            logger.error(f"Redis delete error for key {key}: {e}")
-            return False
-    
-    def delete_pattern(self, pattern: str) -> int:
-        """Delete all keys matching pattern"""
+            logger.error(f"Error deleting key '{key}' from Redis cache: {e}")
+
+    @classmethod
+    async def clear_pattern(cls, pattern: str):
         try:
-            keys = self.redis_client.keys(pattern)
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return
+            keys = []
+            async for key in redis_client.scan_iter(match=pattern):
+                keys.append(key)
             if keys:
-                return self.redis_client.delete(*keys)
-            return 0
+                await redis_client.delete(*keys)
+                logger.info(f"Cleared {len(keys)} keys matching pattern '{pattern}' from Redis cache.")
         except Exception as e:
-            logger.error(f"Redis delete pattern error for {pattern}: {e}")
-            return 0
-    
-    def create_key(self, prefix: str, *args) -> str:
-        """Create a cache key from prefix and arguments"""
-        key_data = f"{prefix}:{':'.join(str(arg) for arg in args)}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-    
-    def health_check(self) -> bool:
-        """Check if Redis is healthy"""
+            logger.error(f"Error clearing pattern '{pattern}' from Redis cache: {e}")
+
+    @classmethod
+    async def health_check(cls) -> bool:
         try:
-            return self.redis_client.ping()
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return False
+            return await redis_client.ping()
         except Exception as e:
             logger.error(f"Redis health check failed: {e}")
             return False
-
-# Global cache instance
-cache = RedisCache()

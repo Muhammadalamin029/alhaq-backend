@@ -130,6 +130,7 @@ async def update_category(
         updated_category = category_service.update_category(
             db=db, category_id=category_id, **update_data
         )
+        
         return {
             "success": True,
             "message": "Category updated successfully",
