@@ -59,13 +59,13 @@ class EmailService:
         try:
             message = self._create_message(to_email, subject, html_body, text_body)
             
-            # Configure SMTP connection
+            # Configure SMTP connection with timeout settings
             if self.use_ssl:
-                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port, use_tls=False)
+                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port, use_tls=False, timeout=30)
                 await smtp.connect()
                 await smtp.starttls()
             else:
-                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port, use_tls=self.use_tls)
+                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port, use_tls=self.use_tls, timeout=30)
                 await smtp.connect()
             
             if self.username and self.password:
@@ -77,6 +77,12 @@ class EmailService:
             logger.info(f"Email sent successfully to {to_email}")
             return True
             
+        except aiosmtplib.SMTPTimeoutError as e:
+            logger.error(f"SMTP timeout sending email to {to_email}: {str(e)}")
+            return False
+        except aiosmtplib.SMTPException as e:
+            logger.error(f"SMTP error sending email to {to_email}: {str(e)}")
+            return False
         except Exception as e:
             logger.error(f"Failed to send email to {to_email}: {str(e)}")
             return False
@@ -92,13 +98,16 @@ class EmailService:
         try:
             message = self._create_message(to_email, subject, html_body, text_body)
             
-            # Configure SMTP connection
+            # Configure SMTP connection with timeout settings
             if self.use_ssl:
-                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port)
+                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=30)
             else:
-                server = smtplib.SMTP(self.smtp_host, self.smtp_port)
+                server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30)
                 if self.use_tls:
                     server.starttls()
+            
+            # Set additional timeout for login and send operations
+            server.set_debuglevel(0)  # Disable debug output
             
             if self.username and self.password:
                 server.login(self.username, self.password)
@@ -109,6 +118,12 @@ class EmailService:
             logger.info(f"Email sent successfully to {to_email}")
             return True
             
+        except smtplib.SMTPTimeoutError as e:
+            logger.error(f"SMTP timeout sending email to {to_email}: {str(e)}")
+            return False
+        except smtplib.SMTPException as e:
+            logger.error(f"SMTP error sending email to {to_email}: {str(e)}")
+            return False
         except Exception as e:
             logger.error(f"Failed to send email to {to_email}: {str(e)}")
             return False

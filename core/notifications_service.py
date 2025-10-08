@@ -100,19 +100,19 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
                 </body></html>
                 """
                 try:
-                    # Send email directly to avoid circular import
-                    success = email_service.send_email_sync(
+                    # Use async email sending to avoid blocking and timeout issues
+                    from core.tasks import send_notification_email
+                    
+                    # Queue email sending asynchronously to avoid timeout
+                    send_notification_email.delay(
                         to_email=to_email,
                         subject=subject,
                         html_body=html_body,
                         text_body=html_body
                     )
-                    if success:
-                        logger.info(f"Notification email sent to {to_email} for notification {notification.id}")
-                    else:
-                        logger.warning(f"Failed to send notification email to {to_email} for notification {notification.id}")
+                    logger.info(f"Notification email queued for {to_email} for notification {notification.id}")
                 except Exception as e:
-                    logger.error(f"Error sending notification email to {to_email} for notification {notification.id}: {e}")
+                    logger.error(f"Error queuing notification email to {to_email} for notification {notification.id}: {e}")
     return notification
 
 

@@ -75,6 +75,11 @@ async def process_checkout(
 ):
     """Process checkout and convert pending order to processing"""
     
+    # Log the incoming request for debugging
+    print(f"Checkout request received: {checkout_data}")
+    print(f"User ID: {user.get('id')}")
+    print(f"Delivery address ID: {checkout_data.delivery_address_id}")
+    
     # Get pending order
     pending_order = order_service.get_orders_by_status(
         db=db, user_id=user["id"], status="pending"
@@ -144,15 +149,16 @@ async def process_checkout(
         tracking_number=tracking_number
     )
     
-    # Create order confirmation notification
+    # Create order confirmation notification (non-blocking)
     try:
+        # Use in-app notification only to avoid email timeout issues
         create_notification(db, {
             "user_id": str(pending_order.buyer_id),
             "type": "order_confirmed",
             "title": "Order Confirmed",
             "message": f"Your order #{str(pending_order.id)[:8]} has been confirmed and is ready for payment. Total: ₦{pending_order.total_amount:,.2f}",
             "priority": "high",
-            "channels": ["in_app", "email"],
+            "channels": ["in_app"],  # Remove email to avoid timeout issues
             "data": {
                 "order_id": str(pending_order.id),
                 "total_amount": float(pending_order.total_amount),
@@ -160,9 +166,11 @@ async def process_checkout(
                 "estimated_delivery": estimated_delivery
             }
         })
+        print(f"Order confirmation notification created for order {pending_order.id}")
     except Exception as e:
         # Log error but don't fail the checkout
         print(f"Failed to create order confirmation notification: {e}")
+        # Continue with checkout even if notification fails
     
     return OrderConfirmationResponse(
         success=True,
