@@ -111,14 +111,33 @@ class ProductService:
         return True
 
     def update_product(self, db: Session, product_id: UUID, **kwargs):
+        from core.logging_config import get_logger
+        logger = get_logger(__name__)
+        
+        logger.info(f"update_product called with product_id: {product_id}, kwargs: {kwargs}")
+        
         product = db.query(Product).filter(Product.id == product_id).first()
         if not product:
+            logger.error(f"Product {product_id} not found")
             return None
+            
+        logger.info(f"Found product: {product.name} (ID: {product.id})")
+        
         for key, value in kwargs.items():
+            old_value = getattr(product, key, None)
             setattr(product, key, value)
-        db.commit()
-        db.refresh(product)
-        return self.get_product_by_id(db, product.id)
+            logger.info(f"Updated {key}: {old_value} -> {value}")
+            
+        logger.info("Committing changes to database...")
+        try:
+            db.commit()
+            db.refresh(product)
+            logger.info(f"Product updated successfully: {product.name}")
+            return self.get_product_by_id(db, product.id)
+        except Exception as commit_error:
+            logger.error(f"Error committing product update: {str(commit_error)}")
+            db.rollback()
+            raise commit_error
 
 
 product_service = ProductService()

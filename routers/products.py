@@ -220,26 +220,46 @@ async def update_product(
             )
     
     try:
+        # Debug logging
+        products_logger.info(f"Updating product {product_id} with data: {update_data}")
+        
         # Handle product images update if provided
         if "images" in update_data and update_data["images"] is not None:
-            # Remove existing images
-            db.query(ProductImage).filter(ProductImage.product_id == product_id).delete()
-            
-            # Add new images
-            for img in update_data["images"]:
-                new_image = ProductImage(
-                    product_id=product_id,
-                    image_url=img.image_url
-                )
-                db.add(new_image)
-            
-            # Remove images from update_data as it's handled separately
-            del update_data["images"]
+            products_logger.info(f"Updating images for product {product_id}")
+            try:
+                # Remove existing images
+                db.query(ProductImage).filter(ProductImage.product_id == product_id).delete()
+                
+                # Add new images
+                for img in update_data["images"]:
+                    new_image = ProductImage(
+                        product_id=product_id,
+                        image_url=img["image_url"]
+                    )
+                    db.add(new_image)
+                
+                # Remove images from update_data as it's handled separately
+                del update_data["images"]
+                products_logger.info(f"Images updated successfully for product {product_id}")
+            except Exception as image_error:
+                products_logger.error(f"Error updating images for product {product_id}: {str(image_error)}")
+                raise image_error
         
         # Update the product
-        updated_product = product_service.update_product(
-            db=db, product_id=product_id, **update_data
-        )
+        products_logger.info(f"Calling product_service.update_product with: {update_data}")
+        try:
+            updated_product = product_service.update_product(
+                db=db, product_id=product_id, **update_data
+            )
+            
+            if updated_product:
+                products_logger.info(f"Product {product_id} updated successfully: {updated_product.name}")
+            else:
+                products_logger.error(f"Product {product_id} update returned None")
+        except Exception as update_error:
+            products_logger.error(f"Error in product_service.update_product: {str(update_error)}")
+            products_logger.error(f"Update data: {update_data}")
+            raise update_error
         
         if not updated_product:
             raise HTTPException(
