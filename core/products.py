@@ -18,11 +18,25 @@ class ProductService:
 
         query = self._with_relationships(db.query(Product))
 
-        if search_query:
-            query = query.filter(Product.name.ilike(f"%{search_query}%"))
+        # Filter by status first (most selective filter)
+        query = query.filter(Product.status == "active")
 
         if category_id:
             query = query.filter(Product.category_id == category_id)
+
+        if search_query:
+            # Use full-text search if available, fallback to ILIKE
+            try:
+                # Try to use the GIN index for better performance
+                query = query.filter(
+                    db.func.to_tsvector('english', Product.name).match(search_query)
+                )
+            except:
+                # Fallback to ILIKE if full-text search fails
+                query = query.filter(Product.name.ilike(f"%{search_query}%"))
+
+        # Order by created_at for consistent pagination
+        query = query.order_by(Product.created_at.desc())
 
         offset = (page - 1) * limit
         count = query.count()

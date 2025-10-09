@@ -26,8 +26,11 @@ async def list_products(
     try:
         products_logger.info(f"Fetching products - page: {page}, limit: {limit}, search: {search_query}, category: {category_id}")
         
+        # Use a reasonable limit to prevent excessive data loading
+        effective_limit = min(limit, 50)  # Cap at 50 products per request
+        
         products, count = product_service.fetch_products(
-            db=db, limit=limit, page=page, category_id=category_id, search_query=search_query)
+            db=db, limit=effective_limit, page=page, category_id=category_id, search_query=search_query)
         
         products_logger.info(f"Products fetched successfully - count: {count}, page: {page}")
         
@@ -37,9 +40,9 @@ async def list_products(
             "data": [ProductResponse.model_validate(p) for p in products] if products else [],
             "pagination": {
                 "page": page,
-                "limit": limit,
+                "limit": effective_limit,
                 "total": count,
-                "total_pages": (count + limit - 1) // limit
+                "total_pages": (count + effective_limit - 1) // effective_limit
             }
         }
     except Exception as e:
