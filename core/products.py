@@ -103,12 +103,32 @@ class ProductService:
         return self.get_product_by_id(db, product.id)
 
     def delete_product(self, db: Session, product_id: UUID):
+        from core.logging_config import get_logger
+        logger = get_logger(__name__)
+        
         product = db.query(Product).filter(Product.id == product_id).first()
         if not product:
+            logger.warning(f"Product {product_id} not found for deletion")
             return False
-        db.delete(product)
-        db.commit()
-        return True
+        
+        # Check if product has any order items (financial records)
+        from core.model import OrderItem
+        existing_order_items = db.query(OrderItem).filter(OrderItem.product_id == product_id).first()
+        
+        if existing_order_items:
+            # If product has order history, mark as inactive instead of deleting
+            logger.info(f"Product {product_id} has order history, marking as inactive instead of deleting")
+            product.status = "inactive"
+            product.name = f"[DELETED] {product.name}"  # Mark as deleted for reference
+            db.commit()
+            db.refresh(product)
+            return True
+        else:
+            # Safe to delete - no order history
+            logger.info(f"Product {product_id} has no order history, proceeding with deletion")
+            db.delete(product)
+            db.commit()
+            return True
 
     def update_product(self, db: Session, product_id: UUID, **kwargs):
         from core.logging_config import get_logger

@@ -15,7 +15,7 @@ from core.notifications_service import create_notification
 class AuthService:
     """Service class for authentication operations"""
 
-    def create_user(self, db: Session, email: str, password: str, role: UserRole, full_name: str, bio: str) -> str:
+    def create_user(self, db: Session, email: str, password: str, role: UserRole, full_name: str, phone: str, bio: str) -> str:
         """
         Create a new user with appropriate profile
 
@@ -50,7 +50,7 @@ class AuthService:
                 approval_date=func.current_date() if role == UserRole.ADMIN else None
             )
         else:  # customer
-            profile = Profile(id=user.id, name=full_name, bio=bio)
+            profile = Profile(id=user.id, name=full_name, phone=phone, bio=bio)
 
         db.add(profile)
         db.commit()
@@ -241,6 +241,8 @@ class AuthService:
                     first_name = update_data.get("firstName", "").strip()
                     last_name = update_data.get("lastName", "").strip()
                     profile.name = f"{first_name} {last_name}".strip()
+                if "phone" in update_data:
+                    profile.phone = update_data["phone"]
                 if "bio" in update_data:
                     profile.bio = update_data["bio"]
                 if "avatar_url" in update_data:

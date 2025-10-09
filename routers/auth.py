@@ -103,7 +103,7 @@ def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
         auth_logger.info(f"Customer registration attempt: {body.email}")
         
         user_id = auth_service.create_user(
-            db, body.email, body.password, "customer", body.full_name, body.bio
+            db, body.email, body.password, "customer", body.full_name, body.phone, body.bio
         )
         
         # Log successful registration

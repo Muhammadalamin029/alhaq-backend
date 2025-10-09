@@ -29,6 +29,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str = Field(..., min_length=8)
     full_name: str
+    phone: str = Field(..., min_length=10, max_length=20)
     bio: str = None
 
 
@@ -61,6 +62,7 @@ class UpdateProfileRequest(BaseModel):
     # Customer fields
     firstName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
     lastName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
+    phone: Optional[str] = Field(None, min_length=7, max_length=20, strip_whitespace=True)
     bio: Optional[str] = Field(None, max_length=1000, strip_whitespace=True)
     avatar_url: Optional[str] = None
 
@@ -94,6 +96,7 @@ class UserProfileResponse(BaseModel):
 class CustomerProfileResponse(BaseModel):
     id: UUID
     name: str
+    phone: Optional[str] = None
     bio: Optional[str] = None
     kyc_status: str
     approval_date: Optional[date] = None

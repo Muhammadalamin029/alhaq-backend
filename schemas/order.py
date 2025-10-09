@@ -22,6 +22,7 @@ class UserResponse(BaseModel):
     id: UUID4
     name: str
     email: Optional[str] = None
+    phone: Optional[str] = None
 
     class Config:
         from_attributes = True

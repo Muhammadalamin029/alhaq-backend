@@ -51,6 +51,7 @@ class Profile(Base):
 
     id = Column(UUID, ForeignKey("users.id"), primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    phone = Column(String(50), nullable=True)
     kyc_status = Column(Enum("pending", "approved", "rejected",
                         name="kyc_status"), default="pending")
     approval_date = Column(Date, nullable=True)
@@ -144,11 +145,12 @@ class Product(Base):
     # Relationships
     seller = relationship("SellerProfile", back_populates="products")
     category = relationship("Category", back_populates="products")
-    order_items = relationship(
-        "OrderItem", back_populates="product", cascade="all, delete-orphan")
-    reviews = relationship("Review", back_populates="product")
-    wishlists = relationship("Wishlist", back_populates="product")
-    images = relationship("ProductImage", back_populates="product")
+    # Order items should NOT be cascade deleted - they're part of financial records
+    order_items = relationship("OrderItem", back_populates="product")
+    # Reviews and wishlists can be cascade deleted since they become meaningless without the product
+    reviews = relationship("Review", back_populates="product", cascade="all, delete-orphan")
+    wishlists = relationship("Wishlist", back_populates="product", cascade="all, delete-orphan")
+    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
 
 
 # ---------------- PRODUCT IMAGES ----------------

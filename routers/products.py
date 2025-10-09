@@ -392,6 +392,9 @@ async def delete_product(
             detail="Cannot delete product with pending or processing orders"
         )
 
+    # Check if product has any order history
+    existing_order_items = db.query(OrderItem).filter(OrderItem.product_id == product_id).first()
+    
     success = product_service.delete_product(db=db, product_id=product_id)
     if not success:
         raise HTTPException(
@@ -399,8 +402,14 @@ async def delete_product(
             detail="Failed to delete product"
         )
 
+    # Determine the appropriate response message
+    if existing_order_items:
+        message = "Product marked as inactive due to existing order history. Product data preserved for financial records."
+    else:
+        message = "Product deleted successfully"
+
     return {
         "success": True,
-        "message": "Product deleted successfully",
+        "message": message,
         "data": None
     }

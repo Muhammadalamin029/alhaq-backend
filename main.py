@@ -66,16 +66,39 @@ except Exception as e:
 # ------------------------------------------------------
 origins = [
     "http://localhost:8080",                 # Local dev FE
+    "http://127.0.0.1:8080",                # Alternative local dev FE
+    "http://localhost:3000",                 # Alternative dev port
+    "http://127.0.0.1:3000",                # Alternative dev port
     "https://alhaq-frontend.vercel.app",     # Production FE (no trailing slash!)
 ]
 
+# Add CORS middleware with more permissive settings for development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# Add CORS debugging middleware
+@app.middleware("http")
+async def cors_debug_middleware(request, call_next):
+    # Log CORS-related headers
+    origin = request.headers.get("origin")
+    method = request.method
+    
+    logger.info(f"CORS Debug - Origin: {origin}, Method: {method}, Path: {request.url.path}")
+    
+    response = await call_next(request)
+    
+    # Add CORS headers to response for debugging
+    if origin and origin in origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    
+    return response
 
 # ------------------------------------------------------
 # Routers
