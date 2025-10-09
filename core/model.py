@@ -101,7 +101,8 @@ class SellerProfile(Base):
     total_paid = Column(DECIMAL(12, 2), default=0)         # Total amount paid out
     payout_account_number = Column(String(20), nullable=True)
     payout_bank_code = Column(String(10), nullable=True)
-    payout_recipient_code = Column(String(50), nullable=True)  # Paystack recipient code
+    payout_bank_name = Column(String(100), nullable=True)  # Bank name for payouts
+    payout_recipient_code = Column(String(100), nullable=True)  # Paystack recipient code
     
     # Relationships
     user = relationship("User", back_populates="seller_profile")

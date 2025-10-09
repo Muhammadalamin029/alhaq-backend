@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, Category, Payment
+from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, Category, Payment, SellerPayout
 from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
     AdminSellerListResponse, AdminProductListResponse, AdminOrderListResponse,
@@ -20,7 +20,7 @@ from core.auth_service import auth_service
 from core.notifications_service import create_notification
 from core.seller_payout_service import seller_payout_service
 from schemas.seller_payout import (
-    AdminPayoutListResponse, PayoutProcessRequest, PayoutProcessResponse
+    AdminPayoutListResponse, AdminPayoutResponse, PayoutProcessRequest, PayoutProcessResponse
 )
 from pydantic import BaseModel, Field
 
@@ -1110,7 +1110,11 @@ async def get_pending_payouts(
 ):
     """Get all pending payouts for admin processing"""
     try:
-        payouts = seller_payout_service.get_pending_payouts(db=db, limit=limit)
+        # Get all payouts with pagination and seller details
+        offset = (page - 1) * limit
+        payouts_query = db.query(SellerPayout).options(joinedload(SellerPayout.seller)).order_by(desc(SellerPayout.created_at))
+        total_count = payouts_query.count()
+        payouts = payouts_query.offset(offset).limit(limit).all()
         
         payout_responses = [
             {
@@ -1125,25 +1129,32 @@ async def get_pending_payouts(
                 "bank_code": payout.bank_code,
                 "bank_name": payout.bank_name,
                 "created_at": payout.created_at.isoformat(),
+                "processed_at": payout.processed_at.isoformat() if payout.processed_at else None,
+                "failure_reason": payout.failure_reason,
                 "seller": {
                     "business_name": payout.seller.business_name,
-                    "contact_email": payout.seller.contact_email
+                    "contact_email": payout.seller.contact_email,
+                    "contact_phone": payout.seller.contact_phone,
+                    "website_url": payout.seller.website_url,
+                    "kyc_status": payout.seller.kyc_status
                 } if payout.seller else None
             }
             for payout in payouts
         ]
         
+        total_pages = (total_count + limit - 1) // limit
+        
         return AdminPayoutListResponse(
             success=True,
-            message="Pending payouts retrieved successfully",
+            message="Payouts retrieved successfully",
             data=payout_responses,
             pagination={
                 "page": page,
                 "limit": limit,
-                "total_count": len(payout_responses),
-                "total_pages": 1,
-                "has_next": False,
-                "has_prev": False
+                "total_count": total_count,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1
             }
         )
         
@@ -1168,13 +1179,13 @@ async def process_payout(
             return PayoutProcessResponse(
                 success=True,
                 message="Payout processing initiated successfully",
-                data={"payout_id": request.payout_id, "status": "processing"}
+                data=None
             )
         else:
             return PayoutProcessResponse(
                 success=False,
                 message="Failed to process payout",
-                data={"payout_id": request.payout_id, "status": "failed"}
+                data=None
             )
         
     except Exception as e:
@@ -1182,4 +1193,83 @@ async def process_payout(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process payout"
+        )
+
+@router.post("/payouts/cancel", response_model=PayoutProcessResponse)
+async def cancel_payout(
+    request: PayoutProcessRequest,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Cancel a pending payout"""
+    try:
+        payout = db.query(SellerPayout).filter(SellerPayout.id == request.payout_id).first()
+        if not payout:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Payout not found"
+            )
+        
+        if payout.status != "pending":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only pending payouts can be cancelled"
+            )
+        
+        payout.status = "cancelled"
+        payout.failure_reason = "Cancelled by admin"
+        db.commit()
+        
+        return PayoutProcessResponse(
+            success=True,
+            message="Payout cancelled successfully",
+            data=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to cancel payout {request.payout_id}", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cancel payout"
+        )
+
+@router.get("/payouts/stats", response_model=dict)
+async def get_payout_stats(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get payout statistics for admin dashboard"""
+    try:
+        total_payouts = db.query(SellerPayout).count()
+        pending_payouts = db.query(SellerPayout).filter(SellerPayout.status == "pending").count()
+        processing_payouts = db.query(SellerPayout).filter(SellerPayout.status == "processing").count()
+        completed_payouts = db.query(SellerPayout).filter(SellerPayout.status == "completed").count()
+        failed_payouts = db.query(SellerPayout).filter(SellerPayout.status == "failed").count()
+        
+        # Calculate total amounts
+        total_amount = db.query(func.sum(SellerPayout.amount)).scalar() or 0
+        pending_amount = db.query(func.sum(SellerPayout.amount)).filter(SellerPayout.status == "pending").scalar() or 0
+        completed_amount = db.query(func.sum(SellerPayout.amount)).filter(SellerPayout.status == "completed").scalar() or 0
+        
+        return {
+            "success": True,
+            "data": {
+                "total_payouts": total_payouts,
+                "pending_payouts": pending_payouts,
+                "processing_payouts": processing_payouts,
+                "completed_payouts": completed_payouts,
+                "failed_payouts": failed_payouts,
+                "total_amount": float(total_amount),
+                "pending_amount": float(pending_amount),
+                "completed_amount": float(completed_amount)
+            }
+        }
+        
+    except Exception as e:
+        log_error(admin_logger, "Failed to get payout stats", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve payout statistics"
         )

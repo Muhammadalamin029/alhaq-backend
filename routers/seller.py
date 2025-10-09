@@ -19,7 +19,8 @@ from schemas.seller import (
 )
 from schemas.seller_payout import (
     SellerPayoutCreate, SellerPayoutResponse, SellerPayoutListResponse,
-    SellerBalanceResponse, SellerBalanceData, PayoutRequestResponse
+    SellerBalanceResponse, SellerBalanceData, PayoutRequestResponse,
+    PayoutAccountConfig, PayoutAccountData, PayoutAccountResponse, PayoutAccountVerifyRequest, PayoutAccountVerifyResponse
 )
 from core.seller_payout_service import seller_payout_service
 from core.logging_config import get_logger, log_error
@@ -887,13 +888,20 @@ async def get_seller_balance(
                 detail="Seller profile not found"
             )
         
+        # Check if payout account is fully configured
+        payout_account_configured = bool(
+            seller.payout_account_number and 
+            seller.payout_bank_code and 
+            seller.payout_recipient_code
+        )
+        
         balance_data = SellerBalanceData(
             available_balance=seller.available_balance,
             pending_balance=seller.pending_balance,
             total_paid=seller.total_paid,
             total_revenue=seller.total_revenue,
             platform_fee_rate=seller_payout_service.PLATFORM_FEE_RATE,
-            payout_account_configured=bool(seller.payout_recipient_code)
+            payout_account_configured=payout_account_configured
         )
         
         return SellerBalanceResponse(
@@ -1018,4 +1026,203 @@ async def get_seller_payouts(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve payouts"
+        )
+
+
+# Payout Account Configuration Endpoints
+@router.get("/payout-account", response_model=PayoutAccountResponse)
+async def get_payout_account(
+    user=Depends(role_required(["seller", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get seller's payout account configuration"""
+    try:
+        seller_id = user["id"]
+        
+        seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
+        if not seller:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Seller profile not found"
+            )
+        
+        # Check if payout account is configured
+        if not seller.payout_account_number or not seller.payout_bank_code or not seller.payout_recipient_code:
+            return PayoutAccountResponse(
+                success=True,
+                message="No payout account configured",
+                data=None
+            )
+        
+        return PayoutAccountResponse(
+            success=True,
+            message="Payout account retrieved successfully",
+            data=PayoutAccountData(
+                account_number=seller.payout_account_number,
+                bank_code=seller.payout_bank_code,
+                bank_name=seller.payout_bank_name or ""
+            )
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        seller_logger.error(f"Failed to get payout account: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve payout account"
+        )
+
+
+@router.put("/payout-account", response_model=PayoutAccountResponse)
+async def update_payout_account(
+    account_config: PayoutAccountConfig,
+    user=Depends(role_required(["seller", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Update seller's payout account configuration"""
+    try:
+        seller_id = user["id"]
+        
+        seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
+        if not seller:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Seller profile not found"
+            )
+        
+        # Get actual bank name from bank service
+        from core.bank_service import BankService
+        import asyncio
+        
+        bank_service = BankService()
+        actual_bank_name = account_config.bank_name  # Default fallback
+        
+        try:
+            # Run the async method in the event loop
+            bank_data = asyncio.run(bank_service.get_bank_by_code(account_config.bank_code))
+            if bank_data:
+                actual_bank_name = bank_data.get("name", account_config.bank_name)
+        except Exception as e:
+            seller_logger.warning(f"Failed to fetch bank name for code {account_config.bank_code}: {str(e)}")
+            actual_bank_name = account_config.bank_name
+        
+        # Update payout account details
+        seller.payout_account_number = account_config.account_number
+        seller.payout_bank_code = account_config.bank_code
+        seller.payout_bank_name = actual_bank_name
+        # Generate a recipient code for Paystack (simplified for now)
+        seller.payout_recipient_code = f"RCP_{seller_id}_{account_config.bank_code}_{account_config.account_number}"
+        
+        db.commit()
+        db.refresh(seller)
+        
+        # Create notification for account configuration
+        from core.notifications_service import create_notification
+        create_notification(db, {
+            "user_id": str(seller_id),
+            "type": "payment_successful",  # Using existing type
+            "title": "Payout Account Configured",
+            "message": f"Your payout account ({actual_bank_name} - {account_config.account_number}) has been configured successfully.",
+            "priority": "medium",
+            "channels": ["in_app"],
+            "data": {
+                "account_number": account_config.account_number,
+                "bank_name": actual_bank_name,
+                "bank_code": account_config.bank_code
+            }
+        })
+        
+        return PayoutAccountResponse(
+            success=True,
+            message="Payout account updated successfully",
+            data=PayoutAccountData(
+                account_number=seller.payout_account_number,
+                bank_code=seller.payout_bank_code,
+                bank_name=seller.payout_bank_name
+            )
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        seller_logger.error(f"Failed to update payout account: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update payout account"
+        )
+
+
+@router.post("/payout-account/verify", response_model=PayoutAccountVerifyResponse)
+async def verify_payout_account(
+    verify_request: PayoutAccountVerifyRequest,
+    user=Depends(role_required(["seller", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Verify payout account details using Paystack API"""
+    try:
+        from core.paystack_service import paystack_service
+        
+        account_number = verify_request.account_number
+        bank_code = verify_request.bank_code
+        
+        # Basic validation
+        if not account_number.isdigit() or len(account_number) < 10:
+            return PayoutAccountVerifyResponse(
+                success=False,
+                message="Invalid account number format",
+                data={"verified": False, "error": "Account number must be at least 10 digits"}
+            )
+        
+        if not bank_code.isdigit() or len(bank_code) < 3:
+            return PayoutAccountVerifyResponse(
+                success=False,
+                message="Invalid bank code format",
+                data={"verified": False, "error": "Bank code must be at least 3 digits"}
+            )
+        
+        # Verify account with Paystack
+        try:
+            verification_result = paystack_service.resolve_account_number(account_number, bank_code)
+            
+            if verification_result.get("status"):
+                account_data = verification_result.get("data", {})
+                return PayoutAccountVerifyResponse(
+                    success=True,
+                    message="Account verification successful",
+                    data={
+                        "verified": True,
+                        "account_number": account_data.get("account_number", account_number),
+                        "bank_code": account_data.get("bank_code", bank_code),
+                        "account_name": account_data.get("account_name", "Unknown Account"),
+                        "bank_name": account_data.get("bank_name", "Unknown Bank")
+                    }
+                )
+            else:
+                return PayoutAccountVerifyResponse(
+                    success=False,
+                    message="Account verification failed",
+                    data={
+                        "verified": False,
+                        "error": verification_result.get("message", "Unable to verify account")
+                    }
+                )
+                
+        except Exception as paystack_error:
+            seller_logger.error(f"Paystack verification error: {str(paystack_error)}")
+            return PayoutAccountVerifyResponse(
+                success=False,
+                message="Account verification service unavailable",
+                data={
+                    "verified": False,
+                    "error": "Unable to verify account at this time. Please try again later."
+                }
+            )
+        
+    except Exception as e:
+        seller_logger.error(f"Failed to verify payout account: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify payout account"
         )

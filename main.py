@@ -10,7 +10,7 @@ from routers import (
     notifications as notifications_router,
     seller as seller_router,
     admin as admin_router,
-    payments
+    payments, banks
 )
 from core.config import settings
 from db.session import engine
@@ -117,6 +117,7 @@ app.include_router(notifications_router.router, prefix="/notifications", tags=["
 app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
+app.include_router(banks.router, prefix="/api/v1", tags=["Banks"])
 
 # ------------------------------------------------------
 # Global exception handlers

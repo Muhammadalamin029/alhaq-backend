@@ -59,18 +59,6 @@ class PasswordPolicy:
         if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
             errors.append("Password must contain at least one special character (!@#$%^&*(),.?\":{}|<>)")
         
-        # Common password patterns to avoid
-        common_patterns = [
-            r"(.)\1{2,}",  # Repeated characters (aaa, 111)
-            r"(012|123|234|345|456|567|678|789|890)",  # Sequential numbers
-            r"(abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz)",  # Sequential letters
-        ]
-        
-        for pattern in common_patterns:
-            if re.search(pattern, password.lower()):
-                errors.append("Password should not contain obvious patterns (repeated characters, sequences)")
-                break
-        
         # Check for common weak passwords
         weak_passwords = [
             "password", "123456", "qwerty", "abc123", "admin", "letmein",

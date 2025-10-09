@@ -266,6 +266,51 @@ class PaystackService:
             logger.error(f"Paystack status error: {str(e)}")
             raise Exception(f"Failed to get transaction status: {str(e)}")
 
+    def resolve_account_number(self, account_number: str, bank_code: str) -> Dict[str, Any]:
+        """
+        Resolve account number to get account name and verify account
+        
+        Args:
+            account_number: Bank account number
+            bank_code: Bank code from Paystack
+            
+        Returns:
+            Dict containing account verification details
+        """
+        # Check if keys are configured
+        if not self.secret_key or not self.public_key:
+            logger.warning("Paystack keys not configured. Using mock account verification for development.")
+            # Return mock successful verification for development
+            return {
+                "status": True,
+                "message": "Account resolved successfully",
+                "data": {
+                    "account_number": account_number,
+                    "account_name": f"Test Account Holder {account_number[-4:]}",
+                    "bank_id": int(bank_code),
+                    "bank_code": bank_code,
+                    "bank_name": f"Test Bank {bank_code}"
+                }
+            }
+        
+        try:
+            url = f"{self.base_url}/bank/resolve"
+            params = {
+                "account_number": account_number,
+                "bank_code": bank_code
+            }
+            
+            response = requests.get(url, params=params, headers=self.headers)
+            response.raise_for_status()
+            
+            data = response.json()
+            logger.info(f"Paystack account resolved: {account_number}")
+            return data
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Paystack account resolution error: {str(e)}")
+            raise Exception(f"Failed to resolve account: {str(e)}")
+
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
         Verify Paystack webhook signature using HMAC SHA512
