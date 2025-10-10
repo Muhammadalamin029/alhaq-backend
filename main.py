@@ -25,7 +25,6 @@ from core.handlers import (
 )
 from core.logging_config import setup_logging, get_logger
 from core.middleware import LoggingMiddleware, UserContextMiddleware
-from core.redis_middleware import RedisCacheMiddleware
 
 # ------------------------------------------------------
 # Logging setup
@@ -42,7 +41,6 @@ logger = get_logger("alhaq_backend")
 app = FastAPI(title=settings.PROJECT_NAME)
 
 # Middlewares
-app.add_middleware(RedisCacheMiddleware, cache_ttl=300)  # 5 minutes Redis cache
 app.add_middleware(UserContextMiddleware)
 app.add_middleware(LoggingMiddleware)
 
