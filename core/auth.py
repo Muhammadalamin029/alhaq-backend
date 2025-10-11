@@ -15,7 +15,13 @@ ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["argon2"], 
+    deprecated="auto",
+    argon2__memory_cost=4096,   # Ultra-low memory for speed
+    argon2__time_cost=1,        # Minimum time cost
+    argon2__parallelism=1       # Single thread
+)
 
 
 # ---------------- TOKEN CREATION ---------------- #
