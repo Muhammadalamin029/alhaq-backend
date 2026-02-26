@@ -20,9 +20,9 @@ from core.logging_config import get_logger
 logger = get_logger("admin_creation")
 
 # 🔧 MODIFY THESE CREDENTIALS
-ADMIN_EMAIL = "admin@alhaq.com"
+ADMIN_EMAIL = "admin@demighttech.com"
 ADMIN_PASSWORD = "AdminPass123!"
-ADMIN_BUSINESS_NAME = "Alhaq Administration"
+ADMIN_BUSINESS_NAME = "Demight Administration"
 ADMIN_DESCRIPTION = "Platform Administrator"
 
 def create_admin_directly():
@@ -69,7 +69,7 @@ def create_admin_directly():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🚀 ALHAQ DIRECT ADMIN CREATION")
+    print("🚀 DEMIGHT DIRECT ADMIN CREATION")
     print("=" * 60)
     
     try:

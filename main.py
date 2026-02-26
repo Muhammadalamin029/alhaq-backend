@@ -33,7 +33,7 @@ setup_logging(
     log_level=settings.LOG_LEVEL,
     log_to_console=settings.LOG_TO_CONSOLE,
 )
-logger = get_logger("alhaq_backend")
+logger = get_logger("demight_tech_backend")
 
 # ------------------------------------------------------
 # FastAPI app
@@ -67,7 +67,7 @@ origins = [
     "http://127.0.0.1:8080",                # Alternative local dev FE
     "http://localhost:3000",                 # Alternative dev port
     "http://127.0.0.1:3000",                # Alternative dev port
-    "https://alhaq-frontend.vercel.app",     # Production FE (no trailing slash!)
+    "https://demight-tech-frontend.vercel.app",     # Production FE (no trailing slash!)
 ]
 
 # Add CORS middleware with more permissive settings for development

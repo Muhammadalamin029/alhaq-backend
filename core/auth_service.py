@@ -79,7 +79,7 @@ class AuthService:
 
     def create_seller(self, db: Session, email: str, password: str, business_name: str, 
                      contact_email: str, contact_phone: str, description: str, 
-                     website_url: str = None) -> str:
+                     website_url: str = None, seller_type: str = "retailer") -> str:
         """
         Create a new seller with seller-specific profile data
         
@@ -106,6 +106,7 @@ class AuthService:
             contact_email=contact_email,
             contact_phone=contact_phone,
             website_url=website_url,
+            seller_type=seller_type,
             kyc_status="pending"  # New sellers start with pending KYC
         )
 

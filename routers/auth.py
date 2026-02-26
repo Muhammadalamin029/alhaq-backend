@@ -160,7 +160,8 @@ def register_seller(body: SellerRegisterRequest, db: Session = Depends(get_db)):
             contact_email=body.contact_email,
             contact_phone=body.contact_phone,
             description=body.description,
-            website_url=body.website_url
+            website_url=body.website_url,
+            seller_type=body.seller_type
         )
         
         # Send verification email

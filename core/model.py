@@ -83,6 +83,9 @@ class SellerProfile(Base):
     contact_phone = Column(String(50), nullable=True)
     website_url = Column(Text, nullable=True)
 
+    seller_type = Column(Enum("retailer", "car_dealer", "real_agent",
+                             name="seller_type"), nullable=True)
+    
     kyc_status = Column(Enum("pending", "approved", "rejected",
                         name="seller_kyc_status"), default="pending")
     approval_date = Column(Date, nullable=True)
@@ -402,6 +405,15 @@ class Notification(Base):
         "wishlist_item_back_in_stock",
         "system_announcement",
         "promotional_offer",
+        "car_approved",
+        "car_rejected",
+        "inspection_scheduled",
+        "property_acquired",
+        "agreement_completed",
+        "installment_paid",
+        "payment_reminder",
+        "installment_due",
+        "installment_defaulted",
         name="notification_type"
     ), nullable=False)
 
@@ -456,3 +468,203 @@ class NotificationPreferences(Base):
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+
+# ---------------- AUTOMOTIVE ----------------
+
+class Car(Base):
+    __tablename__ = "cars"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    brand = Column(String(100), nullable=False)
+    model = Column(String(100), nullable=False)
+    year = Column(Integer, nullable=False)
+    mileage = Column(Integer, nullable=False)
+    vin = Column(String(100), unique=True, nullable=False)
+    price = Column(Numeric(15, 2), nullable=False)
+    min_deposit_percentage = Column(Numeric(5, 2), default=10) # Default 10%
+    
+    status = Column(Enum("available", "pending_inspection", "car_inspected", "awaiting_payment", 
+                        "sold", "under_financing", "rejected", name="car_status"), default="available")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    seller = relationship("SellerProfile")
+    inspections = relationship("CarInspection", back_populates="car")
+    agreement = relationship("CarAgreement", back_populates="car", uselist=False)
+
+
+class CarInspection(Base):
+    __tablename__ = "car_inspections"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
+    admin_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    inspection_date = Column(TIMESTAMP, nullable=False)
+    notes = Column(Text, nullable=True)
+    verified_vin = Column(Boolean, default=False)
+    valuation_confirmed = Column(Numeric(15, 2), nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    car = relationship("Car", back_populates="inspections")
+    admin = relationship("User")
+
+
+# ---------------- REAL ESTATE ----------------
+
+class Property(Base):
+    __tablename__ = "properties"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    price = Column(Numeric(15, 2), nullable=False)
+    location = Column(String(255), nullable=False)
+    
+    listing_type = Column(Enum("sale", "rental", "professional", name="listing_type"), default="sale")
+    status = Column(Enum("available", "pending_inspection", "property_inspected", "awaiting_payment", 
+                        "reserved", "sold", "rented", "under_financing", name="property_status"), default="available")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    seller = relationship("SellerProfile")
+    agreement = relationship("PropertyAgreement", back_populates="property", uselist=False)
+
+
+class RealEstateSessionRequest(Base):
+    __tablename__ = "re_session_requests"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    location = Column(String(255), nullable=False)
+    property_details = Column(Text, nullable=False)
+    status = Column(Enum("pending", "pending_acquisition", "acquired", "declined", name="re_session_status"), default="pending")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    user = relationship("User")
+
+
+# ---------------- FINANCING & AGREEMENTS ----------------
+
+class CarAgreement(Base):
+    __tablename__ = "car_agreements"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
+    
+    total_price = Column(Numeric(15, 2), nullable=False)
+    deposit_paid = Column(Numeric(15, 2), nullable=False)
+    remaining_balance = Column(Numeric(15, 2), nullable=False)
+    
+    plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
+    duration_months = Column(Integer, nullable=True)
+    monthly_installment = Column(Numeric(15, 2), nullable=True)
+    final_deadline = Column(TIMESTAMP, nullable=True)
+    next_due_date = Column(TIMESTAMP, nullable=True)
+    
+    status = Column(Enum("active", "completed", "defaulted", name="agreement_status"), default="active")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    user = relationship("Profile")
+    car = relationship("Car", back_populates="agreement")
+    order = relationship("Order")
+    payments = relationship("CarPayment", back_populates="agreement")
+
+
+class PropertyAgreement(Base):
+    __tablename__ = "property_agreements"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    property_id = Column(UUID, ForeignKey("properties.id"), nullable=False)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
+    
+    total_price = Column(Numeric(15, 2), nullable=False)
+    deposit_paid = Column(Numeric(15, 2), nullable=False)
+    remaining_balance = Column(Numeric(15, 2), nullable=False)
+    
+    plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
+    duration_months = Column(Integer, nullable=True)
+    monthly_installment = Column(Numeric(15, 2), nullable=True)
+    final_deadline = Column(TIMESTAMP, nullable=True)
+    next_due_date = Column(TIMESTAMP, nullable=True)
+    
+    status = Column(Enum("active", "completed", "defaulted", name="agreement_status"), default="active")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    user = relationship("Profile")
+    property = relationship("Property", back_populates="agreement")
+    order = relationship("Order")
+    payments = relationship("PropertyPayment", back_populates="agreement")
+
+
+class CarPayment(Base):
+    __tablename__ = "car_payments"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    agreement_id = Column(UUID, ForeignKey("car_agreements.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
+    paystack_ref = Column(String(100), unique=True, nullable=False)
+    payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
+    status = Column(Enum("success", "failed", "pending", name="asset_payment_status"), default="pending")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    agreement = relationship("CarAgreement", back_populates="payments")
+    user = relationship("Profile")
+
+
+class PropertyPayment(Base):
+    __tablename__ = "property_payments"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    agreement_id = Column(UUID, ForeignKey("property_agreements.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
+    paystack_ref = Column(String(100), unique=True, nullable=False)
+    payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
+    status = Column(Enum("success", "failed", "pending", name="asset_payment_status"), default="pending")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    agreement = relationship("PropertyAgreement", back_populates="payments")
+    user = relationship("Profile")
+
+
+# ---------------- AUDIT LOGS ----------------
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    admin_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    target_id = Column(UUID, nullable=True) # ID of the agreement/car/property/etc
+    action = Column(String(255), nullable=False)
+    details = Column(Text, nullable=True)
+    
+    timestamp = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    admin = relationship("User")

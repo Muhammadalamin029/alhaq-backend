@@ -73,7 +73,7 @@ async def initialize_payment(
         
         # Generate unique reference
         import uuid
-        reference = f"ALHAQ_{uuid.uuid4().hex[:10].upper()}"
+        reference = f"DEMIGHT_{uuid.uuid4().hex[:10].upper()}"
         
         # Initialize Paystack transaction
         try:

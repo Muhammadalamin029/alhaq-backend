@@ -2,7 +2,7 @@
 """
 Admin User Creation Script
 
-This script creates an admin user for the Alhaq platform.
+This script creates an admin user for the Demight platform.
 Usage: python create_admin.py
 """
 
@@ -23,7 +23,7 @@ logger = get_logger("admin_creation")
 def create_admin_user():
     """Interactive admin user creation"""
     print("=" * 50)
-    print("🔧 ALHAQ ADMIN USER CREATION")
+    print("🔧 DEMIGHT ADMIN USER CREATION")
     print("=" * 50)
     
     # Get admin details
