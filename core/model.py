@@ -520,11 +520,11 @@ class CarInspection(Base):
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
-    unit_id = Column(UUID, ForeignKey("car_units.id"), nullable=True) # Direct link to specific physical car
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False) # The customer
+    unit_id = Column(UUID, ForeignKey("car_units.id"), nullable=True)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False) 
     inspection_date = Column(TIMESTAMP, nullable=False)
     notes = Column(Text, nullable=True)
-    agreed_price = Column(Numeric(15, 2), nullable=True) # Negotiated price
+    agreed_price = Column(Numeric(15, 2), nullable=True) 
     status = Column(Enum("scheduled", "completed", "rejected", "agreement_pending", "agreement_accepted", 
                         name="inspection_status"), default="scheduled")
     

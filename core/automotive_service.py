@@ -275,4 +275,38 @@ class AutomotiveService:
     def list_user_inspections(self, db: Session, user_id: UUID) -> List[CarInspection]:
         return db.query(CarInspection).filter(CarInspection.user_id == user_id).order_by(CarInspection.created_at.desc()).all()
 
+    def list_seller_agreements(self, db: Session, seller_id: UUID) -> List[CarAgreement]:
+        return db.query(CarAgreement).join(Car).filter(Car.seller_id == seller_id).order_by(CarAgreement.created_at.desc()).all()
+
+    def list_user_agreements(self, db: Session, user_id: UUID) -> List[CarAgreement]:
+        # CarAgreement.user_id references Profile.id which is same as User.id
+        return db.query(CarAgreement).filter(CarAgreement.user_id == user_id).order_by(CarAgreement.created_at.desc()).all()
+
+    def get_agreement(self, db: Session, agreement_id: UUID, user_id: UUID = None) -> Optional[CarAgreement]:
+        query = db.query(CarAgreement).filter(CarAgreement.id == agreement_id)
+        if user_id:
+            # Can be either customer or seller
+            query = query.join(Car).filter(or_(CarAgreement.user_id == user_id, Car.seller_id == user_id))
+        return query.first()
+
+    def update_agreement(self, db: Session, agreement_id: UUID, seller_id: UUID, update_data: Dict[str, Any]) -> CarAgreement:
+        agreement = db.query(CarAgreement).join(Car).filter(
+            CarAgreement.id == agreement_id,
+            Car.seller_id == seller_id
+        ).first()
+        
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
+        
+        for key, value in update_data.items():
+            if value is not None:
+                setattr(agreement, key, value)
+        
+        db.commit()
+        db.refresh(agreement)
+        return agreement
+
+    def list_payments(self, db: Session, user_id: UUID) -> List[CarPayment]:
+        return db.query(CarPayment).filter(CarPayment.user_id == user_id).order_by(CarPayment.created_at.desc()).all()
+
 automotive_service = AutomotiveService()

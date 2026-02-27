@@ -106,3 +106,50 @@ class CarResponse(CarBase):
 
     class Config:
         from_attributes = True
+
+class CarPaymentResponse(BaseModel):
+    id: UUID
+    agreement_id: UUID
+    user_id: UUID
+    amount: Decimal
+    paystack_ref: str
+    payment_type: str
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CarAgreementResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    car_id: UUID
+    unit_id: Optional[UUID] = None
+    inspection_id: Optional[UUID] = None
+    
+    total_price: Decimal
+    deposit_paid: Decimal
+    remaining_balance: Decimal
+    
+    plan_type: str
+    duration_months: Optional[int] = None
+    monthly_installment: Optional[Decimal] = None
+    next_due_date: Optional[datetime] = None
+    status: str
+    
+    created_at: datetime
+    updated_at: datetime
+
+    # Nested info
+    car: Optional[CarMini] = None
+    unit: Optional[CarUnitBase] = None
+    payments: List[CarPaymentResponse] = []
+
+    class Config:
+        from_attributes = True
+
+class CarAgreementUpdate(BaseModel):
+    plan_type: Optional[str] = None
+    duration_months: Optional[int] = None
+    monthly_installment: Optional[Decimal] = None
+    status: Optional[str] = None

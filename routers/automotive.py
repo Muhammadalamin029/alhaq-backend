@@ -8,7 +8,8 @@ from core.auth import get_current_user
 from core.automotive_service import automotive_service
 from schemas.automotive import (
     CarCreate, CarUpdate, CarResponse, CarInspectionResponse, 
-    CarInspectionSchedule, CarInspectionComplete, CarUnitCreate, CarUnitResponse
+    CarInspectionSchedule, CarInspectionComplete, CarUnitCreate, CarUnitResponse,
+    CarAgreementResponse, CarAgreementUpdate, CarPaymentResponse
 )
 from core.model import User
 
@@ -72,6 +73,83 @@ def get_my_inspections(
         "success": True,
         "message": "My inspections fetched successfully",
         "data": [CarInspectionResponse.model_validate(i) for i in inspections]
+    }
+
+@router.get("/seller/agreements")
+def get_seller_agreements(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get agreements for cars listed by the current seller"""
+    if current_user["role"] not in ["seller", "admin"]:
+        raise HTTPException(status_code=403, detail="Only sellers can view their agreements")
+    agreements = automotive_service.list_seller_agreements(db, seller_id=UUID(current_user["id"]))
+    return {
+        "success": True,
+        "message": "Seller agreements fetched successfully",
+        "data": [CarAgreementResponse.model_validate(a) for a in agreements]
+    }
+
+@router.get("/my-agreements")
+def get_my_agreements(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get agreements for the current customer"""
+    agreements = automotive_service.list_user_agreements(db, user_id=UUID(current_user["id"]))
+    return {
+        "success": True,
+        "message": "My agreements fetched successfully",
+        "data": [CarAgreementResponse.model_validate(a) for a in agreements]
+    }
+
+@router.get("/agreements/{agreement_id}")
+def get_agreement_details(
+    agreement_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get agreement details by ID"""
+    agreement = automotive_service.get_agreement(db, agreement_id, user_id=UUID(current_user["id"]))
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
+    return {
+        "success": True,
+        "message": "Agreement details fetched successfully",
+        "data": CarAgreementResponse.model_validate(agreement)
+    }
+
+@router.put("/agreements/{agreement_id}")
+def update_agreement(
+    agreement_id: UUID,
+    body: CarAgreementUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update agreement (Seller only)"""
+    if current_user["role"] not in ["seller", "admin"]:
+        raise HTTPException(status_code=403, detail="Only sellers can update agreements")
+    
+    agreement = automotive_service.update_agreement(
+        db, agreement_id, UUID(current_user["id"]), body.model_dump(exclude_unset=True)
+    )
+    return {
+        "success": True,
+        "message": "Agreement updated successfully",
+        "data": CarAgreementResponse.model_validate(agreement)
+    }
+
+@router.get("/my-payments")
+def get_my_payments(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get payments made by the current customer"""
+    payments = automotive_service.list_payments(db, user_id=UUID(current_user["id"]))
+    return {
+        "success": True,
+        "message": "My payments fetched successfully",
+        "data": [CarPaymentResponse.model_validate(p) for p in payments]
     }
 
 @router.get("/")
