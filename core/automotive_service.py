@@ -235,9 +235,13 @@ class AutomotiveService:
         return car
 
     def complete_inspection(self, db: Session, user_id: UUID, inspection_id: UUID, notes: str, agreed_price: Decimal) -> CarInspection:
-        inspection = db.query(CarInspection).filter(CarInspection.id == inspection_id, CarInspection.user_id == user_id).first()
+        # User can be either the customer (user_id) or the seller of the car
+        inspection = db.query(CarInspection).join(Car).filter(
+            CarInspection.id == inspection_id, 
+            or_(CarInspection.user_id == user_id, Car.seller_id == user_id)
+        ).first()
         if not inspection:
-            raise HTTPException(status_code=404, detail="Inspection request not found")
+            raise HTTPException(status_code=404, detail="Inspection request not found or unauthorized")
 
         if inspection.status != "scheduled":
             raise HTTPException(status_code=400, detail="Only scheduled inspections can be completed")

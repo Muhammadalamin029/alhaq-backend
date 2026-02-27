@@ -18,6 +18,9 @@ class CarUnitBase(BaseModel):
     color: Optional[str] = None
     status: str = "available"
 
+    class Config:
+        from_attributes = True
+
 class CarUnitCreate(CarUnitBase):
     pass
 
