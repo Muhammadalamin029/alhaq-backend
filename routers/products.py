@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, status, HTTPException, Query
 from sqlalchemy.orm import Session
 from core.products import product_service
-from core.model import Product, ProductImage
+from core.model import Product, AssetImage
 from db.session import get_db
 from core.auth import role_required
 from schemas.products import ProductCreate, ProductResponse, ProductUpdate
@@ -225,28 +225,6 @@ async def update_product(
     try:
         # Debug logging
         products_logger.info(f"Updating product {product_id} with data: {update_data}")
-        
-        # Handle product images update if provided
-        if "images" in update_data and update_data["images"] is not None:
-            products_logger.info(f"Updating images for product {product_id}")
-            try:
-                # Remove existing images
-                db.query(ProductImage).filter(ProductImage.product_id == product_id).delete()
-                
-                # Add new images
-                for img in update_data["images"]:
-                    new_image = ProductImage(
-                        product_id=product_id,
-                        image_url=img["image_url"]
-                    )
-                    db.add(new_image)
-                
-                # Remove images from update_data as it's handled separately
-                del update_data["images"]
-                products_logger.info(f"Images updated successfully for product {product_id}")
-            except Exception as image_error:
-                products_logger.error(f"Error updating images for product {product_id}: {str(image_error)}")
-                raise image_error
         
         # Update the product
         products_logger.info(f"Calling product_service.update_product with: {update_data}")

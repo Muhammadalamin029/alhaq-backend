@@ -9,11 +9,62 @@ from core.automotive_service import automotive_service
 from schemas.automotive import (
     CarCreate, CarUpdate, CarResponse, CarInspectionResponse, 
     CarInspectionSchedule, CarInspectionComplete, CarUnitCreate, CarUnitResponse,
-    CarAgreementResponse, CarAgreementUpdate, CarPaymentResponse
+    CarAgreementResponse, CarAgreementUpdate, CarPaymentResponse, CarUnitUpdate
 )
 from core.model import User
 
 router = APIRouter()
+
+@router.put("/units/{unit_id}")
+def update_car_unit(
+    unit_id: UUID,
+    body: CarUnitUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update a physical car unit (Seller only)"""
+    if current_user["role"] not in ["seller", "admin"]:
+        raise HTTPException(status_code=403, detail="Only sellers can update units")
+    
+    unit = automotive_service.update_car_unit(db, unit_id, UUID(current_user["id"]), body)
+    return {
+        "success": True,
+        "message": "Car unit updated successfully",
+        "data": CarUnitResponse.model_validate(unit)
+    }
+
+
+@router.delete("/units/{unit_id}")
+def delete_car_unit(
+    unit_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a physical car unit (Seller only)"""
+    if current_user["role"] not in ["seller", "admin"]:
+        raise HTTPException(status_code=403, detail="Only sellers can delete units")
+    
+    automotive_service.delete_car_unit(db, unit_id, UUID(current_user["id"]))
+    return {
+        "success": True,
+        "message": "Car unit deleted successfully"
+    }
+
+@router.delete("/{car_id}")
+def delete_car_listing(
+    car_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a car listing (Seller only)"""
+    if current_user["role"] not in ["seller", "admin"]:
+        raise HTTPException(status_code=403, detail="Only sellers can delete listings")
+    
+    automotive_service.delete_car(db, car_id, UUID(current_user["id"]))
+    return {
+        "success": True,
+        "message": "Car listing deleted successfully"
+    }
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_car_listing(

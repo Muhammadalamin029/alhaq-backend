@@ -1,7 +1,7 @@
-from core.model import Product, ProductImage
+from core.model import Product, AssetImage
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID
-from schemas.products import ProductImageSchema
+from schemas.media import AssetImageResponse
 from typing import Optional
 
 
@@ -70,7 +70,7 @@ class ProductService:
         # 2. Add images if provided
         if images:
             for img in images:
-                product_image = ProductImage(
+                product_image = AssetImage(
                     product_id=new_product.id,
                     image_url=img.image_url
                 )
@@ -156,6 +156,24 @@ class ProductService:
             return None
             
         logger.info(f"Found product: {product.name} (ID: {product.id})")
+        
+        # Handle images separately if present
+        if "images" in kwargs:
+            logger.info(f"Updating images for product {product_id}")
+            images_data = kwargs.pop("images")
+            
+            # Remove existing images
+            db.query(AssetImage).filter(AssetImage.product_id == product_id).delete()
+            
+            # Add new images
+            if images_data:
+                for img_data in images_data:
+                    image_url = img_data["image_url"] if isinstance(img_data, dict) else img_data.image_url
+                    new_image = AssetImage(
+                        product_id=product_id,
+                        image_url=image_url
+                    )
+                    db.add(new_image)
         
         for key, value in kwargs.items():
             old_value = getattr(product, key, None)

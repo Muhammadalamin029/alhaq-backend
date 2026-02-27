@@ -2,23 +2,9 @@ from pydantic import BaseModel, Field, UUID4
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
+from schemas.media import AssetImageResponse, AssetImageCreate
 
 
-class ProductImageSchema(BaseModel):
-    """Schema for product image data"""
-    image_url: str
-    product_id: UUID
-
-    class Config:
-        from_attributes = True
-
-
-class ProductImageCreate(BaseModel):
-    """Schema for creating product images (without product_id)"""
-    image_url: str
-
-    class Config:
-        from_attributes = True
 
 
 class ProductCreate(BaseModel):
@@ -27,7 +13,7 @@ class ProductCreate(BaseModel):
     price: float = Field(..., gt=0, description="Product price must be greater than 0")
     stock_quantity: int = Field(0, ge=0, description="Stock quantity cannot be negative")
     category_id: UUID4
-    images: Optional[List[ProductImageCreate]] = None
+    images: Optional[List[AssetImageCreate]] = None
 
     class Config:
         from_attributes = True
@@ -46,7 +32,7 @@ class ProductUpdate(BaseModel):
     category_id: Optional[UUID4] = None
     status: Optional[str] = Field(
         None, pattern="^(active|inactive|out_of_stock)$")
-    images: Optional[List[ProductImageSchema]] = None
+    images: Optional[List[AssetImageCreate]] = None
 
     class Config:
         from_attributes = True
@@ -85,7 +71,7 @@ class ProductResponse(BaseModel):
     updated_at: datetime
     seller: SellerResponse
     category: CategoryResponse
-    images: Optional[List[ProductImageSchema]] = []
+    images: Optional[List[AssetImageResponse]] = []
 
     class Config:
         from_attributes = True

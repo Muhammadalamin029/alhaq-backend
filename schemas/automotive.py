@@ -3,6 +3,7 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
+from schemas.media import AssetImageResponse, AssetImageCreate
 
 class CarBase(BaseModel):
     brand: str
@@ -20,6 +21,12 @@ class CarUnitBase(BaseModel):
 class CarUnitCreate(CarUnitBase):
     pass
 
+class CarUnitUpdate(BaseModel):
+    vin: Optional[str] = None
+    mileage: Optional[int] = None
+    color: Optional[str] = None
+    status: Optional[str] = None
+
 class CarUnitResponse(CarUnitBase):
     id: UUID
     car_id: UUID
@@ -29,8 +36,10 @@ class CarUnitResponse(CarUnitBase):
     class Config:
         from_attributes = True
 
+
 class CarCreate(CarBase):
     units: List[CarUnitCreate] # Initial stock units
+    images: Optional[List[AssetImageCreate]] = None
 
 class CarUpdate(BaseModel):
     brand: Optional[str] = None
@@ -39,6 +48,7 @@ class CarUpdate(BaseModel):
     price: Optional[Decimal] = None
     min_deposit_percentage: Optional[Decimal] = None
     status: Optional[str] = None
+    images: Optional[List[AssetImageCreate]] = None
 
 class CarInspectionBase(BaseModel):
     inspection_date: datetime
@@ -100,6 +110,7 @@ class CarResponse(CarBase):
     seller_id: UUID
     status: str
     units: List[CarUnitResponse] = []
+    images: List[AssetImageResponse] = []
     created_at: datetime
     updated_at: datetime
     inspections: List[CarInspectionResponse] = []

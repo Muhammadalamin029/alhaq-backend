@@ -5,12 +5,43 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
 
-from core.model import Car, CarUnit, CarInspection, User, SellerProfile, CarAgreement, CarPayment
-from schemas.automotive import CarCreate, CarUpdate, CarInspectionSchedule, CarUnitCreate
+from core.model import Car, CarUnit, CarInspection, User, SellerProfile, CarAgreement, CarPayment, AssetImage
+from schemas.automotive import CarCreate, CarUpdate, CarInspectionSchedule, CarUnitCreate, CarUnitUpdate
 from core.notifications_service import create_notification
 from decimal import Decimal
 
 class AutomotiveService:
+    def delete_car_unit(self, db: Session, unit_id: UUID, seller_id: UUID) -> bool:
+        unit = db.query(CarUnit).join(Car).filter(CarUnit.id == unit_id, Car.seller_id == seller_id).first()
+        if not unit:
+            raise HTTPException(status_code=404, detail="Car unit not found or unauthorized")
+        
+        db.delete(unit)
+        db.commit()
+        return True
+
+    def delete_car(self, db: Session, car_id: UUID, seller_id: UUID) -> bool:
+        car = db.query(Car).filter(Car.id == car_id, Car.seller_id == seller_id).first()
+        if not car:
+            raise HTTPException(status_code=404, detail="Car listing not found or unauthorized")
+        
+        db.delete(car) # Cascade will handle units and images
+        db.commit()
+        return True
+
+    def update_car_unit(self, db: Session, unit_id: UUID, seller_id: UUID, update_data: CarUnitUpdate) -> CarUnit:
+        unit = db.query(CarUnit).join(Car).filter(CarUnit.id == unit_id, Car.seller_id == seller_id).first()
+        if not unit:
+            raise HTTPException(status_code=404, detail="Car unit not found or unauthorized")
+        
+        update_dict = update_data.model_dump(exclude_unset=True)
+        for key, value in update_dict.items():
+            setattr(unit, key, value)
+            
+        db.commit()
+        db.refresh(unit)
+        return unit
+
     def create_car(self, db: Session, seller_id: UUID, car_data: CarCreate) -> Car:
         # Check if any VIN already exists
         vins = [u.vin for u in car_data.units]
@@ -39,6 +70,14 @@ class AutomotiveService:
                 status="available"
             )
             db.add(unit)
+
+        if car_data.images:
+            for img_data in car_data.images:
+                img = AssetImage(
+                    car_id=car_listing.id,
+                    image_url=img_data.image_url
+                )
+                db.add(img)
 
         db.commit()
         db.refresh(car_listing)
@@ -173,6 +212,21 @@ class AutomotiveService:
             raise HTTPException(status_code=404, detail="Car not found or unauthorized")
         
         update_dict = update_data.model_dump(exclude_unset=True)
+        
+        if "images" in update_dict:
+            # Remove existing images
+            db.query(AssetImage).filter(AssetImage.car_id == car_id).delete()
+            
+            # Add new images
+            images_data = update_dict.pop("images")
+            if images_data:
+                for img_data in images_data:
+                    img = AssetImage(
+                        car_id=car_id,
+                        image_url=img_data["image_url"] if isinstance(img_data, dict) else img_data.image_url
+                    )
+                    db.add(img)
+
         for key, value in update_dict.items():
             setattr(car, key, value)
             

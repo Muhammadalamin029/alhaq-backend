@@ -6,7 +6,7 @@ from uuid import UUID
 
 from db.session import get_db
 from core.auth import role_required, get_current_user
-from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, ProductImage, Category
+from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, AssetImage, Category
 from schemas.products import ProductResponse, ProductCreate, ProductUpdate
 from schemas.order import OrderResponse, OrderStatus, OrderStatusUpdate, OrderStatusResponse
 from schemas.seller import (

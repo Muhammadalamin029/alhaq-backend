@@ -83,7 +83,7 @@ class SellerProfile(Base):
     contact_phone = Column(String(50), nullable=True)
     website_url = Column(Text, nullable=True)
 
-    seller_type = Column(Enum("retailer", "car_dealer", "real_agent",
+    seller_type = Column(Enum("retailer", "car_dealer", "real_agent", "phone_dealer",
                              name="seller_type"), nullable=True)
     
     kyc_status = Column(Enum("pending", "approved", "rejected",
@@ -154,21 +154,28 @@ class Product(Base):
     # Reviews and wishlists can be cascade deleted since they become meaningless without the product
     reviews = relationship("Review", back_populates="product", cascade="all, delete-orphan")
     wishlists = relationship("Wishlist", back_populates="product", cascade="all, delete-orphan")
-    images = relationship("ProductImage", back_populates="product", cascade="all, delete-orphan")
+    images = relationship("AssetImage", back_populates="product", cascade="all, delete-orphan")
 
 
-# ---------------- PRODUCT IMAGES ----------------
-class ProductImage(Base):
-    __tablename__ = "product_images"
+class AssetImage(Base):
+    __tablename__ = "asset_images"
 
-    id = Column(UUID, primary_key=True, index=True,
-                default=func.gen_random_uuid())
-    product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     image_url = Column(Text, nullable=False)
+    
+    # Optional foreign keys for different asset types
+    product_id = Column(UUID, ForeignKey("products.id", ondelete="CASCADE"), nullable=True)
+    car_id = Column(UUID, ForeignKey("cars.id", ondelete="CASCADE"), nullable=True)
+    property_id = Column(UUID, ForeignKey("properties.id", ondelete="CASCADE"), nullable=True)
+    phone_id = Column(UUID, ForeignKey("phones.id", ondelete="CASCADE"), nullable=True)
+    
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
     product = relationship("Product", back_populates="images")
+    car = relationship("Car", back_populates="images")
+    property = relationship("Property", back_populates="images")
+    phone = relationship("Phone", back_populates="images")
 
 
 # ---------------- ORDERS ----------------
@@ -407,6 +414,8 @@ class Notification(Base):
         "promotional_offer",
         "car_approved",
         "car_rejected",
+        "phone_approved",
+        "phone_rejected",
         "inspection_scheduled",
         "property_acquired",
         "agreement_completed",
@@ -493,6 +502,7 @@ class Car(Base):
     units = relationship("CarUnit", back_populates="car_listing", cascade="all, delete-orphan")
     inspections = relationship("CarInspection", back_populates="car")
     agreements = relationship("CarAgreement", back_populates="car")
+    images = relationship("AssetImage", back_populates="car", cascade="all, delete-orphan")
 
 
 class CarUnit(Base):
@@ -558,6 +568,7 @@ class Property(Base):
     # Relationships
     seller = relationship("SellerProfile")
     agreement = relationship("PropertyAgreement", back_populates="property", uselist=False)
+    images = relationship("AssetImage", back_populates="property", cascade="all, delete-orphan")
 
 
 class RealEstateSessionRequest(Base):
@@ -677,6 +688,127 @@ class PropertyPayment(Base):
 
     # Relationships
     agreement = relationship("PropertyAgreement", back_populates="payments")
+    user = relationship("Profile")
+
+
+# ---------------- PHONES (NEW) ----------------
+
+class Phone(Base):
+    __tablename__ = "phones"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    brand = Column(String(100), nullable=False)
+    model = Column(String(100), nullable=False)
+    specs = Column(Text, nullable=True) # RAM, Storage, CPU etc.
+    price = Column(Numeric(15, 2), nullable=False)
+    min_deposit_percentage = Column(Numeric(5, 2), default=10)
+    
+    status = Column(Enum("available", "out_of_stock", name="phone_listing_status"), default="available")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    seller = relationship("SellerProfile")
+    units = relationship("PhoneUnit", back_populates="phone_listing", cascade="all, delete-orphan")
+    inspections = relationship("PhoneInspection", back_populates="phone")
+    agreements = relationship("PhoneAgreement", back_populates="phone")
+    images = relationship("AssetImage", back_populates="phone", cascade="all, delete-orphan")
+
+
+class PhoneUnit(Base):
+    __tablename__ = "phone_units"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    phone_id = Column(UUID, ForeignKey("phones.id"), nullable=False)
+    imei = Column(String(100), unique=True, nullable=False)
+    color = Column(String(50), nullable=True)
+    grade = Column(String(20), nullable=True) # e.g. New, Open Box, Grade A
+    battery_health = Column(Integer, nullable=True)
+    
+    status = Column(Enum("available", "inspected", "awaiting_payment", "sold", "reserved", 
+                        name="phone_unit_status"), default="available")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    phone_listing = relationship("Phone", back_populates="units")
+    inspections = relationship("PhoneInspection", back_populates="unit")
+    agreement = relationship("PhoneAgreement", back_populates="unit", uselist=False)
+
+
+class PhoneInspection(Base):
+    __tablename__ = "phone_inspections"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    phone_id = Column(UUID, ForeignKey("phones.id"), nullable=False)
+    unit_id = Column(UUID, ForeignKey("phone_units.id"), nullable=True)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False) 
+    inspection_date = Column(TIMESTAMP, nullable=False)
+    notes = Column(Text, nullable=True)
+    agreed_price = Column(Numeric(15, 2), nullable=True) 
+    status = Column(Enum("scheduled", "completed", "rejected", "agreement_pending", "agreement_accepted", 
+                        name="phone_inspection_status"), default="scheduled")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    phone = relationship("Phone", back_populates="inspections")
+    unit = relationship("PhoneUnit", back_populates="inspections")
+    user = relationship("User")
+
+
+class PhoneAgreement(Base):
+    __tablename__ = "phone_agreements"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    phone_id = Column(UUID, ForeignKey("phones.id"), nullable=False)
+    unit_id = Column(UUID, ForeignKey("phone_units.id"), nullable=True)
+    inspection_id = Column(UUID, ForeignKey("phone_inspections.id"), nullable=True)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True)
+    
+    total_price = Column(Numeric(15, 2), nullable=False)
+    deposit_paid = Column(Numeric(15, 2), nullable=False)
+    remaining_balance = Column(Numeric(15, 2), nullable=False)
+    
+    plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
+    duration_months = Column(Integer, nullable=True)
+    monthly_installment = Column(Numeric(15, 2), nullable=True)
+    next_due_date = Column(TIMESTAMP, nullable=True)
+    
+    status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
+                        name="agreement_status"), default="pending_deposit")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    user = relationship("Profile")
+    phone = relationship("Phone", back_populates="agreements")
+    unit = relationship("PhoneUnit", back_populates="agreement")
+    inspection = relationship("PhoneInspection")
+    order = relationship("Order")
+    payments = relationship("PhonePayment", back_populates="agreement")
+
+
+class PhonePayment(Base):
+    __tablename__ = "phone_payments"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    agreement_id = Column(UUID, ForeignKey("phone_agreements.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
+    paystack_ref = Column(String(100), unique=True, nullable=False)
+    payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
+    status = Column(Enum("success", "failed", "pending", name="asset_payment_status"), default="pending")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    # Relationships
+    agreement = relationship("PhoneAgreement", back_populates="payments")
     user = relationship("Profile")
 
 
