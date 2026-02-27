@@ -480,21 +480,39 @@ class Car(Base):
     brand = Column(String(100), nullable=False)
     model = Column(String(100), nullable=False)
     year = Column(Integer, nullable=False)
-    mileage = Column(Integer, nullable=False)
-    vin = Column(String(100), unique=True, nullable=False)
     price = Column(Numeric(15, 2), nullable=False)
-    min_deposit_percentage = Column(Numeric(5, 2), default=10) # Default 10%
+    min_deposit_percentage = Column(Numeric(5, 2), default=10)
     
-    status = Column(Enum("available", "pending_inspection", "car_inspected", "awaiting_payment", 
-                        "sold", "under_financing", "rejected", name="car_status"), default="available")
+    status = Column(Enum("available", "out_of_stock", name="car_listing_status"), default="available")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
     seller = relationship("SellerProfile")
+    units = relationship("CarUnit", back_populates="car_listing", cascade="all, delete-orphan")
     inspections = relationship("CarInspection", back_populates="car")
-    agreement = relationship("CarAgreement", back_populates="car", uselist=False)
+    agreements = relationship("CarAgreement", back_populates="car")
+
+
+class CarUnit(Base):
+    __tablename__ = "car_units"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
+    vin = Column(String(100), unique=True, nullable=False)
+    mileage = Column(Integer, nullable=False)
+    color = Column(String(50), nullable=True)
+    status = Column(Enum("available", "inspected", "awaiting_payment", "sold", "reserved", 
+                        name="unit_status"), default="available")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    car_listing = relationship("Car", back_populates="units")
+    inspections = relationship("CarInspection", back_populates="unit")
+    agreement = relationship("CarAgreement", back_populates="unit", uselist=False)
 
 
 class CarInspection(Base):
@@ -502,17 +520,20 @@ class CarInspection(Base):
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
-    admin_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    unit_id = Column(UUID, ForeignKey("car_units.id"), nullable=True) # Direct link to specific physical car
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False) # The customer
     inspection_date = Column(TIMESTAMP, nullable=False)
     notes = Column(Text, nullable=True)
-    verified_vin = Column(Boolean, default=False)
-    valuation_confirmed = Column(Numeric(15, 2), nullable=True)
+    agreed_price = Column(Numeric(15, 2), nullable=True) # Negotiated price
+    status = Column(Enum("scheduled", "completed", "rejected", "agreement_pending", "agreement_accepted", 
+                        name="inspection_status"), default="scheduled")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
     car = relationship("Car", back_populates="inspections")
-    admin = relationship("User")
+    unit = relationship("CarUnit", back_populates="inspections")
+    user = relationship("User")
 
 
 # ---------------- REAL ESTATE ----------------
@@ -563,7 +584,9 @@ class CarAgreement(Base):
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
+    unit_id = Column(UUID, ForeignKey("car_units.id"), nullable=True) # The physical unit being purchased
+    inspection_id = Column(UUID, ForeignKey("car_inspections.id"), nullable=True)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True) # Optional back-link if needed
     
     total_price = Column(Numeric(15, 2), nullable=False)
     deposit_paid = Column(Numeric(15, 2), nullable=False)
@@ -575,14 +598,17 @@ class CarAgreement(Base):
     final_deadline = Column(TIMESTAMP, nullable=True)
     next_due_date = Column(TIMESTAMP, nullable=True)
     
-    status = Column(Enum("active", "completed", "defaulted", name="agreement_status"), default="active")
+    status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
+                        name="agreement_status"), default="pending_deposit")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
     user = relationship("Profile")
-    car = relationship("Car", back_populates="agreement")
+    car = relationship("Car", back_populates="agreements")
+    unit = relationship("CarUnit", back_populates="agreement")
+    inspection = relationship("CarInspection")
     order = relationship("Order")
     payments = relationship("CarPayment", back_populates="agreement")
 
@@ -593,7 +619,7 @@ class PropertyAgreement(Base):
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     property_id = Column(UUID, ForeignKey("properties.id"), nullable=False)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True) # Optional back-link
     
     total_price = Column(Numeric(15, 2), nullable=False)
     deposit_paid = Column(Numeric(15, 2), nullable=False)
@@ -605,7 +631,8 @@ class PropertyAgreement(Base):
     final_deadline = Column(TIMESTAMP, nullable=True)
     next_due_date = Column(TIMESTAMP, nullable=True)
     
-    status = Column(Enum("active", "completed", "defaulted", name="agreement_status"), default="active")
+    status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
+                        name="agreement_status"), default="pending_deposit")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
