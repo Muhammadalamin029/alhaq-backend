@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
 
 from core.model import Car, CarUnit, CarInspection, User, SellerProfile, CarAgreement, CarPayment
-from schemas.automotive import CarCreate, CarUpdate, CarInspectionSchedule
+from schemas.automotive import CarCreate, CarUpdate, CarInspectionSchedule, CarUnitCreate
 from core.notifications_service import create_notification
 from decimal import Decimal
 
@@ -268,5 +268,11 @@ class AutomotiveService:
         for u in new_units:
             db.refresh(u)
         return new_units
+
+    def list_seller_inspections(self, db: Session, seller_id: UUID) -> List[CarInspection]:
+        return db.query(CarInspection).join(Car).filter(Car.seller_id == seller_id).order_by(CarInspection.created_at.desc()).all()
+
+    def list_user_inspections(self, db: Session, user_id: UUID) -> List[CarInspection]:
+        return db.query(CarInspection).filter(CarInspection.user_id == user_id).order_by(CarInspection.created_at.desc()).all()
 
 automotive_service = AutomotiveService()

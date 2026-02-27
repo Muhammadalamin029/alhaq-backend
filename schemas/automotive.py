@@ -55,12 +55,42 @@ class CarInspectionComplete(BaseModel):
     notes: Optional[str] = None
     agreed_price: Decimal
 
+class UserMini(BaseModel):
+    id: UUID
+    email: str
+    
+    class Config:
+        from_attributes = True
+
+class ProfileMini(BaseModel):
+    id: UUID
+    name: str
+    phone: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class CarMini(BaseModel):
+    id: UUID
+    brand: str
+    model: str
+    year: int
+    price: Decimal
+    
+    class Config:
+        from_attributes = True
+
 class CarInspectionResponse(CarInspectionBase):
     id: UUID
     user_id: UUID
     car_id: UUID
     unit_id: Optional[UUID] = None
     created_at: datetime
+    
+    # Nested details for listings
+    car: Optional[CarMini] = None
+    unit: Optional[CarUnitBase] = None
+    user: Optional[UserMini] = None # Or Profile info
 
     class Config:
         from_attributes = True
