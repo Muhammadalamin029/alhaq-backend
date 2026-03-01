@@ -3,7 +3,7 @@ from sqlalchemy import (
     Column, String, UUID, Text, Date, Integer, DECIMAL,
     TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, foreign
 
 # ---------------- USERS ----------------
 
@@ -43,6 +43,9 @@ class User(Base):
     profile = relationship("Profile", back_populates="user", uselist=False)
     seller_profile = relationship(
         "SellerProfile", back_populates="user", uselist=False)
+    notifications = relationship("Notification", back_populates="recipient", cascade="all, delete-orphan")
+    notification_prefs = relationship("NotificationPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    inspections = relationship("GeneralInspection", back_populates="user")
 
 
 # ---------------- PROFILES (CUSTOMERS) ----------------
@@ -69,6 +72,8 @@ class Profile(Base):
     reviews = relationship("Review", back_populates="user")
     wishlists = relationship("Wishlist", back_populates="user")
     stats = relationship("Stats", back_populates="user", uselist=False)
+    agreements = relationship("GeneralAgreement", back_populates="user")
+    asset_payments = relationship("GeneralPayment", back_populates="user")
 
 
 # ---------------- SELLER PROFILES ----------------
@@ -396,7 +401,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, nullable=False, index=True)  # References either profiles.id or seller_profiles.id
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
 
     type = Column(Enum(
         "order_confirmed",
@@ -417,6 +422,7 @@ class Notification(Base):
         "phone_approved",
         "phone_rejected",
         "inspection_scheduled",
+        "inspection_confirmed",
         "property_acquired",
         "agreement_completed",
         "installment_paid",
@@ -443,12 +449,15 @@ class Notification(Base):
     sent_at = Column(TIMESTAMP, nullable=True)
     expires_at = Column(TIMESTAMP, nullable=True)
 
+    # Relationships
+    recipient = relationship("User", back_populates="notifications")
+
 
 class NotificationPreferences(Base):
     __tablename__ = "notification_preferences"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, unique=True, nullable=False, index=True)  # References either profiles.id or seller_profiles.id
+    user_id = Column(UUID, ForeignKey("users.id"), unique=True, nullable=False, index=True)
 
     # Email
     email_order_updates = Column(Boolean, default=True)
@@ -478,6 +487,9 @@ class NotificationPreferences(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
+    # Relationships
+    user = relationship("User", back_populates="notification_prefs")
+
 
 # ---------------- AUTOMOTIVE ----------------
 
@@ -500,9 +512,9 @@ class Car(Base):
     # Relationships
     seller = relationship("SellerProfile")
     units = relationship("CarUnit", back_populates="car_listing", cascade="all, delete-orphan")
-    inspections = relationship("CarInspection", back_populates="car")
-    agreements = relationship("CarAgreement", back_populates="car")
     images = relationship("AssetImage", back_populates="car", cascade="all, delete-orphan")
+    inspections = relationship("GeneralInspection", primaryjoin="and_(Car.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='automotive')", back_populates="car", cascade="all, delete-orphan")
+    agreements = relationship("GeneralAgreement", primaryjoin="and_(Car.id==foreign(GeneralAgreement.asset_id), GeneralAgreement.asset_type=='automotive')", back_populates="car", cascade="all, delete-orphan")
 
 
 class CarUnit(Base):
@@ -521,29 +533,8 @@ class CarUnit(Base):
 
     # Relationships
     car_listing = relationship("Car", back_populates="units")
-    inspections = relationship("CarInspection", back_populates="unit")
-    agreement = relationship("CarAgreement", back_populates="unit", uselist=False)
 
 
-class CarInspection(Base):
-    __tablename__ = "car_inspections"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
-    unit_id = Column(UUID, ForeignKey("car_units.id"), nullable=True)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False) 
-    inspection_date = Column(TIMESTAMP, nullable=False)
-    notes = Column(Text, nullable=True)
-    agreed_price = Column(Numeric(15, 2), nullable=True) 
-    status = Column(Enum("scheduled", "completed", "rejected", "agreement_pending", "agreement_accepted", 
-                        name="inspection_status"), default="scheduled")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-
-    # Relationships
-    car = relationship("Car", back_populates="inspections")
-    unit = relationship("CarUnit", back_populates="inspections")
-    user = relationship("User")
 
 
 # ---------------- REAL ESTATE ----------------
@@ -567,8 +558,9 @@ class Property(Base):
 
     # Relationships
     seller = relationship("SellerProfile")
-    agreement = relationship("PropertyAgreement", back_populates="property", uselist=False)
     images = relationship("AssetImage", back_populates="property", cascade="all, delete-orphan")
+    inspections = relationship("GeneralInspection", primaryjoin="and_(Property.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='property')", back_populates="property", cascade="all, delete-orphan")
+    agreements = relationship("GeneralAgreement", primaryjoin="and_(Property.id==foreign(GeneralAgreement.asset_id), GeneralAgreement.asset_type=='property')", back_populates="property", cascade="all, delete-orphan")
 
 
 class RealEstateSessionRequest(Base):
@@ -587,80 +579,82 @@ class RealEstateSessionRequest(Base):
     user = relationship("User")
 
 
-# ---------------- FINANCING & AGREEMENTS ----------------
+# ---------------- UNIFIED ASSET MODELS (NEW) ----------------
 
-class CarAgreement(Base):
-    __tablename__ = "car_agreements"
+class GeneralInspection(Base):
+    __tablename__ = "general_inspections"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    car_id = Column(UUID, ForeignKey("cars.id"), nullable=False)
-    unit_id = Column(UUID, ForeignKey("car_units.id"), nullable=True) # The physical unit being purchased
-    inspection_id = Column(UUID, ForeignKey("car_inspections.id"), nullable=True)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True) # Optional back-link if needed
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     
-    total_price = Column(Numeric(15, 2), nullable=False)
-    deposit_paid = Column(Numeric(15, 2), nullable=False)
-    remaining_balance = Column(Numeric(15, 2), nullable=False)
+    asset_type = Column(Enum("automotive", "property", "phone", name="asset_category"), nullable=False)
+    asset_id = Column(UUID, nullable=False) 
+    unit_id = Column(UUID, nullable=True)
     
-    plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
-    duration_months = Column(Integer, nullable=True)
-    monthly_installment = Column(Numeric(15, 2), nullable=True)
-    final_deadline = Column(TIMESTAMP, nullable=True)
-    next_due_date = Column(TIMESTAMP, nullable=True)
+    inspection_date = Column(TIMESTAMP, nullable=False)
+    notes = Column(Text, nullable=True)
+    agreed_price = Column(Numeric(15, 2), nullable=True)
     
-    status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
-                        name="agreement_status"), default="pending_deposit")
+    status = Column(Enum("scheduled", "confirmed", "completed", "rejected", 
+                        "agreement_pending", "agreement_accepted", 
+                        name="gen_inspection_status"), default="scheduled")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
-    user = relationship("Profile")
-    car = relationship("Car", back_populates="agreements")
-    unit = relationship("CarUnit", back_populates="agreement")
-    inspection = relationship("CarInspection")
-    order = relationship("Order")
-    payments = relationship("CarPayment", back_populates="agreement")
+    seller = relationship("SellerProfile")
+    user = relationship("User", back_populates="inspections")
+    car = relationship("Car", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Car.id, GeneralInspection.asset_type=='automotive')", back_populates="inspections", overlaps="inspections")
+    property = relationship("Property", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Property.id, GeneralInspection.asset_type=='property')", back_populates="inspections", overlaps="inspections")
+    phone = relationship("Phone", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Phone.id, GeneralInspection.asset_type=='phone')", back_populates="inspections", overlaps="inspections")
 
 
-class PropertyAgreement(Base):
-    __tablename__ = "property_agreements"
+class GeneralAgreement(Base):
+    __tablename__ = "general_agreements"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
     user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    property_id = Column(UUID, ForeignKey("properties.id"), nullable=False)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True) # Optional back-link
+    inspection_id = Column(UUID, ForeignKey("general_inspections.id"), nullable=True)
+    
+    asset_type = Column(Enum("automotive", "property", "phone", name="asset_category"), nullable=False)
+    asset_id = Column(UUID, nullable=False)
+    unit_id = Column(UUID, nullable=True)
     
     total_price = Column(Numeric(15, 2), nullable=False)
-    deposit_paid = Column(Numeric(15, 2), nullable=False)
-    remaining_balance = Column(Numeric(15, 2), nullable=False)
+    deposit_paid = Column(Numeric(15, 2), nullable=True)
+    remaining_balance = Column(Numeric(15, 2), nullable=True)
     
     plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
     duration_months = Column(Integer, nullable=True)
     monthly_installment = Column(Numeric(15, 2), nullable=True)
-    final_deadline = Column(TIMESTAMP, nullable=True)
     next_due_date = Column(TIMESTAMP, nullable=True)
     
     status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
-                        name="agreement_status"), default="pending_deposit")
+                        name="gen_agreement_status"), default="pending_deposit")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
-    user = relationship("Profile")
-    property = relationship("Property", back_populates="agreement")
-    order = relationship("Order")
-    payments = relationship("PropertyPayment", back_populates="agreement")
+    seller = relationship("SellerProfile")
+    user = relationship("Profile", back_populates="agreements")
+    inspection = relationship("GeneralInspection")
+    payments = relationship("GeneralPayment", back_populates="agreement")
+    car = relationship("Car", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Car.id, GeneralAgreement.asset_type=='automotive')", back_populates="agreements", overlaps="agreements")
+    property = relationship("Property", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Property.id, GeneralAgreement.asset_type=='property')", back_populates="agreements", overlaps="agreements")
+    phone = relationship("Phone", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Phone.id, GeneralAgreement.asset_type=='phone')", back_populates="agreements", overlaps="agreements")
 
 
-class CarPayment(Base):
-    __tablename__ = "car_payments"
+class GeneralPayment(Base):
+    __tablename__ = "general_payments"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    agreement_id = Column(UUID, ForeignKey("car_agreements.id"), nullable=False)
+    agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=False)
     user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    
     amount = Column(Numeric(15, 2), nullable=False)
     paystack_ref = Column(String(100), unique=True, nullable=False)
     payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
@@ -669,26 +663,8 @@ class CarPayment(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
-    agreement = relationship("CarAgreement", back_populates="payments")
-    user = relationship("Profile")
-
-
-class PropertyPayment(Base):
-    __tablename__ = "property_payments"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    agreement_id = Column(UUID, ForeignKey("property_agreements.id"), nullable=False)
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    amount = Column(Numeric(15, 2), nullable=False)
-    paystack_ref = Column(String(100), unique=True, nullable=False)
-    payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
-    status = Column(Enum("success", "failed", "pending", name="asset_payment_status"), default="pending")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-
-    # Relationships
-    agreement = relationship("PropertyAgreement", back_populates="payments")
-    user = relationship("Profile")
+    agreement = relationship("GeneralAgreement", back_populates="payments")
+    user = relationship("Profile", back_populates="asset_payments")
 
 
 # ---------------- PHONES (NEW) ----------------
@@ -712,8 +688,8 @@ class Phone(Base):
     # Relationships
     seller = relationship("SellerProfile")
     units = relationship("PhoneUnit", back_populates="phone_listing", cascade="all, delete-orphan")
-    inspections = relationship("PhoneInspection", back_populates="phone")
-    agreements = relationship("PhoneAgreement", back_populates="phone")
+    inspections = relationship("GeneralInspection", primaryjoin="and_(Phone.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='phone')", back_populates="phone", cascade="all, delete-orphan")
+    agreements = relationship("GeneralAgreement", primaryjoin="and_(Phone.id==foreign(GeneralAgreement.asset_id), GeneralAgreement.asset_type=='phone')", back_populates="phone", cascade="all, delete-orphan")
     images = relationship("AssetImage", back_populates="phone", cascade="all, delete-orphan")
 
 
@@ -735,81 +711,6 @@ class PhoneUnit(Base):
 
     # Relationships
     phone_listing = relationship("Phone", back_populates="units")
-    inspections = relationship("PhoneInspection", back_populates="unit")
-    agreement = relationship("PhoneAgreement", back_populates="unit", uselist=False)
-
-
-class PhoneInspection(Base):
-    __tablename__ = "phone_inspections"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    phone_id = Column(UUID, ForeignKey("phones.id"), nullable=False)
-    unit_id = Column(UUID, ForeignKey("phone_units.id"), nullable=True)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False) 
-    inspection_date = Column(TIMESTAMP, nullable=False)
-    notes = Column(Text, nullable=True)
-    agreed_price = Column(Numeric(15, 2), nullable=True) 
-    status = Column(Enum("scheduled", "completed", "rejected", "agreement_pending", "agreement_accepted", 
-                        name="phone_inspection_status"), default="scheduled")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-
-    # Relationships
-    phone = relationship("Phone", back_populates="inspections")
-    unit = relationship("PhoneUnit", back_populates="inspections")
-    user = relationship("User")
-
-
-class PhoneAgreement(Base):
-    __tablename__ = "phone_agreements"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    phone_id = Column(UUID, ForeignKey("phones.id"), nullable=False)
-    unit_id = Column(UUID, ForeignKey("phone_units.id"), nullable=True)
-    inspection_id = Column(UUID, ForeignKey("phone_inspections.id"), nullable=True)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True)
-    
-    total_price = Column(Numeric(15, 2), nullable=False)
-    deposit_paid = Column(Numeric(15, 2), nullable=False)
-    remaining_balance = Column(Numeric(15, 2), nullable=False)
-    
-    plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
-    duration_months = Column(Integer, nullable=True)
-    monthly_installment = Column(Numeric(15, 2), nullable=True)
-    next_due_date = Column(TIMESTAMP, nullable=True)
-    
-    status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
-                        name="agreement_status"), default="pending_deposit")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-
-    # Relationships
-    user = relationship("Profile")
-    phone = relationship("Phone", back_populates="agreements")
-    unit = relationship("PhoneUnit", back_populates="agreement")
-    inspection = relationship("PhoneInspection")
-    order = relationship("Order")
-    payments = relationship("PhonePayment", back_populates="agreement")
-
-
-class PhonePayment(Base):
-    __tablename__ = "phone_payments"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    agreement_id = Column(UUID, ForeignKey("phone_agreements.id"), nullable=False)
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    amount = Column(Numeric(15, 2), nullable=False)
-    paystack_ref = Column(String(100), unique=True, nullable=False)
-    payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
-    status = Column(Enum("success", "failed", "pending", name="asset_payment_status"), default="pending")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-
-    # Relationships
-    agreement = relationship("PhoneAgreement", back_populates="payments")
-    user = relationship("Profile")
 
 
 # ---------------- AUDIT LOGS ----------------
@@ -819,7 +720,7 @@ class AuditLog(Base):
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     admin_id = Column(UUID, ForeignKey("users.id"), nullable=False)
-    target_id = Column(UUID, nullable=True) # ID of the agreement/car/property/etc
+    target_id = Column(UUID, nullable=True)
     action = Column(String(255), nullable=False)
     details = Column(Text, nullable=True)
     
