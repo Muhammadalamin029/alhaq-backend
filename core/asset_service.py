@@ -360,5 +360,29 @@ class AssetService:
         db.delete(inspection)
         db.commit()
         return True
+    def reject_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID) -> GeneralAgreement:
+        agreement = db.query(GeneralAgreement).filter(
+            GeneralAgreement.id == agreement_id,
+            GeneralAgreement.seller_id == seller_id
+        ).first()
+
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
+        
+        if agreement.status != "pending_review":
+            raise HTTPException(status_code=400, detail="Agreement is not in pending_review status")
+
+        # Update Agreement status - Using 'cancelled' as 'rejected' is not in the Enum yet
+        agreement.status = "cancelled"
+        
+        # Reset Inspection status so customer can try again
+        if agreement.inspection_id:
+            inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
+            if inspection:
+                inspection.status = "confirmed"
+
+        db.commit()
+        db.refresh(agreement)
+        return agreement
 
 asset_service = AssetService()

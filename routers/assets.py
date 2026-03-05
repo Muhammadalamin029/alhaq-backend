@@ -138,6 +138,24 @@ async def approve_agreement(
     
     return agreement
 
+@router.post("/agreements/{id}/reject", response_model=AssetAgreementResponse)
+async def reject_agreement(
+    id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "seller":
+        raise HTTPException(status_code=403, detail="Only sellers can reject agreements")
+    
+    seller_id = UUID(current_user["id"])
+    agreement = asset_service.reject_agreement(db, seller_id, id)
+    
+    # Notify the buyer in background
+    background_tasks.add_task(notify_agreement_update, str(agreement.user_id), agreement.asset_type, "rejected")
+    
+    return agreement
+
 @router.get("/agreements", response_model=List[AssetAgreementResponse])
 def list_my_agreements(
     db: Session = Depends(get_db),
