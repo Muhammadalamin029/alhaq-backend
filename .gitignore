@@ -13,3 +13,4 @@ wheels/
 plans/
 reports/
 logs/
+*.db

@@ -26,6 +26,9 @@ class AssetInspectionReview(BaseModel):
 class AssetInspectionComplete(BaseModel):
     notes: Optional[str] = None
     agreed_price: Decimal
+    plan_type: str = Field(..., pattern="^(structured|flexible)$")
+    duration_months: Optional[int] = None
+    monthly_installment: Optional[Decimal] = None
 
 class AssetMini(BaseModel):
     id: UUID
@@ -76,7 +79,7 @@ class AssetAgreementBase(BaseModel):
     plan_type: str = Field(..., pattern="^(structured|flexible)$")
     duration_months: Optional[int] = None
     monthly_installment: Optional[Decimal] = None
-    status: str = "pending_deposit"
+    status: str = "pending_review"
 
 class AssetAgreementResponse(AssetAgreementBase):
     id: UUID

@@ -632,8 +632,8 @@ class GeneralAgreement(Base):
     monthly_installment = Column(Numeric(15, 2), nullable=True)
     next_due_date = Column(TIMESTAMP, nullable=True)
     
-    status = Column(Enum("pending_deposit", "active", "completed", "defaulted", "cancelled", 
-                        name="gen_agreement_status"), default="pending_deposit")
+    status = Column(Enum("pending_review", "pending_deposit", "active", "completed", "defaulted", "cancelled", 
+                        name="gen_agreement_status"), default="pending_review")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())

@@ -199,67 +199,88 @@ class AssetService:
     def complete_inspection(self, db: Session, user_id: UUID, inspection_id: UUID, data: AssetInspectionComplete) -> GeneralInspection:
         inspection = db.query(GeneralInspection).filter(
             GeneralInspection.id == inspection_id, 
-            or_(GeneralInspection.user_id == user_id, GeneralInspection.seller_id == user_id)
+            GeneralInspection.user_id == user_id
         ).first()
         
         if not inspection:
             raise HTTPException(status_code=404, detail="Inspection not found")
 
+        # 1. Update Inspection
         inspection.status = "agreement_pending"
         inspection.agreed_price = data.agreed_price
         inspection.notes = data.notes or inspection.notes
         
+        # 2. Create Agreement automatically in pending_review
+        # Find if one exists to avoid duplicates
+        existing = db.query(GeneralAgreement).filter(GeneralAgreement.inspection_id == inspection_id).first()
+        if not existing:
+            new_agreement = GeneralAgreement(
+                seller_id=inspection.seller_id,
+                user_id=inspection.user_id,
+                inspection_id=inspection_id,
+                asset_type=inspection.asset_type,
+                asset_id=inspection.asset_id,
+                unit_id=inspection.unit_id,
+                total_price=data.agreed_price,
+                deposit_paid=0,
+                remaining_balance=data.agreed_price,
+                plan_type=data.plan_type,
+                duration_months=data.duration_months,
+                monthly_installment=data.monthly_installment,
+                status="pending_review"
+            )
+            db.add(new_agreement)
+
         db.commit()
         db.refresh(inspection)
-
-        # Notify User of price offer
-        create_notification(db, {
-            "user_id": str(inspection.user_id),
-            "type": "inspection_completed",
-            "title": "New Price Offer",
-            "message": f"An inspection was completed and the seller proposed ₦{data.agreed_price:,.2f}.",
-            "priority": "high"
-        })
-
         return inspection
 
-    def create_agreement(self, db: Session, seller_id: UUID, data: AssetAgreementBase) -> GeneralAgreement:
-        # Check if asset exists and seller owns it
+    def create_agreement(self, db: Session, user_id: UUID, data: AssetAgreementBase, is_seller: bool = True) -> GeneralAgreement:
+        # Get asset to verify details
+        asset = None
         if data.asset_type == "automotive":
-            asset = db.query(Car).filter(Car.id == data.asset_id, Car.seller_id == seller_id).first()
+            asset = db.query(Car).filter(Car.id == data.asset_id).first()
         elif data.asset_type == "property":
-            asset = db.query(Property).filter(Property.id == data.asset_id, Property.seller_id == seller_id).first()
+            asset = db.query(Property).filter(Property.id == data.asset_id).first()
         elif data.asset_type == "phone":
-            asset = db.query(Phone).filter(Phone.id == data.asset_id, Phone.seller_id == seller_id).first()
+            asset = db.query(Phone).filter(Phone.id == data.asset_id).first()
         
         if not asset:
-            raise HTTPException(status_code=404, detail="Asset not found or unauthorized")
+            raise HTTPException(status_code=404, detail="Asset not found")
 
-        # Resolve user_id from inspection if provided
-        user_id = None
-        if data.inspection_id:
-            inspection = db.query(GeneralInspection).filter(GeneralInspection.id == data.inspection_id).first()
-            if inspection:
-                user_id = inspection.user_id
-        
-        if not user_id:
-            # Fallback (should ideally be passed or resolved)
-            raise HTTPException(status_code=400, detail="User ID could not be resolved")
+        # Set IDs correctly based on who is calling
+        if is_seller:
+            if asset.seller_id != user_id:
+                raise HTTPException(status_code=403, detail="You do not own this asset")
+            seller_id = user_id
+            buyer_id = None
+            if data.inspection_id:
+                inspection = db.query(GeneralInspection).filter(GeneralInspection.id == data.inspection_id).first()
+                if inspection:
+                    buyer_id = inspection.user_id
+            if not buyer_id:
+                 raise HTTPException(status_code=400, detail="Buyer ID could not be resolved from inspection")
+        else:
+            # Customer initiated
+            seller_id = asset.seller_id
+            buyer_id = user_id
+
+        remaining_balance = data.total_price - (data.deposit_paid or 0)
 
         new_agreement = GeneralAgreement(
             seller_id=seller_id,
-            user_id=user_id,
+            user_id=buyer_id,
             inspection_id=data.inspection_id,
             asset_type=data.asset_type,
             asset_id=data.asset_id,
             unit_id=data.unit_id,
             total_price=data.total_price,
             deposit_paid=data.deposit_paid or 0,
-            remaining_balance=data.total_price - (data.deposit_paid or 0),
+            remaining_balance=remaining_balance,
             plan_type=data.plan_type,
             duration_months=data.duration_months,
             monthly_installment=data.monthly_installment,
-            status="pending_deposit"
+            status="pending_review"  # Start in review
         )
         
         db.add(new_agreement)
@@ -268,10 +289,76 @@ class AssetService:
         if data.inspection_id:
             inspection = db.query(GeneralInspection).filter(GeneralInspection.id == data.inspection_id).first()
             if inspection:
-                inspection.status = "agreement_accepted"
+                inspection.status = "agreement_pending"
 
         db.commit()
         db.refresh(new_agreement)
         return new_agreement
+
+    def approve_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID) -> GeneralAgreement:
+        agreement = db.query(GeneralAgreement).filter(
+            GeneralAgreement.id == agreement_id,
+            GeneralAgreement.seller_id == seller_id
+        ).first()
+
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
+        
+        if agreement.status != "pending_review":
+            raise HTTPException(status_code=400, detail="Agreement is not in pending_review status")
+
+        # Update Agreement status
+        agreement.status = "pending_deposit"
+        
+        # Update Inspection status
+        if agreement.inspection_id:
+            inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
+            if inspection:
+                inspection.status = "agreement_accepted"
+
+        # Update asset unit status to 'sold'
+        if agreement.unit_id:
+            if agreement.asset_type == "automotive":
+                unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
+                if unit:
+                    unit.status = "sold"
+                    # Auto-out-of-stock
+                    remaining = db.query(CarUnit).filter(
+                        CarUnit.car_id == unit.car_id, 
+                        CarUnit.status == "available"
+                    ).count()
+                    if remaining == 0:
+                        car = db.query(Car).filter(Car.id == unit.car_id).first()
+                        if car:
+                            car.status = "out_of_stock"
+            elif agreement.asset_type == "phone":
+                unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
+                if unit:
+                    unit.status = "sold"
+                    remaining = db.query(PhoneUnit).filter(
+                        PhoneUnit.phone_id == unit.phone_id, 
+                        PhoneUnit.status == "available"
+                    ).count()
+                    if remaining == 0:
+                        phone = db.query(Phone).filter(Phone.id == unit.phone_id).first()
+                        if phone:
+                            phone.status = "out_of_stock"
+
+        db.commit()
+        db.refresh(agreement)
+        return agreement
+
+    def delete_inspection(self, db: Session, user_id: UUID, inspection_id: UUID) -> bool:
+        inspection = db.query(GeneralInspection).filter(
+            GeneralInspection.id == inspection_id,
+            or_(GeneralInspection.user_id == user_id, GeneralInspection.seller_id == user_id)
+        ).first()
+        
+        if not inspection:
+            raise HTTPException(status_code=404, detail="Inspection not found or unauthorized")
+        
+        db.delete(inspection)
+        db.commit()
+        return True
 
 asset_service = AssetService()
