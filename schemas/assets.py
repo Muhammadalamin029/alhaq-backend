@@ -107,3 +107,10 @@ class AssetPaymentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class AgreementPaymentInitialize(BaseModel):
+    amount: Decimal
+    email: str
+
+class AgreementPaymentVerify(BaseModel):
+    reference: str

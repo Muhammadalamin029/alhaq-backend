@@ -12,15 +12,28 @@ from core.email_service import email_service
 logger = logging.getLogger(__name__)
 
 
-def _get_user_email(db: Session, user_id: str) -> Optional[str]:
-    """Get user email address by user ID"""
+def _get_user_contact_info(db: Session, user_id: str) -> tuple[Optional[str], str]:
+    """Get user email address and name by user ID"""
     try:
-        from core.model import User
+        from core.model import User, Profile, SellerProfile
         user = db.query(User).filter(User.id == user_id).first()
-        return user.email if user else None
+        if not user:
+            return None, "User"
+            
+        name = "User"
+        if user.role == "seller":
+            seller = db.query(SellerProfile).filter(SellerProfile.id == user_id).first()
+            if seller:
+                name = seller.business_name
+        else:
+            profile = db.query(Profile).filter(Profile.id == user_id).first()
+            if profile:
+                name = profile.name
+                
+        return user.email, name
     except Exception as e:
-        logger.error(f"Failed to get user email for user_id {user_id}: {e}")
-        return None
+        logger.error(f"Failed to get user info for user_id {user_id}: {e}")
+        return None, "User"
 
 
 def _serialize_channels(channels: Optional[List[str]]) -> str:
@@ -51,20 +64,28 @@ def _parse_data(data_text: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
+    # Always include email channel for all notifications
+    req_channels = payload.get("channels") or []
+    if not req_channels:
+        req_channels = ["in_app", "email"]
+    elif "email" not in req_channels:
+        req_channels.append("email")
+
     notification = Notification(
         user_id=payload["user_id"],
         type=payload["type"],
         title=payload["title"],
         message=payload["message"],
         priority=payload.get("priority", "low"),
-        channels=_serialize_channels(payload.get("channels")),
+        channels=_serialize_channels(req_channels),
         data=_serialize_data(payload.get("data")),
         expires_at=payload.get("expires_at"),
     )
     db.add(notification)
     db.commit()
     db.refresh(notification)
-    # Optional: dispatch email if channel includes 'email' and user preferences allow
+
+    # Email dispatch logic
     channels = set(_parse_channels(notification.channels))
     if 'email' in channels:
         prefs = get_or_create_preferences(db, str(notification.user_id))
@@ -82,37 +103,48 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
             'wishlist_item_back_in_stock': 'promotional_offers',
             'system_announcement': 'system_announcements',
             'promotional_offer': 'promotional_offers',
+            # Asset/Agreement types
+            'inspection_scheduled': 'order_updates',
+            'inspection_confirmed': 'order_updates',
+            'inspection_rejected': 'order_updates',
+            'inspection_complete': 'order_updates',
+            'agreement_update': 'order_updates',
+            'agreement_created': 'order_updates',
+            'agreement_approved': 'order_updates',
+            'agreement_rejected': 'order_updates',
         }
-        group = type_to_group.get(notification.type)
-        allowed = False
-        if group:
-            allowed = bool(getattr(prefs, f"email_{group}", False))
+        group = type_to_group.get(notification.type, 'order_updates')
+        allowed = bool(getattr(prefs, f"email_{group}", True)) # Default to True
+
         if allowed:
-            # Get user's email - try from payload first, then fetch from database
-            to_email = payload.get('to_email') or _get_user_email(db, str(notification.user_id))
+            # Get contact info (email and display name)
+            to_email, user_name = _get_user_contact_info(db, str(notification.user_id))
+            
+            # Allow payload to override email if provided
+            if payload.get('to_email'):
+                to_email = payload.get('to_email')
+
             if to_email:
-                subject = notification.title
-                # Simple HTML body; can be templated later
-                html_body = f"""
-                <html><body>
-                <h3>{notification.title}</h3>
-                <p>{notification.message}</p>
-                </body></html>
-                """
                 try:
-                    # Use async email sending to avoid blocking and timeout issues
+                    # Use professional email template
+                    html_body, text_body = email_service.render_notification_email(
+                        notification_type=notification.type,
+                        title=notification.title,
+                        message=notification.message,
+                        user_name=user_name,
+                        data=_parse_data(notification.data)
+                    )
+
                     from core.tasks import send_notification_email
-                    
-                    # Queue email sending asynchronously to avoid timeout
                     send_notification_email.delay(
                         to_email=to_email,
-                        subject=subject,
+                        subject=notification.title,
                         html_body=html_body,
-                        text_body=html_body
+                        text_body=text_body
                     )
-                    logger.info(f"Notification email queued for {to_email} for notification {notification.id}")
+                    logger.info(f"Notification email queued for {to_email} via Celery")
                 except Exception as e:
-                    logger.error(f"Error queuing notification email to {to_email} for notification {notification.id}: {e}")
+                    logger.error(f"Error queuing email for {to_email}: {e}")
     return notification
 
 

@@ -15,6 +15,8 @@ from schemas.assets import (
     AssetPaymentResponse,
     AssetInspectionComplete,
     AssetAgreementBase,
+    AgreementPaymentInitialize,
+    AgreementPaymentVerify,
 )
 
 
@@ -178,6 +180,18 @@ def get_asset_payments(
     else:
         return asset_service.list_user_payments(db, UUID(current_user["id"]))
 
+@router.get("/payments/{id}", response_model=AssetPaymentResponse)
+def get_payment_details(
+    id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get details for a specific payment"""
+    payment = asset_service.get_payment(db, UUID(current_user["id"]), id)
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
+    return payment
+
 @router.get("/agreements/{id}", response_model=AssetAgreementResponse)
 def get_agreement_details(
     id: UUID,
@@ -189,6 +203,25 @@ def get_agreement_details(
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
     return agreement
+
+@router.post("/agreements/{id}/initialize-payment")
+async def initialize_agreement_payment(
+    id: UUID,
+    data: AgreementPaymentInitialize,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Initialize a Paystack payment for an agreement (Deposit or Installment)"""
+    user_id = UUID(current_user["id"])
+    return asset_service.initialize_agreement_payment(db, user_id, id, data)
+
+@router.post("/agreements/verify-payment")
+async def verify_agreement_payment(
+    data: AgreementPaymentVerify,
+    db: Session = Depends(get_db)
+):
+    """Verify an agreement payment using Paystack reference"""
+    return asset_service.verify_agreement_payment(db, data.reference)
 
 @router.delete("/inspections/{id}")
 def delete_inspection(
