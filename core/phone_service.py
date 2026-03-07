@@ -86,4 +86,40 @@ class PhoneService:
         db.refresh(phone)
         return phone
 
+    def add_units_to_listing(self, db: Session, phone_id: UUID, seller_id: UUID, units_data: List[PhoneUnitCreate]) -> List[PhoneUnit]:
+        phone = db.query(Phone).filter(Phone.id == phone_id, Phone.seller_id == seller_id).first()
+        if not phone:
+            raise HTTPException(status_code=404, detail="Phone listing not found or unauthorized")
+
+        # Check IMEI uniqueness
+        imeis = [u.imei for u in units_data]
+        existing = db.query(PhoneUnit).filter(PhoneUnit.imei.in_(imeis)).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"IMEI {existing.imei} already exists")
+
+        new_units = []
+        for unit_data in units_data:
+            # Handle both Pydantic model and dict
+            data = unit_data.model_dump() if hasattr(unit_data, 'model_dump') else unit_data
+            
+            unit = PhoneUnit(
+                phone_id=phone_id,
+                imei=data['imei'],
+                color=data.get('color'),
+                grade=data.get('grade'),
+                battery_health=data.get('battery_health'),
+                status="available"
+            )
+            db.add(unit)
+            new_units.append(unit)
+
+        # If listing was out of stock, mark it as available again
+        if phone.status == "out_of_stock":
+            phone.status = "available"
+
+        db.commit()
+        for u in new_units:
+            db.refresh(u)
+        return new_units
+
 phone_service = PhoneService()

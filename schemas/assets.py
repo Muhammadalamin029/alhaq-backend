@@ -29,6 +29,7 @@ class AssetInspectionComplete(BaseModel):
     plan_type: str = Field(..., pattern="^(structured|flexible)$")
     duration_months: Optional[int] = None
     monthly_installment: Optional[Decimal] = None
+    unit_id: Optional[UUID] = None
 
 class AssetMini(BaseModel):
     id: UUID

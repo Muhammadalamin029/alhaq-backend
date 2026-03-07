@@ -209,9 +209,24 @@ class AssetService:
         inspection.status = "agreement_pending"
         inspection.agreed_price = data.agreed_price
         inspection.notes = data.notes or inspection.notes
+        if data.unit_id:
+            inspection.unit_id = data.unit_id
         
-        # 2. Create Agreement automatically in pending_review
-        # Find if one exists to avoid duplicates
+        # 2. Update physical asset status
+        if inspection.asset_type == "automotive" and inspection.unit_id:
+            unit = db.query(CarUnit).filter(CarUnit.id == inspection.unit_id).first()
+            if unit:
+                unit.status = "inspected"
+        elif inspection.asset_type == "phone" and inspection.unit_id:
+            unit = db.query(PhoneUnit).filter(PhoneUnit.id == inspection.unit_id).first()
+            if unit:
+                unit.status = "inspected"
+        elif inspection.asset_type == "property":
+            prop = db.query(Property).filter(Property.id == inspection.asset_id).first()
+            if prop:
+                prop.status = "property_inspected"
+
+        # 3. Create or Update Agreement automatically in pending_review
         existing = db.query(GeneralAgreement).filter(GeneralAgreement.inspection_id == inspection_id).first()
         if not existing:
             new_agreement = GeneralAgreement(
@@ -230,6 +245,14 @@ class AssetService:
                 status="pending_review"
             )
             db.add(new_agreement)
+        else:
+            # Update existing agreement with the selected unit and price
+            existing.unit_id = inspection.unit_id
+            existing.total_price = data.agreed_price
+            existing.remaining_balance = data.agreed_price
+            existing.plan_type = data.plan_type
+            existing.duration_months = data.duration_months
+            existing.monthly_installment = data.monthly_installment
 
         db.commit()
         db.refresh(inspection)
@@ -322,12 +345,14 @@ class AssetService:
                 unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
                 if unit:
                     unit.status = "sold"
-                    # Auto-out-of-stock
-                    remaining = db.query(CarUnit).filter(
+                    # Thorough check for remaining units
+                    available_count = db.query(CarUnit).filter(
                         CarUnit.car_id == unit.car_id, 
-                        CarUnit.status == "available"
+                        CarUnit.status == "available",
+                        CarUnit.id != unit.id
                     ).count()
-                    if remaining == 0:
+                    
+                    if available_count == 0:
                         car = db.query(Car).filter(Car.id == unit.car_id).first()
                         if car:
                             car.status = "out_of_stock"
@@ -335,14 +360,20 @@ class AssetService:
                 unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
                 if unit:
                     unit.status = "sold"
-                    remaining = db.query(PhoneUnit).filter(
+                    available_count = db.query(PhoneUnit).filter(
                         PhoneUnit.phone_id == unit.phone_id, 
-                        PhoneUnit.status == "available"
+                        PhoneUnit.status == "available",
+                        PhoneUnit.id != unit.id
                     ).count()
-                    if remaining == 0:
+                    
+                    if available_count == 0:
                         phone = db.query(Phone).filter(Phone.id == unit.phone_id).first()
                         if phone:
                             phone.status = "out_of_stock"
+        elif agreement.asset_type == "property":
+            prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
+            if prop:
+                prop.status = "sold" # Property status already has 'sold' in its Enum definition
 
         db.commit()
         db.refresh(agreement)
