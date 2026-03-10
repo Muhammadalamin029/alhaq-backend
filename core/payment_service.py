@@ -189,6 +189,18 @@ class PaymentService:
                     if agreement.inspection_id:
                         inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
                         if inspection: inspection.status = "agreement_accepted"
+
+                    # Update unit status to final held state
+                    if agreement.unit_id:
+                        if agreement.asset_type == "automotive":
+                            unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
+                            if unit: unit.status = "sold"
+                        elif agreement.asset_type == "phone":
+                            unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
+                            if unit: unit.status = "sold"
+                    elif agreement.asset_type == "property":
+                        prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
+                        if prop: prop.status = "under_financing"
                 else:
                     agreement.remaining_balance = (agreement.remaining_balance or 0) - payment.amount
                     if agreement.remaining_balance <= 0:

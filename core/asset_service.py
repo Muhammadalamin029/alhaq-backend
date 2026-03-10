@@ -377,16 +377,19 @@ class AssetService():
             if inspection:
                 inspection.status = "agreement_accepted"
 
-        # Update asset unit status to 'sold'
+        # Update asset unit status
         if agreement.unit_id:
             if agreement.asset_type == "automotive":
                 unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
                 if unit:
-                    unit.status = "sold"
+                    if unit.status in ["sold", "awaiting_payment", "reserved"]:
+                         raise HTTPException(status_code=400, detail="This specific vehicle unit is already reserved or sold")
+                    
+                    unit.status = "awaiting_payment"
                     # Thorough check for remaining units
                     available_count = db.query(CarUnit).filter(
                         CarUnit.car_id == unit.car_id, 
-                        CarUnit.status == "available",
+                        CarUnit.status.in_(["available", "inspected"]),
                         CarUnit.id != unit.id
                     ).count()
                     
@@ -397,10 +400,13 @@ class AssetService():
             elif agreement.asset_type == "phone":
                 unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
                 if unit:
-                    unit.status = "sold"
+                    if unit.status in ["sold", "awaiting_payment", "reserved"]:
+                         raise HTTPException(status_code=400, detail="This phone unit is already reserved or sold")
+                    
+                    unit.status = "awaiting_payment"
                     available_count = db.query(PhoneUnit).filter(
                         PhoneUnit.phone_id == unit.phone_id, 
-                        PhoneUnit.status == "available",
+                        PhoneUnit.status.in_(["available", "inspected"]),
                         PhoneUnit.id != unit.id
                     ).count()
                     
@@ -411,7 +417,9 @@ class AssetService():
         elif agreement.asset_type == "property":
             prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
             if prop:
-                prop.status = "sold" # Property status already has 'sold' in its Enum definition
+                if prop.status in ["sold", "awaiting_payment", "reserved", "under_financing"]:
+                    raise HTTPException(status_code=400, detail="This property is no longer available")
+                prop.status = "awaiting_payment"
 
         db.commit()
         db.refresh(agreement)
