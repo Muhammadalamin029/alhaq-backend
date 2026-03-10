@@ -23,7 +23,7 @@ class PaystackService:
         
         self.webhook_secret = settings.PAYSTACK_WEBHOOK_SECRET
 
-    def initialize_transaction(self, email: str, amount: int, reference: str, metadata: Optional[Dict] = None) -> Dict[str, Any]:
+    def initialize_transaction(self, email: str, amount: int, reference: str, metadata: Optional[Dict] = None, callback_url: Optional[str] = None) -> Dict[str, Any]:
         """
         Initialize a Paystack transaction
         
@@ -56,8 +56,11 @@ class PaystackService:
                 "email": email,
                 "amount": amount,
                 "reference": reference,
-                "metadata": metadata or {}
+                "metadata": metadata or {},
+                "callback_url": callback_url
             }
+            if not callback_url:
+                 payload.pop("callback_url")
             
             response = requests.post(url, json=payload, headers=self.headers)
             response.raise_for_status()

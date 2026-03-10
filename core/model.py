@@ -28,12 +28,6 @@ class User(Base):
     last_login = Column(TIMESTAMP, nullable=True)
     password_changed_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     
-    # Two-factor authentication (for future use)
-    two_factor_enabled = Column(Boolean, default=False)
-    two_factor_secret = Column(String(255), nullable=True)
-    
-    # Legacy field (keeping for backward compatibility)
-
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
@@ -73,7 +67,6 @@ class Profile(Base):
     wishlists = relationship("Wishlist", back_populates="user")
     stats = relationship("Stats", back_populates="user", uselist=False)
     agreements = relationship("GeneralAgreement", back_populates="user")
-    asset_payments = relationship("GeneralPayment", back_populates="user")
 
 
 # ---------------- SELLER PROFILES ----------------
@@ -242,14 +235,20 @@ class Payment(Base):
 
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True)
+    agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=True)
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=True)
-    amount = Column(DECIMAL(12, 2), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
 
     status = Column(Enum("pending", "completed", "failed",
                     "refunded", name="payment_status"), default="pending")
-    payment_method = Column(String(50), nullable=False)
+    payment_category = Column(Enum("order", "asset_deposit", "asset_installment", "full_pay", 
+                                  name="payment_category"), default="order")
+    # type for internal handling (deposit, installment, etc)
+    payment_type = Column(Enum("order", "deposit", "installment", "full_pay", 
+                               name="asset_payment_type"), nullable=True)
+    payment_method = Column(String(50), nullable=True, default="paystack")
     transaction_id = Column(String(100), unique=True, nullable=False)
     
     # Payment URL fields
@@ -263,6 +262,7 @@ class Payment(Base):
 
     # Relationships
     order = relationship("Order", back_populates="payments")
+    agreement = relationship("GeneralAgreement", back_populates="payments")
     buyer = relationship("Profile", back_populates="payments")
     seller = relationship("SellerProfile", back_populates="payments")
 
@@ -423,8 +423,14 @@ class Notification(Base):
         "phone_rejected",
         "inspection_scheduled",
         "inspection_confirmed",
+        "inspection_rejected",
+        "inspection_complete",
         "property_acquired",
+        "agreement_created",
+        "agreement_approved",
+        "agreement_rejected",
         "agreement_completed",
+        "agreement_update",
         "installment_paid",
         "payment_reminder",
         "installment_due",
@@ -547,6 +553,7 @@ class Property(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Numeric(15, 2), nullable=False)
+    min_deposit_percentage = Column(Numeric(5, 2), default=10)
     location = Column(String(255), nullable=False)
     
     listing_type = Column(Enum("sale", "rental", "professional", name="listing_type"), default="sale")
@@ -642,29 +649,10 @@ class GeneralAgreement(Base):
     seller = relationship("SellerProfile")
     user = relationship("Profile", back_populates="agreements")
     inspection = relationship("GeneralInspection")
-    payments = relationship("GeneralPayment", back_populates="agreement")
+    payments = relationship("Payment", back_populates="agreement")
     car = relationship("Car", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Car.id, GeneralAgreement.asset_type=='automotive')", back_populates="agreements", overlaps="agreements")
     property = relationship("Property", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Property.id, GeneralAgreement.asset_type=='property')", back_populates="agreements", overlaps="agreements")
     phone = relationship("Phone", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Phone.id, GeneralAgreement.asset_type=='phone')", back_populates="agreements", overlaps="agreements")
-
-
-class GeneralPayment(Base):
-    __tablename__ = "general_payments"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=False)
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    
-    amount = Column(Numeric(15, 2), nullable=False)
-    paystack_ref = Column(String(100), unique=True, nullable=False)
-    payment_type = Column(Enum("deposit", "installment", "full_pay", name="asset_payment_type"), nullable=False)
-    status = Column(Enum("success", "failed", "pending", name="asset_payment_status"), default="pending")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-
-    # Relationships
-    agreement = relationship("GeneralAgreement", back_populates="payments")
-    user = relationship("Profile", back_populates="asset_payments")
 
 
 # ---------------- PHONES (NEW) ----------------

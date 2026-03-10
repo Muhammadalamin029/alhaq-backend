@@ -88,7 +88,6 @@ class UserProfileResponse(BaseModel):
     updated_at: datetime
     last_login: Optional[datetime] = None
     password_changed_at: datetime
-    two_factor_enabled: bool
     
     class Config:
         from_attributes = True

@@ -112,6 +112,19 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
             'agreement_created': 'order_updates',
             'agreement_approved': 'order_updates',
             'agreement_rejected': 'order_updates',
+            'agreement_completed': 'order_updates',
+            'car_approved': 'order_updates',
+            'car_rejected': 'order_updates',
+            'phone_approved': 'order_updates',
+            'phone_rejected': 'order_updates',
+            'property_acquired': 'order_updates',
+            'installment_paid': 'payment_updates',
+            'payment_successful': 'payment_updates',
+            'payment_failed': 'payment_updates',
+            'payment_reminder': 'payment_updates',
+            'installment_due': 'payment_updates',
+            'installment_defaulted': 'payment_updates',
+            'inspection_complete': 'order_updates',
         }
         group = type_to_group.get(notification.type, 'order_updates')
         allowed = bool(getattr(prefs, f"email_{group}", True)) # Default to True

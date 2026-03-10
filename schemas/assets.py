@@ -36,6 +36,7 @@ class AssetMini(BaseModel):
     type: str
     title: str # Brand + Model or Property Title
     price: Decimal
+    min_deposit_percentage: Optional[Decimal] = 10
     image_url: Optional[str] = None
 
     class Config:
@@ -97,11 +98,14 @@ class AssetAgreementResponse(AssetAgreementBase):
 
 class AssetPaymentResponse(BaseModel):
     id: UUID
-    agreement_id: UUID
-    user_id: UUID
+    agreement_id: Optional[UUID] = None
+    order_id: Optional[UUID] = None
+    buyer_id: UUID
+    seller_id: Optional[UUID] = None
     amount: Decimal
-    paystack_ref: str
-    payment_type: str
+    reference: str
+    payment_category: str
+    payment_type: Optional[str] = None
     status: str
     created_at: datetime
 

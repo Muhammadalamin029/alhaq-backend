@@ -5,9 +5,12 @@ from datetime import datetime
 from uuid import UUID
 
 class PaymentInitializeRequest(BaseModel):
-    order_id: str
-    amount: int = Field(..., gt=0, description="Amount in kobo (NGN)")
+    order_id: Optional[UUID] = None
+    agreement_id: Optional[UUID] = None
+    category: str = Field("order", pattern="^(order|asset_deposit|asset_installment)$")
+    amount: float = Field(..., gt=0, description="Amount in Naira (NGN)")
     email: str = Field(..., description="Customer email")
+    callback_url: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
 class PaymentInitializeResponse(BaseModel):
@@ -56,11 +59,14 @@ class BankResponse(BaseModel):
 
 class PaymentResponse(BaseModel):
     id: UUID
-    order_id: UUID
+    order_id: Optional[UUID] = None
+    agreement_id: Optional[UUID] = None
     buyer_id: UUID
-    seller_id: UUID
+    seller_id: Optional[UUID] = None
     amount: Decimal
     status: str
+    payment_category: str
+    payment_type: Optional[str] = None
     payment_method: str
     transaction_id: str
     created_at: datetime

@@ -7,18 +7,13 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from core.model import (
-    GeneralInspection, 
-    GeneralAgreement, 
-    GeneralPayment,
-    Car, 
-    Property, 
-    Phone,
-    CarUnit,
-    PhoneUnit,
-    AssetImage
+    Car, CarUnit, Property, Phone, PhoneUnit, 
+    GeneralInspection, GeneralAgreement, Payment, AssetImage,
+    Profile, User, SellerProfile
 )
 from core.notifications_service import create_notification
 from core.paystack_service import paystack_service
+from core.payment_service import payment_service
 from schemas.assets import (
     AssetInspectionSchedule, 
     AssetInspectionReview, 
@@ -33,6 +28,7 @@ class AssetService():
         """Helper to fetch basic asset details for nested response"""
         title = ""
         price = Decimal(0)
+        min_deposit = Decimal(10)
         image_url = None
         
         if asset_type == "automotive":
@@ -40,16 +36,19 @@ class AssetService():
             if asset:
                 title = f"{asset.brand} {asset.model}"
                 price = asset.price
+                min_deposit = asset.min_deposit_percentage
         elif asset_type == "property":
             asset = db.query(Property).filter(Property.id == asset_id).first()
             if asset:
                 title = asset.title
                 price = asset.price
+                min_deposit = asset.min_deposit_percentage
         elif asset_type == "phone":
             asset = db.query(Phone).filter(Phone.id == asset_id).first()
             if asset:
                 title = f"{asset.brand} {asset.model}"
                 price = asset.price
+                min_deposit = asset.min_deposit_percentage
         
         # Get first image
         img = db.query(AssetImage).filter(
@@ -63,7 +62,7 @@ class AssetService():
         if img:
             image_url = img.image_url
             
-        return AssetMini(id=asset_id, type=asset_type, title=title, price=price, image_url=image_url)
+        return AssetMini(id=asset_id, type=asset_type, title=title, price=price, min_deposit_percentage=min_deposit, image_url=image_url)
 
     def schedule_inspection(self, db: Session, user_id: UUID, data: AssetInspectionSchedule) -> GeneralInspection:
         # Get seller_id from asset
@@ -193,21 +192,18 @@ class AssetService():
             agreement.asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
         return agreement
 
-    def list_seller_payments(self, db: Session, seller_id: UUID) -> List[GeneralPayment]:
-        return db.query(GeneralPayment).join(GeneralAgreement).filter(GeneralAgreement.seller_id == seller_id).order_by(GeneralPayment.created_at.desc()).all()
+    def list_seller_payments(self, db: Session, seller_id: UUID) -> List[Payment]:
+        return db.query(Payment).filter(Payment.seller_id == seller_id, Payment.agreement_id != None).order_by(Payment.created_at.desc()).all()
 
-    def list_user_payments(self, db: Session, user_id: UUID) -> List[GeneralPayment]:
-        return db.query(GeneralPayment).filter(GeneralPayment.user_id == user_id).order_by(GeneralPayment.created_at.desc()).all()
+    def list_user_payments(self, db: Session, user_id: UUID) -> List[Payment]:
+        return db.query(Payment).filter(Payment.buyer_id == user_id, Payment.agreement_id != None).order_by(Payment.created_at.desc()).all()
 
-    def get_payment(self, db: Session, user_id: UUID, payment_id: UUID) -> GeneralPayment:
-        payment = db.query(GeneralPayment).filter(
-            GeneralPayment.id == payment_id,
+    def get_payment(self, db: Session, user_id: UUID, payment_id: UUID) -> Payment:
+        payment = db.query(Payment).filter(
+            Payment.id == payment_id,
             or_(
-                GeneralPayment.user_id == user_id,
-                db.query(GeneralAgreement).filter(
-                    GeneralAgreement.id == GeneralPayment.agreement_id,
-                    GeneralAgreement.seller_id == user_id
-                ).exists()
+                Payment.buyer_id == user_id,
+                Payment.seller_id == user_id
             )
         ).first()
         
@@ -276,6 +272,17 @@ class AssetService():
 
         db.commit()
         db.refresh(inspection)
+
+        # Notify Seller
+        create_notification(db, {
+            "user_id": str(inspection.seller_id),
+            "type": "inspection_complete",
+            "title": "Inspection Completed",
+            "message": f"A customer has completed the inspection for your {inspection.asset_type}. An agreement is now pending your review.",
+            "priority": "medium",
+            "channels": ["in_app", "email"]
+        })
+
         return inspection
 
     def create_agreement(self, db: Session, user_id: UUID, data: AssetAgreementBase, is_seller: bool = True) -> GeneralAgreement:
@@ -336,6 +343,17 @@ class AssetService():
 
         db.commit()
         db.refresh(new_agreement)
+
+        # Notify Buyer
+        create_notification(db, {
+            "user_id": str(new_agreement.user_id),
+            "type": "agreement_created",
+            "title": "Agreement Created",
+            "message": f"Your agreement for the {new_agreement.asset_type} has been created and is now pending seller review.",
+            "priority": "medium",
+            "channels": ["in_app", "email"]
+        })
+
         return new_agreement
 
     def approve_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID) -> GeneralAgreement:
@@ -397,6 +415,17 @@ class AssetService():
 
         db.commit()
         db.refresh(agreement)
+
+        # Notify Buyer
+        create_notification(db, {
+            "user_id": str(agreement.user_id),
+            "type": "agreement_approved",
+            "title": "Agreement Approved!",
+            "message": f"Your agreement for the {agreement.asset_type} has been approved by the seller. Please proceed to pay your deposit to activate it.",
+            "priority": "high",
+            "channels": ["in_app", "email"]
+        })
+
         return agreement
 
     def delete_inspection(self, db: Session, user_id: UUID, inspection_id: UUID) -> bool:
@@ -434,6 +463,17 @@ class AssetService():
 
         db.commit()
         db.refresh(agreement)
+
+        # Notify Buyer
+        create_notification(db, {
+            "user_id": str(agreement.user_id),
+            "type": "agreement_rejected",
+            "title": "Agreement Declined",
+            "message": f"The seller has declined the agreement terms for the {agreement.asset_type}. You can try scheduling another inspection to renegotiate.",
+            "priority": "high",
+            "channels": ["in_app", "email"]
+        })
+
         return agreement
 
     def initialize_agreement_payment(self, db: Session, user_id: UUID, agreement_id: UUID, data: AgreementPaymentInitialize) -> Dict[str, Any]:
@@ -448,126 +488,35 @@ class AssetService():
         # Check if it's the first payment (deposit) - simplified check
         is_deposit = (agreement.deposit_paid or 0) == 0
         payment_type = "deposit" if is_deposit else "installment"
-        
-        # Unique reference
-        import uuid
-        reference = f"AGR_{uuid.uuid4().hex[:10].upper()}"
 
-        # Check for existing pending payment to avoid duplicates
-        payment = db.query(GeneralPayment).filter(
-            GeneralPayment.agreement_id == agreement_id,
-            GeneralPayment.user_id == user_id,
-            GeneralPayment.status == "pending"
-        ).first()
-
-        if payment:
-            # Update existing pending payment with new reference and amount
-            payment.amount = data.amount
-            payment.paystack_ref = reference
-            payment.payment_type = payment_type
-        else:
-            # Create new pending payment record
-            payment = GeneralPayment(
-                agreement_id=agreement_id,
-                user_id=user_id,
-                amount=data.amount,
-                paystack_ref=reference,
-                payment_type=payment_type,
-                status="pending"
-            )
-            db.add(payment)
+        # Check for minimum deposit if it's a deposit payment
+        if is_deposit:
+            # Get asset min deposit info
+            asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+            min_percent = asset.min_deposit_percentage if asset else 10
+            min_amount = agreement.total_price * (Decimal(str(min_percent)) / 100)
+            
+            if data.amount < min_amount:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Initial deposit must be at least {min_percent}% (₦{min_amount:,.2f})"
+                )
         
-        # Initialize Paystack (expects amount in kobo)
-        amount_kobo = int(data.amount * 100)
-        paystack_res = paystack_service.initialize_transaction(
+        # Use unified PaymentService for initialization
+        category = "asset_deposit" if payment_type == "deposit" else "asset_installment"
+        
+        return payment_service.initialize_payment(
+            db=db,
+            user_id=str(user_id),
             email=data.email,
-            amount=amount_kobo,
-            reference=reference,
-            metadata={
-                "agreement_id": str(agreement_id),
-                "payment_type": payment_type,
-                "user_id": str(user_id)
-            }
+            amount_kobo=int(data.amount * 100),
+            category=category,
+            agreement_id=str(agreement_id),
+            metadata={"payment_type": payment_type}
         )
-        
-        db.commit()
-        return paystack_res["data"]
 
     def verify_agreement_payment(self, db: Session, reference: str) -> Dict[str, Any]:
-        # 1. Verify with Paystack
-        paystack_res = paystack_service.verify_transaction(reference)
-        
-        if not paystack_res.get("status"):
-             return paystack_res
-
-        transaction_data = paystack_res.get("data", {})
-        transaction_status = transaction_data.get("status")
-
-        # 2. Get payment record
-        payment = db.query(GeneralPayment).filter(GeneralPayment.paystack_ref == reference).first()
-
-        if transaction_status == "success":
-            # Continue to successful processing below
-            pass
-        elif transaction_status in ["pending", "ongoing", "processing", "queued"]:
-            # If still pending, just return the response without failing the record locally
-            if payment:
-                payment.status = "pending"
-                db.commit()
-            return paystack_res
-        else:
-            # Explicit failure (failed, abandoned, reversed, etc.)
-            if payment:
-                payment.status = "failed"
-                db.commit()
-            return paystack_res
-
-        # 3. Find payment record and process if successful
-        if not payment:
-            return paystack_res
-        
-        if payment.status == "success":
-            return paystack_res # Already processed
-
-        # 3. Update Statuses
-        payment.status = "success"
-        
-        agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == payment.agreement_id).first()
-        if agreement:
-            if payment.payment_type == "deposit":
-                agreement.deposit_paid = (agreement.deposit_paid or 0) + payment.amount
-                agreement.remaining_balance = (agreement.remaining_balance or agreement.total_price) - payment.amount
-                # Transition agreement to active upon successful deposit
-                agreement.status = "active"
-                
-                # Update inspection status
-                if agreement.inspection_id:
-                    inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
-                    if inspection:
-                        inspection.status = "agreement_accepted"
-            else:
-                agreement.remaining_balance = (agreement.remaining_balance or 0) - payment.amount
-                if agreement.remaining_balance <= 0:
-                    agreement.status = "completed"
-
-            # Notify parties
-            create_notification(db, {
-                "user_id": str(agreement.user_id),
-                "type": "payment_successful",
-                "title": "Payment Confirmed",
-                "message": f"Your payment of ₦{payment.amount:,.2f} for your {agreement.asset_type} agreement has been confirmed. Your agreement is now active.",
-                "priority": "high"
-            })
-            
-            create_notification(db, {
-                "user_id": str(agreement.seller_id),
-                "type": "payment_successful",
-                "title": "Payment Received",
-                "message": f"You have received a payment of ₦{payment.amount:,.2f} for your {agreement.asset_type} listing.",
-                "priority": "medium"
-            })
-
-        db.commit()
-        return paystack_res
+        """Verify an agreement payment using the unified payment service"""
+        return payment_service.verify_transaction(db, reference)
 
 asset_service = AssetService()

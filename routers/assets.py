@@ -204,24 +204,6 @@ def get_agreement_details(
         raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
     return agreement
 
-@router.post("/agreements/{id}/initialize-payment")
-async def initialize_agreement_payment(
-    id: UUID,
-    data: AgreementPaymentInitialize,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    """Initialize a Paystack payment for an agreement (Deposit or Installment)"""
-    user_id = UUID(current_user["id"])
-    return asset_service.initialize_agreement_payment(db, user_id, id, data)
-
-@router.post("/agreements/verify-payment")
-async def verify_agreement_payment(
-    data: AgreementPaymentVerify,
-    db: Session = Depends(get_db)
-):
-    """Verify an agreement payment using Paystack reference"""
-    return asset_service.verify_agreement_payment(db, data.reference)
 
 @router.delete("/inspections/{id}")
 def delete_inspection(

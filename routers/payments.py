@@ -1,15 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import Optional
-import hashlib
-import hmac
+from typing import Optional, List
 import json
+from uuid import UUID
 
 from core.auth import role_required, get_current_user
 from db.session import get_db
 from core.paystack_service import paystack_service
-from core.model import Payment, Order, OrderItem, Product, User
+from core.payment_service import payment_service
+from core.model import Payment, Order
 from schemas.payment import (
     PaymentInitializeRequest,
     PaymentInitializeResponse,
@@ -38,413 +37,51 @@ async def initialize_payment(
     user=Depends(role_required(["customer"])),
     db: Session = Depends(get_db)
 ):
-    """Initialize a Paystack payment"""
+    """Unified payment initialization hub"""
     try:
-        # Get the order
-        order = db.query(Order).filter(
-            Order.id == request.order_id,
-            Order.buyer_id == user["id"]
-        ).first()
-        
-        if not order:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Order not found"
-            )
-        
-        if order.status not in ["pending", "processing"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Order is not in pending or processing status"
-            )
-        
-        # Check if payment URL already exists and reuse it
-        if order.payment_url and order.status == "processing":
-            payment_logger.info(f"Reusing existing payment URL for order {order.id}")
-            return PaymentInitializeResponse(
-                success=True,
-                message="Payment URL retrieved successfully",
-                data={
-                    "authorization_url": order.payment_url,
-                    "access_code": order.payment_reference,
-                    "reference": order.payment_reference
-                }
-            )
-        
-        # Generate unique reference
-        import uuid
-        reference = f"DEMIGHT_{uuid.uuid4().hex[:10].upper()}"
-        
-        # Initialize Paystack transaction
-        try:
-            paystack_response = paystack_service.initialize_transaction(
-                email=request.email,
-                amount=request.amount,
-                reference=reference,
-                metadata={
-                    "order_id": str(order.id),
-                    "user_id": user["id"],
-                    "user_email": request.email
-                }
-            )
-            
-            if not paystack_response.get("status"):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Failed to initialize payment"
-                )
-        except Exception as e:
-            payment_logger.error(f"Paystack initialization error: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Payment service error: {str(e)}"
-            )
-        
-        # Store payment record
-        # Try to get seller_id from the first order item
-        # In a multi-vendor system, you might need to create separate payments for each seller
-        seller_id = None
-        if order.order_items:
-            first_item = order.order_items[0]
-            if hasattr(first_item, 'product') and first_item.product:
-                seller_id = first_item.product.seller_id
-        
-        # If no seller_id found and the column is NOT NULL, we need to handle this
-        # For now, we'll try to create the payment and handle the error if it fails
-        try:
-            payment = Payment(
-                order_id=order.id,
-                buyer_id=user["id"],
-                seller_id=seller_id,  # Will be None if no seller found
-                amount=request.amount / 100,  # Convert from kobo to NGN
-                status="pending",
-                payment_method="paystack",
-                transaction_id=reference,
-                authorization_url=paystack_response["data"]["authorization_url"],
-                access_code=paystack_response["data"]["access_code"],
-                reference=reference
-            )
-        except Exception as db_error:
-            if "seller_id" in str(db_error) and "null value" in str(db_error):
-                # Database still has NOT NULL constraint on seller_id
-                payment_logger.error(f"Database constraint error: {db_error}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Payment system configuration error. Please contact support."
-                )
-            else:
-                raise db_error
-        db.add(payment)
-        
-        # Update order status to processing and store payment URLs
-        order.status = "processing"
-        order.payment_url = paystack_response["data"]["authorization_url"]
-        order.payment_reference = reference
-        order.payment_initialized_at = func.current_timestamp()
-        
-        # Update order items status to processing as well
-        from core.order import OrderService
-        order_service = OrderService()
-        order_service.update_all_order_items_status(db, order.id, "processing")
-        
-        db.commit()
-        
-        payment_logger.info(f"Payment initialized for order {order.id}: {reference}")
+        data = payment_service.initialize_payment(
+            db=db,
+            user_id=user["id"],
+            email=request.email,
+            amount_kobo=int(request.amount * 100),
+            category=request.category,
+            order_id=str(request.order_id) if request.order_id else None,
+            agreement_id=str(request.agreement_id) if request.agreement_id else None,
+            callback_url=request.callback_url,
+            metadata=request.metadata
+        )
         
         return PaymentInitializeResponse(
             success=True,
             message="Payment initialized successfully",
-            data=paystack_response["data"]
+            data=data
         )
-        
     except HTTPException:
         raise
     except Exception as e:
-        log_error(payment_logger, f"Failed to initialize payment for order {request.order_id}", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initialize payment"
-        )
+        payment_logger.error(f"Failed to initialize payment: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/verify", response_model=PaymentVerifyResponse)
 async def verify_payment(
     request: PaymentVerifyRequest,
-    user=Depends(role_required(["customer"])),
+    user=Depends(role_required(["customer", "seller"])),
     db: Session = Depends(get_db)
 ):
-    """Verify a Paystack payment"""
+    """Unified payment verification hub"""
     try:
-        # Verify with Paystack
-        paystack_response = paystack_service.verify_transaction(request.reference)
-        
-        if not paystack_response.get("status"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Payment verification failed"
-            )
-        
-        transaction_data = paystack_response["data"]
-        
-        # Get payment record
-        payment = db.query(Payment).filter(
-            Payment.transaction_id == request.reference
-        ).first()
-        
-        if not payment:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Payment record not found"
-            )
-        
-        # Handle different payment statuses from Paystack
-        transaction_status = transaction_data["status"]
-        
-        if transaction_status == "success":
-            # Payment successful - update to completed
-            payment.status = "completed"
-            
-            # Update order status
-            order = db.query(Order).filter(Order.id == payment.order_id).first()
-            if order:
-                try:
-                    old_status = order.status
-                    order.status = "paid"
-                    
-                    # Update order items status to paid as well
-                    from core.order import OrderService
-                    order_service = OrderService()
-                    order_service.update_all_order_items_status(db, order.id, "paid")
-                    
-                    # Update seller balances for this order
-                    from core.seller_payout_service import seller_payout_service
-                    order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
-                    
-                    # Log the status change for debugging
-                    payment_logger.info(f"Order {order.id} status changed from '{old_status}' to 'paid' after successful payment verification")
-                    
-                except Exception as e:
-                    payment_logger.error(f"Failed to update order {order.id} status to 'paid': {e}")
-                    # Don't raise the exception here as payment is still successful
-            else:
-                payment_logger.error(f"Order {payment.order_id} not found when trying to update status to 'paid'")
-            
-            # Create notification for successful payment (Customer)
-            try:
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_successful",
-                    "title": "Payment Successful",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} has been processed successfully. Order #{str(order.id)[:8]} is now being processed.",
-                    "priority": "high",
-                    "channels": ["in_app", "email"],
-                    "to_email": request.email if hasattr(request, 'email') else None,
-                    "data": {
-                        "order_id": str(order.id),
-                        "payment_id": str(payment.id),
-                        "amount": float(payment.amount)
-                    }
-                })
-            except Exception as e:
-                payment_logger.error(f"Failed to create payment success notification: {e}")
-                
-                # Create notifications for sellers involved in this order
-                try:
-                    # Get all sellers involved in this order
-                    order_items = db.query(OrderItem).join(Product).filter(OrderItem.order_id == order.id).all()
-                    sellers_involved = set()
-                    for item in order_items:
-                        if item.product and item.product.seller_id:
-                            sellers_involved.add(str(item.product.seller_id))
-                    
-                    # Send notification to each seller
-                    for seller_id in sellers_involved:
-                        # Get seller's items in this order
-                        seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
-                        seller_total = sum(item.quantity * item.price for item in seller_items)
-                        
-                        # Create seller-specific message showing their amount only
-                        seller_message = f"Payment of ₦{seller_total:,.2f} received for your items in order #{str(order.id)[:8]}. Order is now being processed."
-                        if len(sellers_involved) > 1:
-                            seller_message += f" (This order involves {len(sellers_involved)} sellers - you received ₦{seller_total:,.2f})"
-                        
-                        create_notification(db, {
-                            "user_id": seller_id,
-                            "type": "payment_successful",
-                            "title": "New Order Payment Received",
-                            "message": seller_message,
-                            "priority": "high",
-                            "channels": ["in_app", "email"],
-                            "data": {
-                                "order_id": str(order.id),
-                                "payment_id": str(payment.id),
-                                "amount": float(seller_total),
-                                "total_order_amount": float(payment.amount),
-                                "is_seller_notification": True,
-                                "sellers_count": len(sellers_involved),
-                                "is_multi_seller": len(sellers_involved) > 1
-                            }
-                        })
-                        
-                    payment_logger.info(f"Sent payment notifications to {len(sellers_involved)} sellers for order {order.id}")
-                    
-                except Exception as e:
-                    payment_logger.error(f"Failed to create seller payment notifications: {e}")
-            
-            payment_logger.info(f"Payment verified successfully: {request.reference}")
-            
-        elif transaction_status == "failed":
-            # Payment failed
-            payment.status = "failed"
-            
-            # Create notification for failed payment
-            try:
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_failed",
-                    "title": "Payment Failed",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} could not be processed. Please try again or contact support.",
-                    "priority": "high",
-                    "channels": ["in_app", "email"],
-                    "to_email": request.email if hasattr(request, 'email') else None,
-                    "data": {
-                        "order_id": str(payment.order_id),
-                        "payment_id": str(payment.id),
-                        "amount": float(payment.amount)
-                    }
-                })
-            except Exception as e:
-                payment_logger.error(f"Failed to create payment failure notification: {e}")
-            
-            payment_logger.warning(f"Payment verification failed: {request.reference}")
-            
-        elif transaction_status == "abandoned":
-            # Payment abandoned by customer
-            payment.status = "failed"  # Mark as failed since it was abandoned
-            
-            # Create notification for abandoned payment
-            try:
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_failed",
-                    "title": "Payment Abandoned",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} was not completed. Please try again to complete your order.",
-                    "priority": "medium",
-                    "channels": ["in_app", "email"],
-                    "to_email": request.email if hasattr(request, 'email') else None,
-                    "data": {
-                        "order_id": str(payment.order_id),
-                        "payment_id": str(payment.id),
-                        "amount": float(payment.amount),
-                        "reason": "abandoned"
-                    }
-                })
-            except Exception as e:
-                payment_logger.error(f"Failed to create payment abandonment notification: {e}")
-            
-            payment_logger.warning(f"Payment abandoned: {request.reference}")
-            
-        elif transaction_status == "reversed":
-            # Payment reversed (refunded or chargeback)
-            payment.status = "refunded"
-            
-            # Update order status to cancelled if it was paid
-            order = db.query(Order).filter(Order.id == payment.order_id).first()
-            if order and order.status == "paid":
-                order.status = "cancelled"
-                
-                # Update order items status to cancelled as well
-                from core.order import OrderService
-                order_service = OrderService()
-                order_service.update_all_order_items_status(db, order.id, "cancelled")
-            
-            # Create notification for reversed payment
-            try:
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_failed",
-                    "title": "Payment Reversed",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} has been reversed. Your order has been cancelled. Please contact support for more information.",
-                    "priority": "high",
-                    "channels": ["in_app", "email"],
-                    "to_email": request.email if hasattr(request, 'email') else None,
-                    "data": {
-                        "order_id": str(payment.order_id),
-                        "payment_id": str(payment.id),
-                        "amount": float(payment.amount),
-                        "reason": "reversed"
-                    }
-                })
-            except Exception as e:
-                payment_logger.error(f"Failed to create payment reversal notification: {e}")
-            
-            payment_logger.warning(f"Payment reversed: {request.reference}")
-            
-        elif transaction_status in ["pending", "ongoing", "processing", "queued"]:
-            # Payment still in progress - keep as pending
-            payment.status = "pending"
-            
-            # Create notification for pending payment
-            try:
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_pending",
-                    "title": "Payment Pending",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} is still being processed. We'll notify you once it's confirmed.",
-                    "priority": "medium",
-                    "channels": ["in_app"],
-                    "data": {
-                        "order_id": str(payment.order_id),
-                        "payment_id": str(payment.id),
-                        "amount": float(payment.amount),
-                        "status": transaction_status
-                    }
-                })
-            except Exception as e:
-                payment_logger.error(f"Failed to create payment pending notification: {e}")
-            
-            payment_logger.info(f"Payment still pending: {request.reference} (status: {transaction_status})")
-            
-        else:
-            # Unknown status - log and mark as failed
-            payment.status = "failed"
-            payment_logger.warning(f"Unknown payment status: {transaction_status} for reference: {request.reference}")
-            
-            # Create notification for unknown status
-            try:
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_failed",
-                    "title": "Payment Status Unknown",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} has an unknown status. Please contact support for assistance.",
-                    "priority": "high",
-                    "channels": ["in_app", "email"],
-                    "to_email": request.email if hasattr(request, 'email') else None,
-                    "data": {
-                        "order_id": str(payment.order_id),
-                        "payment_id": str(payment.id),
-                        "amount": float(payment.amount),
-                        "status": transaction_status
-                    }
-                })
-            except Exception as e:
-                payment_logger.error(f"Failed to create unknown status notification: {e}")
-        
-        db.commit()
+        ps_res = payment_service.verify_transaction(db, request.reference)
+        is_success = ps_res.get("status", False) and ps_res.get("data", {}).get("status") == "success"
         
         return PaymentVerifyResponse(
-            success=True,
-            message="Payment verified successfully",
-            data=transaction_data
+            success=is_success,
+            message=ps_res.get("message", "Verification finished"),
+            data=ps_res.get("data", {})
         )
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        log_error(payment_logger, f"Failed to verify payment {request.reference}", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to verify payment"
-        )
+        payment_logger.error(f"Verification error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Verification failed")
+
 
 @router.post("/webhook")
 async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
@@ -497,114 +134,17 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
             return {"status": "ignored", "reason": "already_processed"}
         
         if event == "charge.success":
-            # Handle successful payment
-            payment.status = "completed"
+            # Handle successful payment through unified service
+            payment_service.verify_transaction(db, reference)
+            payment_logger.info(f"Webhook: Payment verified for {reference}")
             
-            # Update order status
-            order = db.query(Order).filter(Order.id == payment.order_id).first()
-            if order:
-                old_status = order.status
-                order.status = "paid"
-                
-                # Update order items status to paid as well
-                from core.order import OrderService
-                order_service = OrderService()
-                order_service.update_all_order_items_status(db, order.id, "paid")
-                
-                # Update seller balances for this order
-                from core.seller_payout_service import seller_payout_service
-                order_service.update_seller_balances_for_order(db, order.id, "paid", old_status)
-                
-                # Create notification for successful payment (Customer)
-                try:
-                    create_notification(db, {
-                        "user_id": str(payment.buyer_id),
-                        "type": "payment_successful",
-                        "title": "Payment Successful",
-                        "message": f"Your payment of ₦{payment.amount:,.2f} has been processed successfully. Order #{str(order.id)[:8]} is now being processed.",
-                        "priority": "high",
-                        "channels": ["in_app", "email"],
-                        "data": {
-                            "order_id": str(order.id),
-                            "payment_id": str(payment.id),
-                            "amount": float(payment.amount)
-                        }
-                    })
-                except Exception as e:
-                    payment_logger.error(f"Failed to create webhook payment success notification: {e}")
-                
-                # Create notifications for sellers involved in this order
-                try:
-                    # Get all sellers involved in this order
-                    order_items = db.query(OrderItem).join(Product).filter(OrderItem.order_id == order.id).all()
-                    sellers_involved = set()
-                    for item in order_items:
-                        if item.product and item.product.seller_id:
-                            sellers_involved.add(str(item.product.seller_id))
-                    
-                    # Send notification to each seller
-                    for seller_id in sellers_involved:
-                        # Get seller's items in this order
-                        seller_items = [item for item in order_items if item.product and str(item.product.seller_id) == seller_id]
-                        seller_total = sum(item.quantity * item.price for item in seller_items)
-                        
-                        # Create seller-specific message showing their amount only
-                        seller_message = f"Payment of ₦{seller_total:,.2f} received for your items in order #{str(order.id)[:8]}. Order is now being processed."
-                        if len(sellers_involved) > 1:
-                            seller_message += f" (This order involves {len(sellers_involved)} sellers - you received ₦{seller_total:,.2f})"
-                        
-                        create_notification(db, {
-                            "user_id": seller_id,
-                            "type": "payment_successful",
-                            "title": "New Order Payment Received",
-                            "message": seller_message,
-                            "priority": "high",
-                            "channels": ["in_app", "email"],
-                            "data": {
-                                "order_id": str(order.id),
-                                "payment_id": str(payment.id),
-                                "amount": float(seller_total),
-                                "total_order_amount": float(payment.amount),
-                                "is_seller_notification": True,
-                                "sellers_count": len(sellers_involved),
-                                "is_multi_seller": len(sellers_involved) > 1
-                            }
-                        })
-                        
-                    payment_logger.info(f"Webhook: Sent payment notifications to {len(sellers_involved)} sellers for order {order.id}")
-                    
-                except Exception as e:
-                    payment_logger.error(f"Webhook: Failed to create seller payment notifications: {e}")
-            
-            db.commit()
-            payment_logger.info(f"Webhook: Payment completed for {reference}")
-            
-        elif event == "charge.failed":
-            # Handle failed payment
-            payment.status = "failed"
-            db.commit()
-            payment_logger.warning(f"Webhook: Payment failed for {reference}")
-            
-        elif event == "charge.dispute.create":
-            # Handle dispute creation
-            payment.status = "disputed"
-            db.commit()
-            payment_logger.warning(f"Webhook: Payment disputed for {reference}")
-            
-        elif event == "transfer.success":
-            # Handle successful transfer (seller payout)
+        elif event in ["transfer.success", "transfer.failed"]:
+            # Handle payout transfers
             from core.seller_payout_service import seller_payout_service
             seller_payout_service.handle_payout_webhook(db, data)
-            payment_logger.info(f"Webhook: Transfer successful for {reference}")
-            
-        elif event == "transfer.failed":
-            # Handle failed transfer (seller payout)
-            from core.seller_payout_service import seller_payout_service
-            seller_payout_service.handle_payout_webhook(db, data)
-            payment_logger.warning(f"Webhook: Transfer failed for {reference}")
+            payment_logger.info(f"Webhook: Transfer {event} processed for {reference}")
             
         else:
-            # Log unhandled events
             payment_logger.info(f"Unhandled webhook event: {event} for reference: {reference}")
         
         return {"status": "success"}
