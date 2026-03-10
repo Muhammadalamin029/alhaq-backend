@@ -100,6 +100,7 @@ class AdminSellerListResponse(BaseModel):
     id: UUID
     email: str  # From User
     business_name: str
+    seller_type: Optional[str] = None
     description: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
@@ -109,6 +110,8 @@ class AdminSellerListResponse(BaseModel):
     total_products: int
     total_orders: int
     total_revenue: Decimal
+    available_balance: Decimal
+    pending_balance: Decimal
     created_at: datetime
     updated_at: datetime
     user_locked: Optional[datetime] = None  # From User.locked_until
@@ -208,6 +211,13 @@ class AdminDashboardStats(BaseModel):
     locked_users: int
     out_of_stock_products: int
     pending_orders: int
+    
+    # Asset stats
+    total_inspections: int
+    total_agreements: int
+    pending_inspections: int
+    pending_agreements: int
+    active_agreements: int
     
     class Config:
         from_attributes = True

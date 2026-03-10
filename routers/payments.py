@@ -8,7 +8,7 @@ from core.auth import role_required, get_current_user
 from db.session import get_db
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
-from core.model import Payment, Order
+from core.model import Payment, Order, SellerProfile
 from schemas.payment import (
     PaymentInitializeRequest,
     PaymentInitializeResponse,
@@ -271,12 +271,24 @@ async def list_payments(
         # Admin can see all payments
         
         total = query.count()
-        payments = query.offset((page - 1) * limit).limit(limit).all()
+        payments = query.order_by(Payment.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
         
+        # Populate seller info manually if not using relationship (or use relationship if defined)
+        # Note: Payment model has seller_id. We can use it to fetch seller info.
+        data = []
+        for p in payments:
+            res = PaymentResponse.model_validate(p)
+            if p.seller_id:
+                seller = db.query(SellerProfile).filter(SellerProfile.id == p.seller_id).first()
+                if seller:
+                    res.seller_name = seller.business_name
+                    res.seller_type = seller.seller_type
+            data.append(res)
+            
         return PaymentListResponse(
             success=True,
             message="Payments retrieved successfully",
-            data=[PaymentResponse.model_validate(p) for p in payments],
+            data=data,
             pagination={
                 "page": page,
                 "limit": limit,

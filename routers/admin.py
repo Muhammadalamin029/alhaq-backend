@@ -4,10 +4,14 @@ from sqlalchemy import func, desc, and_, or_
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import User, Profile, SellerProfile, Product, Order, OrderItem, Category, Payment, SellerPayout
+from core.model import (
+    User, Profile, SellerProfile, Product, Order, OrderItem, Category, 
+    Payment, SellerPayout, GeneralInspection, GeneralAgreement
+)
 from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
     AdminSellerListResponse, AdminProductListResponse, AdminOrderListResponse,
@@ -157,12 +161,18 @@ async def get_admin_dashboard_stats(
             .count()
         )
         
-        # Calculate actual total payments
         total_payments = (
             db.query(Payment)
             .filter(Payment.status == "completed")
             .count()
         )
+        
+        # Asset stats
+        total_inspections = db.query(GeneralInspection).count()
+        total_agreements = db.query(GeneralAgreement).count()
+        pending_inspections = db.query(GeneralInspection).filter(GeneralInspection.status == "pending_review").count()
+        pending_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == "pending_review").count()
+        active_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == "active").count()
         
         stats = AdminDashboardStats(
             total_users=total_users,
@@ -176,7 +186,14 @@ async def get_admin_dashboard_stats(
             pending_seller_approvals=pending_seller_approvals,
             locked_users=locked_users,
             out_of_stock_products=out_of_stock_products,
-            pending_orders=pending_orders
+            pending_orders=pending_orders,
+            
+            # New asset stats
+            total_inspections=total_inspections,
+            total_agreements=total_agreements,
+            pending_inspections=pending_inspections,
+            pending_agreements=pending_agreements,
+            active_agreements=active_agreements
         )
         
         return AdminResponse(
@@ -393,6 +410,7 @@ async def get_admin_sellers(
                 id=seller.id,
                 email=seller.user.email,
                 business_name=seller.business_name,
+                seller_type=seller.seller_type,
                 description=seller.description,
                 contact_email=seller.contact_email,
                 contact_phone=seller.contact_phone,
@@ -402,6 +420,8 @@ async def get_admin_sellers(
                 total_products=seller.total_products,
                 total_orders=seller.total_orders,
                 total_revenue=seller.total_revenue,
+                available_balance=seller.available_balance or Decimal('0.00'),
+                pending_balance=seller.pending_balance or Decimal('0.00'),
                 created_at=seller.created_at,
                 updated_at=seller.updated_at,
                 user_locked=seller.user.locked_until
@@ -1273,3 +1293,118 @@ async def get_payout_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve payout statistics"
         )
+
+# ---------------- ASSET MANAGEMENT ----------------
+
+@router.get("/inspections", response_model=AdminListResponse)
+async def get_admin_inspections(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+    status: Optional[str] = Query(None),
+    asset_type: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """Get all inspections for admin management"""
+    try:
+        offset = (page - 1) * limit
+        query = db.query(GeneralInspection).options(
+            joinedload(GeneralInspection.user).joinedload(User.profile),
+            joinedload(GeneralInspection.seller)
+        )
+        
+        if status:
+            query = query.filter(GeneralInspection.status == status)
+        if asset_type:
+            query = query.filter(GeneralInspection.asset_type == asset_type)
+            
+        total = query.count()
+        inspections = query.order_by(desc(GeneralInspection.created_at)).offset(offset).limit(limit).all()
+        
+        # Simple formatting for now
+        data = []
+        for insp in inspections:
+            data.append({
+                "id": str(insp.id),
+                "asset_type": insp.asset_type,
+                "asset_id": str(insp.asset_id),
+                "inspection_date": insp.inspection_date.isoformat() if insp.inspection_date else None,
+                "status": insp.status,
+                "created_at": insp.created_at.isoformat(),
+                "user_email": insp.user.email,
+                "seller_business_name": insp.seller.business_name if insp.seller else "N/A"
+            })
+            
+        return AdminListResponse(
+            success=True,
+            message="Inspections retrieved successfully",
+            data=data,
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_pages": (total + limit - 1) // limit,
+                "has_next": page * limit < total,
+                "has_prev": page > 1
+            },
+            total=total
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch inspections", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch inspections")
+
+@router.get("/agreements", response_model=AdminListResponse)
+async def get_admin_agreements(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+    status: Optional[str] = Query(None),
+    asset_type: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """Get all agreements for admin management"""
+    try:
+        offset = (page - 1) * limit
+        query = db.query(GeneralAgreement).options(
+            joinedload(GeneralAgreement.user).joinedload(User.profile),
+            joinedload(GeneralAgreement.seller)
+        )
+        
+        if status:
+            query = query.filter(GeneralAgreement.status == status)
+        if asset_type:
+            query = query.filter(GeneralAgreement.asset_type == asset_type)
+            
+        total = query.count()
+        agreements = query.order_by(desc(GeneralAgreement.created_at)).offset(offset).limit(limit).all()
+        
+        data = []
+        for ag in agreements:
+            data.append({
+                "id": str(ag.id),
+                "asset_type": ag.asset_type,
+                "asset_id": str(ag.asset_id),
+                "total_price": float(ag.total_price),
+                "deposit_paid": float(ag.deposit_paid or 0),
+                "remaining_balance": float(ag.remaining_balance or 0),
+                "status": ag.status,
+                "created_at": ag.created_at.isoformat(),
+                "user_email": ag.user.email,
+                "seller_business_name": ag.seller.business_name if ag.seller else "N/A"
+            })
+            
+        return AdminListResponse(
+            success=True,
+            message="Agreements retrieved successfully",
+            data=data,
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_pages": (total + limit - 1) // limit,
+                "has_next": page * limit < total,
+                "has_prev": page > 1
+            },
+            total=total
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch agreements", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch agreements")
