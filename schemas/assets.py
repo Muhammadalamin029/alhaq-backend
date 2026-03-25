@@ -118,3 +118,5 @@ class AgreementPaymentInitialize(BaseModel):
 
 class AgreementPaymentVerify(BaseModel):
     reference: str
+class AssetAgreementApprove(BaseModel):
+    unit_id: Optional[UUID] = None

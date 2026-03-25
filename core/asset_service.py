@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from core.model import (
-    Car, CarUnit, Property, Phone, PhoneUnit, 
+    Car, CarUnit, Property, PropertyUnit, Phone, PhoneUnit, 
     GeneralInspection, GeneralAgreement, Payment, AssetImage,
     Profile, User, SellerProfile
 )
@@ -24,6 +24,98 @@ from schemas.assets import (
 )
 
 class AssetService():
+    def update_unit_status(self, db: Session, asset_type: str, status: str, unit_id: Optional[UUID] = None, asset_id: Optional[UUID] = None):
+        """
+        Unified method to update unit or asset status based on inspection/agreement stage.
+        Handles CarUnit, PhoneUnit, and PropertyUnit consistently.
+        """
+        # Mapping from GeneralInspection/GeneralAgreement statuses to physical unit statuses
+        unit_status_map = {
+            # Shared or mapped statuses
+            "scheduled": "pending_inspection",
+            "confirmed": "pending_inspection",
+            "completed": "inspected",
+            "agreement_pending": "inspected",
+            "agreement_accepted": "awaiting_payment",
+            "pending_deposit": "awaiting_payment",
+            "paid": "sold",
+            "active": "sold",
+            "completed_agreement": "sold"
+        }
+
+        # Override for property specific naming
+        if asset_type == "property":
+            unit_status_map["completed"] = "property_inspected"
+            unit_status_map["agreement_pending"] = "property_inspected"
+            unit_status_map["active"] = "under_financing" # Properties under financing
+
+        new_status = unit_status_map.get(status)
+        if not new_status:
+            return
+
+        if asset_type == "automotive" and unit_id:
+            unit = db.query(CarUnit).filter(CarUnit.id == unit_id).first()
+            if unit:
+                # CarUnit doesn't have pending_inspection, skip if that's the status
+                if new_status != "pending_inspection":
+                    unit.status = new_status
+                
+                # If sold/awaiting_payment, check if main listing should be out of stock
+                if new_status in ["sold", "awaiting_payment"]:
+                    available_count = db.query(CarUnit).filter(
+                        CarUnit.car_id == unit.car_id,
+                        CarUnit.status.in_(["available", "inspected"]),
+                        CarUnit.id != unit.id
+                    ).count()
+                    if available_count == 0:
+                        car = db.query(Car).filter(Car.id == unit.car_id).first()
+                        if car: car.status = "out_of_stock"
+
+        elif asset_type == "phone" and unit_id:
+            unit = db.query(PhoneUnit).filter(PhoneUnit.id == unit_id).first()
+            if unit:
+                if new_status != "pending_inspection":
+                    unit.status = new_status
+                
+                if new_status in ["sold", "awaiting_payment"]:
+                    available_count = db.query(PhoneUnit).filter(
+                        PhoneUnit.phone_id == unit.phone_id,
+                        PhoneUnit.status.in_(["available", "inspected"]),
+                        PhoneUnit.id != unit.id
+                    ).count()
+                    if available_count == 0:
+                        phone = db.query(Phone).filter(Phone.id == unit.phone_id).first()
+                        if phone: phone.status = "out_of_stock"
+
+        elif asset_type == "property":
+            # If unit_id is provided, update specific unit
+            if unit_id:
+                unit = db.query(PropertyUnit).filter(PropertyUnit.id == unit_id).first()
+                if unit:
+                    unit.status = new_status
+            
+            # If asset_id is provided, update main property status or all units if acquisitions
+            if asset_id:
+                prop = db.query(Property).filter(Property.id == asset_id).first()
+                if prop:
+                    # Acquisitions propagate to all units
+                    if prop.acquisition_session_id and new_status in ["pending_inspection", "property_inspected"]:
+                        db.query(PropertyUnit).filter(PropertyUnit.property_id == asset_id).update({"status": new_status})
+                    
+                    # If sold/awaiting_payment, check if main listing should update status
+                    if new_status in ["sold", "awaiting_payment", "under_financing"]:
+                        available_count = db.query(PropertyUnit).filter(
+                            PropertyUnit.property_id == asset_id,
+                            PropertyUnit.status.in_(["available", "property_inspected", "pending_inspection"]),
+                            PropertyUnit.id != unit_id if unit_id else True
+                        ).count()
+                        
+                        if available_count == 0:
+                            prop.status = new_status
+                    else:
+                        # Update main property status for global changes
+                        prop.status = new_status
+
     def _get_asset_details(self, db: Session, asset_type: str, asset_id: UUID) -> AssetMini:
         """Helper to fetch basic asset details for nested response"""
         title = ""
@@ -229,18 +321,7 @@ class AssetService():
             inspection.unit_id = data.unit_id
         
         # 2. Update physical asset status
-        if inspection.asset_type == "automotive" and inspection.unit_id:
-            unit = db.query(CarUnit).filter(CarUnit.id == inspection.unit_id).first()
-            if unit:
-                unit.status = "inspected"
-        elif inspection.asset_type == "phone" and inspection.unit_id:
-            unit = db.query(PhoneUnit).filter(PhoneUnit.id == inspection.unit_id).first()
-            if unit:
-                unit.status = "inspected"
-        elif inspection.asset_type == "property":
-            prop = db.query(Property).filter(Property.id == inspection.asset_id).first()
-            if prop:
-                prop.status = "property_inspected"
+        self.update_unit_status(db, inspection.asset_type, "completed", unit_id=inspection.unit_id, asset_id=inspection.asset_id)
 
         # 3. Create or Update Agreement automatically in pending_review
         existing = db.query(GeneralAgreement).filter(GeneralAgreement.inspection_id == inspection_id).first()
@@ -366,7 +447,7 @@ class AssetService():
 
         return new_agreement
 
-    def approve_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID) -> GeneralAgreement:
+    def approve_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID, unit_id: Optional[UUID] = None) -> GeneralAgreement:
         agreement = db.query(GeneralAgreement).filter(
             GeneralAgreement.id == agreement_id,
             GeneralAgreement.seller_id == seller_id
@@ -378,6 +459,14 @@ class AssetService():
         if agreement.status != "pending_review":
             raise HTTPException(status_code=400, detail="Agreement is not in pending_review status")
 
+        # Update unit_id if provided by seller at approval time
+        if unit_id:
+            agreement.unit_id = unit_id
+            if agreement.inspection_id:
+                inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
+                if inspection:
+                    inspection.unit_id = unit_id
+
         # Update Agreement status
         agreement.status = "pending_deposit"
         
@@ -388,48 +477,7 @@ class AssetService():
                 inspection.status = "agreement_accepted"
 
         # Update asset unit status
-        if agreement.unit_id:
-            if agreement.asset_type == "automotive":
-                unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
-                if unit:
-                    if unit.status in ["sold", "awaiting_payment", "reserved"]:
-                         raise HTTPException(status_code=400, detail="This specific vehicle unit is already reserved or sold")
-                    
-                    unit.status = "awaiting_payment"
-                    # Thorough check for remaining units
-                    available_count = db.query(CarUnit).filter(
-                        CarUnit.car_id == unit.car_id, 
-                        CarUnit.status.in_(["available", "inspected"]),
-                        CarUnit.id != unit.id
-                    ).count()
-                    
-                    if available_count == 0:
-                        car = db.query(Car).filter(Car.id == unit.car_id).first()
-                        if car:
-                            car.status = "out_of_stock"
-            elif agreement.asset_type == "phone":
-                unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
-                if unit:
-                    if unit.status in ["sold", "awaiting_payment", "reserved"]:
-                         raise HTTPException(status_code=400, detail="This phone unit is already reserved or sold")
-                    
-                    unit.status = "awaiting_payment"
-                    available_count = db.query(PhoneUnit).filter(
-                        PhoneUnit.phone_id == unit.phone_id, 
-                        PhoneUnit.status.in_(["available", "inspected"]),
-                        PhoneUnit.id != unit.id
-                    ).count()
-                    
-                    if available_count == 0:
-                        phone = db.query(Phone).filter(Phone.id == unit.phone_id).first()
-                        if phone:
-                            phone.status = "out_of_stock"
-        elif agreement.asset_type == "property":
-            prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
-            if prop:
-                if prop.status in ["sold", "awaiting_payment", "reserved", "under_financing"]:
-                    raise HTTPException(status_code=400, detail="This property is no longer available")
-                prop.status = "awaiting_payment"
+        self.update_unit_status(db, agreement.asset_type, "awaiting_payment", unit_id=agreement.unit_id, asset_id=agreement.asset_id)
 
         db.commit()
         db.refresh(agreement)

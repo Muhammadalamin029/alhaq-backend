@@ -204,36 +204,15 @@ class PaymentService:
                         inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
                         if inspection: inspection.status = "agreement_accepted"
 
-                    # Update unit/asset status to final held state
-                    logger.info("Updating asset status for initial deposit/payment")
-                    if agreement.asset_type == "property":
-                        prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
-                        if prop: 
-                            if agreement.status == "completed":
-                                if agreement.acquisition_session_id:
-                                    prop.status = "acquired"
-                                else:
-                                    prop.status = "rented" if prop.listing_type == "rental" else "sold"
-                            else:
-                                prop.status = "under_financing"
-                            logger.info(f"Property {prop.id} status updated to {prop.status}")
-                        
-                        # Also update specific unit if this is a single unit purchase
-                        if agreement.unit_id:
-                            unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
-                            if unit: 
-                                if agreement.status == "completed":
-                                    unit.status = "rented" if prop and prop.listing_type == "rental" else "sold"
-                                else:
-                                    unit.status = "under_financing"
-                                logger.info(f"Property Unit {unit.id} status updated to {unit.status}")
-                    elif agreement.unit_id:
-                        if agreement.asset_type == "automotive":
-                            unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
-                            if unit: unit.status = "sold"
-                        elif agreement.asset_type == "phone":
-                            unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
-                            if unit: unit.status = "sold"
+                    # Update unit/asset status to final held state using unified logic
+                    from core.asset_service import asset_service
+                    asset_service.update_unit_status(
+                        db, 
+                        agreement.asset_type, 
+                        agreement.status, # "active" or "completed" 
+                        unit_id=agreement.unit_id, 
+                        asset_id=agreement.asset_id
+                    )
                 else:
                     agreement.remaining_balance = (agreement.remaining_balance or 0) - payment.amount
                     if agreement.remaining_balance <= 0:

@@ -17,6 +17,7 @@ from schemas.assets import (
     AssetAgreementBase,
     AgreementPaymentInitialize,
     AgreementPaymentVerify,
+    AssetAgreementApprove,
 )
 
 
@@ -125,6 +126,7 @@ async def create_agreement(
 @router.post("/agreements/{id}/approve", response_model=AssetAgreementResponse)
 async def approve_agreement(
     id: UUID,
+    body: AssetAgreementApprove,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -133,7 +135,7 @@ async def approve_agreement(
         raise HTTPException(status_code=403, detail="Only sellers can approve agreements")
     
     seller_id = UUID(current_user["id"])
-    agreement = asset_service.approve_agreement(db, seller_id, id)
+    agreement = asset_service.approve_agreement(db, seller_id, id, body.unit_id)
     
     # Notify the buyer in background
     background_tasks.add_task(notify_agreement_update, str(agreement.user_id), agreement.asset_type, "approved")

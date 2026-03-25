@@ -11,7 +11,7 @@ from core.auth import role_required
 from core.model import (
     User, Profile, SellerProfile, Product, Order, OrderItem, Category, 
     Payment, SellerPayout, GeneralInspection, GeneralAgreement,
-    Property, RealEstateSessionRequest, PropertyUnit
+    Property, RealEstateSessionRequest, PropertyUnit, CarUnit, PhoneUnit
 )
 from schemas.property import SessionRequestResponse, PropertyPublish, PropertyResponse
 from schemas.admin import (
@@ -1486,9 +1486,10 @@ async def update_admin_inspection_status(
         if not inspection:
             raise HTTPException(status_code=404, detail="Inspection not found")
         
-        status = payload.get("status")
+        new_status = payload.get("status")
         notes = payload.get("notes")
         agreed_price = payload.get("agreed_price")
+        unit_id = payload.get("unit_id")
         
         if agreed_price is not None:
             inspection.agreed_price = agreed_price
@@ -1496,32 +1497,32 @@ async def update_admin_inspection_status(
                 sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
                 if sess: sess.proposed_price = agreed_price
         
-        if status: 
-            inspection.status = status
+        if unit_id:
+            inspection.unit_id = unit_id
+
+        if notes:
+            inspection.notes = notes
+
+        if new_status: 
+            inspection.status = new_status
             
             # Sync session status
             if inspection.acquisition_session_id:
                 sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
                 if sess:
-                    if status == "confirmed": sess.status = "inspecting"
-                    elif status == "agreement_pending": sess.status = "processing"
-                    elif status == "cancelled": sess.status = "declined"
+                    if new_status == "confirmed": sess.status = "inspecting"
+                    elif new_status == "agreement_pending": sess.status = "processing"
+                    elif new_status == "cancelled": sess.status = "declined"
             
-            # Update specific unit status if applicable
-            if inspection.asset_type == "property":
-                if inspection.acquisition_session_id:
-                    # Propagate to all units for acquisitions
-                    mapping = {"scheduled": "pending_inspection", "confirmed": "pending_inspection", "completed": "property_inspected", "agreement_pending": "property_inspected"}
-                    new_unit_status = mapping.get(status)
-                    if new_unit_status:
-                        db.query(PropertyUnit).filter(PropertyUnit.property_id == inspection.asset_id).update({"status": new_unit_status})
-                elif inspection.unit_id:
-                    # Single unit inspection
-                    unit = db.query(PropertyUnit).filter(PropertyUnit.id == inspection.unit_id).first()
-                    if unit:
-                        mapping = {"scheduled": "pending_inspection", "confirmed": "pending_inspection", "completed": "property_inspected", "agreement_pending": "property_inspected"}
-                        new_unit_status = mapping.get(status)
-                        if new_unit_status: unit.status = new_unit_status
+            # Update specific unit status if applicable using unified logic
+            from core.asset_service import asset_service
+            asset_service._update_unit_status(
+                db, 
+                inspection.asset_type, 
+                new_status, 
+                unit_id=inspection.unit_id, 
+                asset_id=inspection.asset_id
+            )
         
         if notes: inspection.notes = notes
         
