@@ -1,7 +1,7 @@
 from db.session import Base
 from sqlalchemy import (
     Column, String, UUID, Text, Date, Integer, DECIMAL,
-    TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric
+    TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric, JSON
 )
 from sqlalchemy.orm import relationship, foreign
 
@@ -35,11 +35,22 @@ class User(Base):
 
     # Relationships
     profile = relationship("Profile", back_populates="user", uselist=False)
+    @property
+    def name(self):
+        if self.profile and self.profile.name:
+            return self.profile.name
+        if self.seller_profile and self.seller_profile.business_name:
+            return self.seller_profile.business_name
+        if self.role == "admin":
+            return "System Administrator"
+        return self.email.split("@")[0]
+
     seller_profile = relationship(
         "SellerProfile", back_populates="user", uselist=False)
     notifications = relationship("Notification", back_populates="recipient", cascade="all, delete-orphan")
     notification_prefs = relationship("NotificationPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", back_populates="user")
+    agreements = relationship("GeneralAgreement", back_populates="user")
 
 
 # ---------------- PROFILES (CUSTOMERS) ----------------
@@ -66,7 +77,6 @@ class Profile(Base):
     reviews = relationship("Review", back_populates="user")
     wishlists = relationship("Wishlist", back_populates="user")
     stats = relationship("Stats", back_populates="user", uselist=False)
-    agreements = relationship("GeneralAgreement", back_populates="user")
 
 
 # ---------------- SELLER PROFILES ----------------
@@ -166,6 +176,7 @@ class AssetImage(Base):
     car_id = Column(UUID, ForeignKey("cars.id", ondelete="CASCADE"), nullable=True)
     property_id = Column(UUID, ForeignKey("properties.id", ondelete="CASCADE"), nullable=True)
     phone_id = Column(UUID, ForeignKey("phones.id", ondelete="CASCADE"), nullable=True)
+    session_request_id = Column(UUID, ForeignKey("re_session_requests.id", ondelete="CASCADE"), nullable=True)
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
@@ -174,6 +185,7 @@ class AssetImage(Base):
     car = relationship("Car", back_populates="images")
     property = relationship("Property", back_populates="images")
     phone = relationship("Phone", back_populates="images")
+    session_request = relationship("RealEstateSessionRequest", back_populates="images")
 
 
 # ---------------- ORDERS ----------------
@@ -555,19 +567,40 @@ class Property(Base):
     price = Column(Numeric(15, 2), nullable=False)
     min_deposit_percentage = Column(Numeric(5, 2), default=10)
     location = Column(String(255), nullable=False)
+    buildings_count = Column(Integer, default=1)
     
     listing_type = Column(Enum("sale", "rental", "professional", name="listing_type"), default="sale")
     status = Column(Enum("available", "pending_inspection", "property_inspected", "awaiting_payment", 
-                        "reserved", "sold", "rented", "under_financing", name="property_status"), default="available")
+                        "reserved", "sold", "rented", "under_financing", "acquired", name="property_status"), default="available")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    acquisition_session_id = Column(UUID, ForeignKey("re_session_requests.id"), nullable=True)
 
     # Relationships
     seller = relationship("SellerProfile")
     images = relationship("AssetImage", back_populates="property", cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", primaryjoin="and_(Property.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='property')", back_populates="property", cascade="all, delete-orphan")
     agreements = relationship("GeneralAgreement", primaryjoin="and_(Property.id==foreign(GeneralAgreement.asset_id), GeneralAgreement.asset_type=='property')", back_populates="property", cascade="all, delete-orphan")
+    units = relationship("PropertyUnit", back_populates="property", cascade="all, delete-orphan")
+
+
+class PropertyUnit(Base):
+    __tablename__ = "property_units"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    property_id = Column(UUID, ForeignKey("properties.id"), nullable=False)
+    
+    unit_name = Column(String(100), nullable=True) # e.g. Block A, Building 1
+    unit_number = Column(String(50), nullable=True) # e.g. Flat 101, Apartment A
+    status = Column(Enum("available", "pending_inspection", "property_inspected", "awaiting_payment", 
+                        "reserved", "sold", "rented", "under_financing", "acquired", 
+                        name="property_unit_status"), default="available")
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    property = relationship("Property", back_populates="units")
 
 
 class RealEstateSessionRequest(Base):
@@ -575,15 +608,21 @@ class RealEstateSessionRequest(Base):
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    title = Column(String(255), nullable=True)
     location = Column(String(255), nullable=False)
-    property_details = Column(Text, nullable=False)
-    status = Column(Enum("pending", "pending_acquisition", "acquired", "declined", name="re_session_status"), default="pending")
+    description = Column(Text, nullable=True)
+    proposed_price = Column(Numeric(15, 2), nullable=True)
+    buildings_count = Column(Integer, default=1)
+    property_details = Column(Text, nullable=True)
+    status = Column(Enum("pending", "inspecting", "processing", "acquired", "declined", name="re_session_status"), default="pending")
+    units_data = Column(JSON, nullable=True) # List of units (name, number)
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
     user = relationship("User")
+    images = relationship("AssetImage", back_populates="session_request")
 
 
 # ---------------- UNIFIED ASSET MODELS (NEW) ----------------
@@ -609,6 +648,8 @@ class GeneralInspection(Base):
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    acquisition_session_id = Column(UUID, ForeignKey("re_session_requests.id"), nullable=True)
+    acquisition_session = relationship("RealEstateSessionRequest")
 
     # Relationships
     seller = relationship("SellerProfile")
@@ -623,7 +664,7 @@ class GeneralAgreement(Base):
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
-    user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     inspection_id = Column(UUID, ForeignKey("general_inspections.id"), nullable=True)
     
     asset_type = Column(Enum("automotive", "property", "phone", name="asset_category"), nullable=False)
@@ -644,10 +685,11 @@ class GeneralAgreement(Base):
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    acquisition_session_id = Column(UUID, ForeignKey("re_session_requests.id"), nullable=True)
 
     # Relationships
     seller = relationship("SellerProfile")
-    user = relationship("Profile", back_populates="agreements")
+    user = relationship("User", back_populates="agreements")
     inspection = relationship("GeneralInspection")
     payments = relationship("Payment", back_populates="agreement")
     car = relationship("Car", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Car.id, GeneralAgreement.asset_type=='automotive')", back_populates="agreements", overlaps="agreements")

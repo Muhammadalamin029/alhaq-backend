@@ -10,8 +10,10 @@ from db.session import get_db
 from core.auth import role_required
 from core.model import (
     User, Profile, SellerProfile, Product, Order, OrderItem, Category, 
-    Payment, SellerPayout, GeneralInspection, GeneralAgreement
+    Payment, SellerPayout, GeneralInspection, GeneralAgreement,
+    Property, RealEstateSessionRequest, PropertyUnit
 )
+from schemas.property import SessionRequestResponse, PropertyPublish, PropertyResponse
 from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
     AdminSellerListResponse, AdminProductListResponse, AdminOrderListResponse,
@@ -19,6 +21,7 @@ from schemas.admin import (
     AdminResponse, AdminListResponse, AdminUserListFilters,
     AdminSellerListFilters, AdminProductListFilters, AdminOrderListFilters
 )
+from core.property_service import property_service
 from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
@@ -27,6 +30,10 @@ from schemas.seller_payout import (
     AdminPayoutListResponse, AdminPayoutResponse, PayoutProcessRequest, PayoutProcessResponse
 )
 from pydantic import BaseModel, Field
+
+from core.order import OrderService
+from schemas.order import OrderStatusResponse
+
 
 # Get logger for admin routes
 admin_logger = get_logger("routers.admin")
@@ -170,9 +177,14 @@ async def get_admin_dashboard_stats(
         # Asset stats
         total_inspections = db.query(GeneralInspection).count()
         total_agreements = db.query(GeneralAgreement).count()
-        pending_inspections = db.query(GeneralInspection).filter(GeneralInspection.status == "pending_review").count()
+        pending_inspections = db.query(GeneralInspection).filter(GeneralInspection.status == "scheduled").count()
         pending_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == "pending_review").count()
         active_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == "active").count()
+        
+        # Real Estate stats
+        total_session_requests = db.query(RealEstateSessionRequest).count()
+        pending_session_requests = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.status == "pending").count()
+        total_internal_properties = db.query(Property).filter(Property.title.ilike("[ACQUIRED]%")).count()
         
         stats = AdminDashboardStats(
             total_users=total_users,
@@ -193,7 +205,12 @@ async def get_admin_dashboard_stats(
             total_agreements=total_agreements,
             pending_inspections=pending_inspections,
             pending_agreements=pending_agreements,
-            active_agreements=active_agreements
+            active_agreements=active_agreements,
+            
+            # Real Estate stats
+            total_session_requests=total_session_requests,
+            pending_session_requests=pending_session_requests,
+            total_internal_properties=total_internal_properties
         )
         
         return AdminResponse(
@@ -805,10 +822,7 @@ async def mark_order_as_paid(
     db: Session = Depends(get_db)
 ):
     """Mark an order as paid (admin only)"""
-    try:
-        from core.order import OrderService
-        from schemas.order import OrderStatusResponse
-        
+    try:        
         order_service = OrderService()
         
         # Update order status to paid
@@ -843,9 +857,7 @@ async def bulk_mark_orders_as_paid(
     db: Session = Depends(get_db)
 ):
     """Bulk mark multiple orders as paid (admin only)"""
-    try:
-        from core.order import OrderService
-        
+    try:        
         order_service = OrderService()
         results = []
         successful_count = 0
@@ -1310,7 +1322,9 @@ async def get_admin_inspections(
         offset = (page - 1) * limit
         query = db.query(GeneralInspection).options(
             joinedload(GeneralInspection.user).joinedload(User.profile),
-            joinedload(GeneralInspection.seller)
+            joinedload(GeneralInspection.seller),
+            joinedload(GeneralInspection.property),
+            joinedload(GeneralInspection.car)
         )
         
         if status:
@@ -1332,7 +1346,9 @@ async def get_admin_inspections(
                 "status": insp.status,
                 "created_at": insp.created_at.isoformat(),
                 "user_email": insp.user.email,
-                "seller_business_name": insp.seller.business_name if insp.seller else "N/A"
+                "seller_business_name": insp.seller.business_name if insp.seller else "N/A",
+                "asset_title": (insp.property.title if insp.asset_type == 'property' and insp.property else 
+                              (f"{insp.car.brand} {insp.car.model}" if insp.asset_type == 'automotive' and insp.car else "Asset"))
             })
             
         return AdminListResponse(
@@ -1366,7 +1382,9 @@ async def get_admin_agreements(
         offset = (page - 1) * limit
         query = db.query(GeneralAgreement).options(
             joinedload(GeneralAgreement.user).joinedload(User.profile),
-            joinedload(GeneralAgreement.seller)
+            joinedload(GeneralAgreement.seller),
+            joinedload(GeneralAgreement.property),
+            joinedload(GeneralAgreement.car)
         )
         
         if status:
@@ -1389,7 +1407,9 @@ async def get_admin_agreements(
                 "status": ag.status,
                 "created_at": ag.created_at.isoformat(),
                 "user_email": ag.user.email,
-                "seller_business_name": ag.seller.business_name if ag.seller else "N/A"
+                "seller_business_name": ag.seller.business_name if ag.seller else "N/A",
+                "asset_title": (ag.property.title if ag.asset_type == 'property' and ag.property else 
+                              (f"{ag.car.brand} {ag.car.model}" if ag.asset_type == 'automotive' and ag.car else "Asset"))
             })
             
         return AdminListResponse(
@@ -1408,3 +1428,384 @@ async def get_admin_agreements(
     except Exception as e:
         log_error(admin_logger, "Failed to fetch agreements", e)
         raise HTTPException(status_code=500, detail="Failed to fetch agreements")
+
+@router.get("/inspections/{id}")
+async def get_admin_inspection(
+    id: UUID,
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"]))
+):
+    try:
+        inspection = db.query(GeneralInspection).filter(GeneralInspection.id == id).first()
+        if not inspection:
+            raise HTTPException(status_code=404, detail="Inspection not found")
+        
+        # Simple data mapping
+        return {
+            "success": True,
+            "data": {
+                "id": str(inspection.id),
+                "seller_id": str(inspection.seller_id),
+                "user_id": str(inspection.user_id),
+                "asset_type": inspection.asset_type,
+                "asset_id": str(inspection.asset_id),
+                "unit_id": str(inspection.unit_id) if inspection.unit_id else None,
+                "inspection_date": inspection.inspection_date.isoformat() if inspection.inspection_date else None,
+                "notes": inspection.notes,
+                "agreed_price": float(inspection.agreed_price) if inspection.agreed_price else 0,
+                "status": inspection.status,
+                "created_at": inspection.created_at.isoformat(),
+                "user": {"name": inspection.user.profile.name if inspection.user.profile else "N/A", "email": inspection.user.email},
+                "seller": {"business_name": inspection.seller.business_name if inspection.seller else "N/A"},
+                "asset": {
+                    "title": inspection.property.title if inspection.asset_type == 'property' and inspection.property else (inspection.car.brand + " " + inspection.car.model if inspection.asset_type == 'automotive' and inspection.car else "Asset"),
+                    "price": float(inspection.property.price if inspection.asset_type == 'property' and inspection.property else (inspection.car.price if inspection.asset_type == 'automotive' and inspection.car else 0)),
+                    "image_url": inspection.property.images[0].image_url if inspection.asset_type == 'property' and hasattr(inspection.property, 'images') and inspection.property.images else inspection.car.images[0].image_url if inspection.asset_type == 'automotive' and hasattr(inspection.car, 'images') and inspection.car.images else None
+                },
+                "acquisition_session": {
+                    "id": str(inspection.acquisition_session.id),
+                    "proposed_price": float(inspection.acquisition_session.proposed_price) if inspection.acquisition_session.proposed_price else 0,
+                    "title": inspection.acquisition_session.title
+                } if inspection.acquisition_session else None
+            }
+        }
+    except HTTPException: raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to fetch inspection {id}", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.put("/inspections/{id}/status")
+async def update_admin_inspection_status(
+    id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"]))
+):
+    try:
+        inspection = db.query(GeneralInspection).filter(GeneralInspection.id == id).first()
+        if not inspection:
+            raise HTTPException(status_code=404, detail="Inspection not found")
+        
+        status = payload.get("status")
+        notes = payload.get("notes")
+        agreed_price = payload.get("agreed_price")
+        
+        if agreed_price is not None:
+            inspection.agreed_price = agreed_price
+            if inspection.acquisition_session_id:
+                sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
+                if sess: sess.proposed_price = agreed_price
+        
+        if status: 
+            inspection.status = status
+            
+            # Sync session status
+            if inspection.acquisition_session_id:
+                sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
+                if sess:
+                    if status == "confirmed": sess.status = "inspecting"
+                    elif status == "agreement_pending": sess.status = "processing"
+                    elif status == "cancelled": sess.status = "declined"
+            
+            # Update specific unit status if applicable
+            if inspection.asset_type == "property":
+                if inspection.acquisition_session_id:
+                    # Propagate to all units for acquisitions
+                    mapping = {"scheduled": "pending_inspection", "confirmed": "pending_inspection", "completed": "property_inspected", "agreement_pending": "property_inspected"}
+                    new_unit_status = mapping.get(status)
+                    if new_unit_status:
+                        db.query(PropertyUnit).filter(PropertyUnit.property_id == inspection.asset_id).update({"status": new_unit_status})
+                elif inspection.unit_id:
+                    # Single unit inspection
+                    unit = db.query(PropertyUnit).filter(PropertyUnit.id == inspection.unit_id).first()
+                    if unit:
+                        mapping = {"scheduled": "pending_inspection", "confirmed": "pending_inspection", "completed": "property_inspected", "agreement_pending": "property_inspected"}
+                        new_unit_status = mapping.get(status)
+                        if new_unit_status: unit.status = new_unit_status
+        
+        if notes: inspection.notes = notes
+        
+        db.commit()
+        return {"success": True, "message": "Inspection status and session updated"}
+    except Exception as e:
+        db.rollback()
+        log_error(admin_logger, f"Failed to update inspection {id}", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/agreements/{id}")
+async def get_admin_agreement(
+    id: UUID,
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"]))
+):
+    try:
+        agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == id).first()
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found")
+        
+        return {
+            "success": True,
+            "data": {
+                "id": str(agreement.id),
+                "seller_id": str(agreement.seller_id),
+                "user_id": str(agreement.user_id),
+                "asset_type": agreement.asset_type,
+                "asset_id": str(agreement.asset_id),
+                "total_price": float(agreement.total_price),
+                "deposit_paid": float(agreement.deposit_paid),
+                "remaining_balance": float(agreement.remaining_balance),
+                "plan_type": agreement.plan_type,
+                "status": agreement.status,
+                "created_at": agreement.created_at.isoformat(),
+                "user": {"email": agreement.user.email, "name": agreement.user.name or "N/A"},
+                "seller": {"business_name": agreement.seller.business_name if agreement.seller else "N/A"},
+                "asset": {
+                    "title": agreement.property.title if agreement.asset_type == 'property' and agreement.property else (agreement.car.brand + " " + agreement.car.model if agreement.asset_type == 'automotive' and agreement.car else "Asset"),
+                    "price": float(agreement.total_price)
+                }
+            }
+        }
+    except HTTPException: raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to fetch agreement {id}", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.put("/agreements/{id}/status")
+async def update_admin_agreement_status(
+    id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"]))
+):
+    try:
+        agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == id).first()
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found")
+        
+        if status: 
+            agreement.status = status
+            # Sync session status
+            if agreement.acquisition_session_id:
+                sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == agreement.acquisition_session_id).first()
+                if sess:
+                    if status == "completed": sess.status = "acquired"
+                    elif status == "active": sess.status = "processing"
+                    elif status == "cancelled": sess.status = "declined"
+            
+            # Update property unit statuses
+            if agreement.asset_type == "property":
+                # Sync parent property status too
+                prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
+                if prop:
+                    if status == "completed":
+                        if agreement.acquisition_session_id: prop.status = "acquired"
+                        else: prop.status = "rented" if prop.listing_type == "rental" else "sold"
+                    elif status == "active":
+                        prop.status = "under_financing"
+                    elif status == "cancelled":
+                        prop.status = "available"
+
+                if agreement.acquisition_session_id:
+                    # Entire property acquisition
+                    unit_status = "acquired" if status == "completed" else "under_financing" if status == "active" else "available"
+                    db.query(PropertyUnit).filter(PropertyUnit.property_id == agreement.asset_id).update({"status": unit_status})
+                elif agreement.unit_id:
+                    # Individual unit transaction
+                    unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
+                    if unit:
+                        if status == "completed":
+                            # Determine if rented or sold
+                            unit.status = "rented" if prop and prop.listing_type == "rental" else "sold"
+                        elif status == "active":
+                            unit.status = "under_financing"
+                        elif status == "cancelled":
+                            unit.status = "available"
+        
+        db.commit()
+        return {"success": True, "message": "Agreement status updated"}
+    except Exception as e:
+        db.rollback()
+        log_error(admin_logger, f"Failed to update agreement {id}", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ---------------- REAL ESTATE ACQUISITION ----------------
+
+@router.get("/real-estate/sessions", response_model=AdminListResponse)
+async def list_admin_real_estate_sessions(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    user=Depends(role_required(["admin"]))
+):
+    """List all real estate acquisition session requests"""
+    try:
+        
+        requests = property_service.list_session_requests(db)
+        total = len(requests)
+        
+        # Simple pagination
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_requests = requests[start:end]
+        
+        return AdminListResponse(
+            success=True,
+            message="Real estate sessions fetched successfully",
+            data=[SessionRequestResponse.model_validate(r) for r in paginated_requests],
+            pagination={
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "total_pages": (total + limit - 1) // limit
+            },
+            total=total
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch real estate sessions", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch real estate sessions")
+
+
+@router.patch("/real-estate/sessions/{id}", response_model=AdminResponse)
+async def update_real_estate_session_status(
+    id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"]))
+):
+    """Update status of a real estate session request"""
+    try:
+        status_val = payload.get("status")
+        notes = payload.get("notes")
+        
+        updated_request = property_service.update_session_status(db, id, status_val, notes)
+        
+        return AdminResponse(
+            success=True,
+            message=f"Session status updated to {status_val}",
+            data={
+                "id": str(updated_request.id),
+                "status": updated_request.status
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to update session {id}", e)
+        raise HTTPException(status_code=500, detail="Failed to update session stats")
+
+@router.post("/real-estate/sessions/{id}/accept", response_model=AdminResponse)
+async def accept_real_estate_session(
+    id: UUID,
+    payload: dict,
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"]))
+):
+    """Accept a real estate session request and schedule inspection"""
+    try:
+        inspection_date_str = payload.get("inspection_date")
+        notes = payload.get("notes")
+        
+        if not inspection_date_str:
+            raise HTTPException(status_code=400, detail="inspection_date is required")
+            
+        inspection_date = datetime.fromisoformat(inspection_date_str.replace("Z", "+00:00"))
+        
+        updated_request = property_service.accept_session_request(
+            db=db, 
+            request_id=id, 
+            admin_id=UUID(user["id"]), 
+            inspection_date=inspection_date, 
+            notes=notes
+        )
+        
+        return AdminResponse(
+            success=True,
+            message=f"Session request accepted and inspection scheduled",
+            data={
+                "id": str(updated_request.id),
+                "status": updated_request.status
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to accept session {id}", e)
+        raise HTTPException(status_code=500, detail="Failed to accept session request")
+        raise HTTPException(status_code=500, detail="Failed to update session status")
+
+
+@router.get("/real-estate/inventory", response_model=AdminListResponse)
+async def list_admin_internal_inventory(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=100),
+    user=Depends(role_required(["admin"]))
+):
+    """List properties acquired by the platform (internal inventory)"""
+    try:
+        inventory = property_service.list_internal_inventory(db)
+        total = len(inventory)
+        
+        start = (page - 1) * limit
+        end = start + limit
+        paginated_inventory = inventory[start:end]
+        
+        return AdminListResponse(
+            success=True,
+            message="Internal inventory fetched successfully",
+            data=[PropertyResponse.model_validate(p) for p in paginated_inventory],
+            pagination={
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "total_pages": (total + limit - 1) // limit
+            },
+            total=total
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch internal inventory", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch internal inventory")
+        
+@router.post("/real-estate/properties/{id}/publish", response_model=AdminResponse)
+async def publish_acquired_property(
+    id: UUID,
+    payload: PropertyPublish,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Publish an acquired property with a new price"""
+    try:
+        prop = db.query(Property).filter(Property.id == id).first()
+        if not prop:
+            raise HTTPException(status_code=404, detail="Property not found")
+            
+        if prop.status != "acquired":
+            raise HTTPException(status_code=400, detail=f"Only properties in 'acquired' status can be published. Current status: {prop.status}")
+            
+        # Update price and status
+        prop.price = payload.new_price
+        prop.status = "available"
+        
+        # Also update all units status to 'available'
+        if prop.units:
+            for unit in prop.units:
+                unit.status = "available"
+        
+        # Optionally update session request status to 'acquired' or 'published'
+        if prop.acquisition_session_id:
+            session_req = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == prop.acquisition_session_id).first()
+            if session_req:
+                session_req.status = "acquired" # Resetting to acquired just in case, or maybe specific state?
+        
+        db.commit()
+        
+        return AdminResponse(
+            success=True,
+            message=f"Property '{prop.title}' successfully published with new price ₦{payload.new_price:,.2f}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to publish property {id}", e)
+        raise HTTPException(status_code=500, detail="Failed to publish property")

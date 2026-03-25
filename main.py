@@ -10,7 +10,7 @@ from routers import (
     notifications as notifications_router,
     seller as seller_router,
     admin as admin_router,
-    payments, banks, automotive, assets
+    payments, banks, automotive, assets, properties
 )
 from core.config import settings
 from db.session import engine
@@ -117,6 +117,7 @@ app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])
+app.include_router(properties.router, prefix="/properties", tags=["Properties"])
 app.include_router(banks.router, prefix="/api/v1", tags=["Banks"])
 
 # ------------------------------------------------------

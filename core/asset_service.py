@@ -258,7 +258,8 @@ class AssetService():
                 plan_type=data.plan_type,
                 duration_months=data.duration_months,
                 monthly_installment=data.monthly_installment,
-                status="pending_review"
+                status="pending_review",
+                acquisition_session_id=inspection.acquisition_session_id
             )
             db.add(new_agreement)
         else:
@@ -272,6 +273,14 @@ class AssetService():
 
         db.commit()
         db.refresh(inspection)
+
+        # 4. Update session status if linked
+        if inspection.acquisition_session_id:
+            from core.model import RealEstateSessionRequest
+            sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
+            if sess:
+                sess.status = "processing"
+                db.commit()
 
         # Notify Seller
         create_notification(db, {
@@ -330,7 +339,8 @@ class AssetService():
             plan_type=data.plan_type,
             duration_months=data.duration_months,
             monthly_installment=data.monthly_installment,
-            status="pending_review"  # Start in review
+            status="pending_review",  # Start in review
+            acquisition_session_id=data.acquisition_session_id if hasattr(data, 'acquisition_session_id') else (inspection.acquisition_session_id if data.inspection_id and inspection else None)
         )
         
         db.add(new_agreement)

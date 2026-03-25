@@ -7,7 +7,11 @@ import logging
 from datetime import datetime
 from fastapi import HTTPException, status
 
-from core.model import Payment, Order, GeneralAgreement, Profile, SellerProfile, GeneralInspection, CarUnit, PhoneUnit, Property
+from core.model import (
+    Payment, Order, GeneralAgreement, Profile, SellerProfile, 
+    GeneralInspection, CarUnit, PhoneUnit, Property, PropertyUnit, 
+    RealEstateSessionRequest
+)
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
 from core.seller_payout_service import seller_payout_service
@@ -158,6 +162,7 @@ class PaymentService:
 
     def _handle_completion(self, db: Session, payment: Payment):
         """Processes logic after successful payment confirmation"""
+        logger.info(f"Completing payment {payment.id} (Category: {payment.payment_category}, Amount: {payment.amount})")
         payment.status = "completed"
         category = payment.payment_category
         
@@ -179,28 +184,56 @@ class PaymentService:
 
         # 3. Handle Asset Agreement Logic
         if hasattr(payment, 'agreement_id') and payment.agreement_id:
+            logger.info(f"Processing agreement payment for agreement_id: {payment.agreement_id}")
             agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == payment.agreement_id).first()
             if agreement:
+                logger.info(f"Loaded agreement status: {agreement.status}, Asset Type: {agreement.asset_type}")
                 if (payment.payment_type or payment.payment_category) in ["deposit", "asset_deposit"]:
                     agreement.deposit_paid = (agreement.deposit_paid or 0) + payment.amount
                     agreement.remaining_balance = (agreement.remaining_balance or agreement.total_price) - payment.amount
-                    agreement.status = "active"
                     
+                    # If this "deposit" actually paid the full price
+                    if agreement.remaining_balance <= 0:
+                        agreement.status = "completed"
+                        agreement.remaining_balance = 0
+                        logger.info(f"Agreement {agreement.id} fully paid via deposit")
+                    else:
+                        agreement.status = "active"
+
                     if agreement.inspection_id:
                         inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
                         if inspection: inspection.status = "agreement_accepted"
 
-                    # Update unit status to final held state
-                    if agreement.unit_id:
+                    # Update unit/asset status to final held state
+                    logger.info("Updating asset status for initial deposit/payment")
+                    if agreement.asset_type == "property":
+                        prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
+                        if prop: 
+                            if agreement.status == "completed":
+                                if agreement.acquisition_session_id:
+                                    prop.status = "acquired"
+                                else:
+                                    prop.status = "rented" if prop.listing_type == "rental" else "sold"
+                            else:
+                                prop.status = "under_financing"
+                            logger.info(f"Property {prop.id} status updated to {prop.status}")
+                        
+                        # Also update specific unit if this is a single unit purchase
+                        if agreement.unit_id:
+                            unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
+                            if unit: 
+                                if agreement.status == "completed":
+                                    unit.status = "rented" if prop and prop.listing_type == "rental" else "sold"
+                                else:
+                                    unit.status = "under_financing"
+                                logger.info(f"Property Unit {unit.id} status updated to {unit.status}")
+                    elif agreement.unit_id:
                         if agreement.asset_type == "automotive":
                             unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
                             if unit: unit.status = "sold"
                         elif agreement.asset_type == "phone":
                             unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
                             if unit: unit.status = "sold"
-                    elif agreement.asset_type == "property":
-                        prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
-                        if prop: prop.status = "under_financing"
                 else:
                     agreement.remaining_balance = (agreement.remaining_balance or 0) - payment.amount
                     if agreement.remaining_balance <= 0:
@@ -229,6 +262,43 @@ class PaymentService:
                     "message": f"Your payment of ₦{payment.amount:,.2f} for your {agreement.asset_type} agreement has been confirmed. Next payment due on {agreement.next_due_date.strftime('%B %d, %Y') if agreement.next_due_date else 'N/A'}.",
                     "priority": "high"
                 })
+
+                # Ownership logic for acquisitions
+                if agreement.acquisition_session_id:
+                    session_req = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == agreement.acquisition_session_id).first()
+                    if session_req:
+                        if agreement.status == "completed":
+                            session_req.status = "acquired"
+                            # Also update the asset status to 'acquired'
+                            if agreement.asset_type == "property":
+                                prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
+                                if prop: 
+                                    prop.status = "acquired"
+                                    # Update all units to acquired
+                                    for unit in (prop.units or []):
+                                        unit.status = "acquired"
+                            elif agreement.asset_type == "automotive" and agreement.unit_id:
+                                unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
+                                if unit: unit.status = "sold" # Or other appropriate status
+                            elif agreement.asset_type == "phone" and agreement.unit_id:
+                                from core.model import PhoneUnit
+                                unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
+                                if unit: unit.status = "sold"
+                        elif agreement.status == "active":
+                            session_req.status = "processing"
+                else:
+                    # Individual Customer Purchase (Not platform acquisition)
+                    if agreement.status == "completed" and agreement.asset_type == "property" and agreement.unit_id:
+                        unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
+                        if unit:
+                            # Set to sold or rented based on parent property listing_type
+                            parent = db.query(Property).filter(Property.id == agreement.asset_id).first()
+                            if parent and parent.listing_type == "rental":
+                                unit.status = "rented"
+                            else:
+                                unit.status = "sold"
+                            # If all units are sold, mark property as sold? 
+                            # (Optional logic but maybe good for UX)
 
                 # Special "Ownership" notification if agreement is now fully paid
                 if agreement.status == "completed":

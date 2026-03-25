@@ -219,6 +219,11 @@ class AdminDashboardStats(BaseModel):
     pending_agreements: int
     active_agreements: int
     
+    # Real Estate stats
+    total_session_requests: int
+    pending_session_requests: int
+    total_internal_properties: int
+    
     class Config:
         from_attributes = True
 
