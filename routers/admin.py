@@ -22,6 +22,7 @@ from schemas.admin import (
     AdminSellerListFilters, AdminProductListFilters, AdminOrderListFilters
 )
 from core.property_service import property_service
+from core.asset_service import asset_service
 from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
@@ -1421,7 +1422,8 @@ async def get_admin_agreements(
                 "limit": limit,
                 "total_pages": (total + limit - 1) // limit,
                 "has_next": page * limit < total,
-                "has_prev": page > 1
+                "has_prev": page > 1,
+                "total": total
             },
             total=total
         )
@@ -1515,16 +1517,13 @@ async def update_admin_inspection_status(
                     elif new_status == "cancelled": sess.status = "declined"
             
             # Update specific unit status if applicable using unified logic
-            from core.asset_service import asset_service
-            asset_service._update_unit_status(
+            asset_service.update_unit_status(
                 db, 
                 inspection.asset_type, 
                 new_status, 
                 unit_id=inspection.unit_id, 
                 asset_id=inspection.asset_id
             )
-        
-        if notes: inspection.notes = notes
         
         db.commit()
         return {"success": True, "message": "Inspection status and session updated"}
@@ -1583,43 +1582,44 @@ async def update_admin_agreement_status(
         if not agreement:
             raise HTTPException(status_code=404, detail="Agreement not found")
         
-        if status: 
-            agreement.status = status
+        status_val = payload.get("status")
+        if status_val: 
+            agreement.status = status_val
             # Sync session status
             if agreement.acquisition_session_id:
                 sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == agreement.acquisition_session_id).first()
                 if sess:
-                    if status == "completed": sess.status = "acquired"
-                    elif status == "active": sess.status = "processing"
-                    elif status == "cancelled": sess.status = "declined"
+                    if status_val == "completed": sess.status = "acquired"
+                    elif status_val == "active": sess.status = "processing"
+                    elif status_val == "cancelled": sess.status = "declined"
             
             # Update property unit statuses
             if agreement.asset_type == "property":
                 # Sync parent property status too
                 prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
                 if prop:
-                    if status == "completed":
+                    if status_val == "completed":
                         if agreement.acquisition_session_id: prop.status = "acquired"
                         else: prop.status = "rented" if prop.listing_type == "rental" else "sold"
-                    elif status == "active":
+                    elif status_val == "active":
                         prop.status = "under_financing"
-                    elif status == "cancelled":
+                    elif status_val == "cancelled":
                         prop.status = "available"
 
                 if agreement.acquisition_session_id:
                     # Entire property acquisition
-                    unit_status = "acquired" if status == "completed" else "under_financing" if status == "active" else "available"
+                    unit_status = "acquired" if status_val == "completed" else "under_financing" if status_val == "active" else "available"
                     db.query(PropertyUnit).filter(PropertyUnit.property_id == agreement.asset_id).update({"status": unit_status})
                 elif agreement.unit_id:
                     # Individual unit transaction
                     unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
                     if unit:
-                        if status == "completed":
+                        if status_val == "completed":
                             # Determine if rented or sold
                             unit.status = "rented" if prop and prop.listing_type == "rental" else "sold"
-                        elif status == "active":
+                        elif status_val == "active":
                             unit.status = "under_financing"
-                        elif status == "cancelled":
+                        elif status_val == "cancelled":
                             unit.status = "available"
         
         db.commit()
@@ -1629,6 +1629,61 @@ async def update_admin_agreement_status(
         log_error(admin_logger, f"Failed to update agreement {id}", e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
+# ---------------- REAL ESTATE MANAGEMENT ----------------
+
+@router.get("/real-estate/properties", response_model=AdminListResponse)
+async def list_admin_properties(
+    db: Session = Depends(get_db),
+    user=Depends(role_required(["admin"])),
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None)
+):
+    """List all listed properties from all sellers with search and pagination"""
+    try:
+        query = db.query(Property).options(
+            joinedload(Property.seller),
+            joinedload(Property.images)
+        )
+        
+        if status:
+            query = query.filter(Property.status == status)
+            
+        if search:
+            search_pattern = f"%{search}%"
+            # We join SellerProfile to enable search by business_name
+            query = query.join(SellerProfile, Property.seller_id == SellerProfile.id).filter(
+                or_(
+                    Property.title.ilike(search_pattern),
+                    Property.location.ilike(search_pattern),
+                    Property.description.ilike(search_pattern),
+                    SellerProfile.business_name.ilike(search_pattern)
+                )
+            )
+            
+        total = query.count()
+        offset = (page - 1) * limit
+        paginated = query.order_by(desc(Property.created_at)).offset(offset).limit(limit).all()
+        
+        return AdminListResponse(
+            success=True,
+            message="All property listings fetched successfully",
+            data=[PropertyResponse.model_validate(p) for p in paginated],
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "total_pages": (total + limit - 1) // limit,
+                "has_next": page * limit < total,
+                "has_prev": page > 1
+            },
+            total=total
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch all property listings", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch property listings")
 
 # ---------------- REAL ESTATE ACQUISITION ----------------
 
