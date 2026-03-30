@@ -12,6 +12,15 @@ class PaymentInitializeRequest(BaseModel):
     email: str = Field(..., description="Customer email")
     callback_url: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    payment_method: str = Field(default="paystack", description="Payment method: paystack or manual")
+
+class RecordPaymentRequest(BaseModel):
+    amount: float = Field(..., gt=0, description="Amount to record")
+    reference: Optional[str] = Field(None, description="Optional offline reference/receipt number")
+    notes: Optional[str] = Field(None, description="Additional notes regarding this payment")
+
+class PaymentMethodUpdateRequest(BaseModel):
+    requested_method: str = Field(..., description="The preferred payment method (e.g. 'paystack', 'manual')")
 
 class PaymentInitializeResponse(BaseModel):
     success: bool
@@ -70,6 +79,7 @@ class PaymentResponse(BaseModel):
     payment_category: str
     payment_type: Optional[str] = None
     payment_method: str
+    requested_payment_method: Optional[str] = None
     transaction_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None

@@ -21,7 +21,9 @@ from schemas.payment import (
     TransferResponse,
     BankResponse,
     PaymentResponse,
-    PaymentListResponse
+    PaymentListResponse,
+    PaymentMethodUpdateRequest,
+    RecordPaymentRequest
 )
 from core.logging_config import get_logger, log_error
 from core.notifications_service import create_notification
@@ -34,7 +36,7 @@ router = APIRouter()
 @router.post("/initialize", response_model=PaymentInitializeResponse)
 async def initialize_payment(
     request: PaymentInitializeRequest,
-    user=Depends(role_required(["customer"])),
+    user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Unified payment initialization hub"""
@@ -48,7 +50,8 @@ async def initialize_payment(
             order_id=str(request.order_id) if request.order_id else None,
             agreement_id=str(request.agreement_id) if request.agreement_id else None,
             callback_url=request.callback_url,
-            metadata=request.metadata
+            metadata=request.metadata,
+            payment_method=request.payment_method
         )
         
         return PaymentInitializeResponse(
@@ -82,6 +85,95 @@ async def verify_payment(
         payment_logger.error(f"Verification error: {str(e)}")
         raise HTTPException(status_code=500, detail="Verification failed")
 
+@router.post("/manual/{id}/confirm", response_model=PaymentResponse)
+async def confirm_manual_payment(
+    id: UUID,
+    user=Depends(role_required(["seller"])),
+    db: Session = Depends(get_db)
+):
+    """Verify and confirm a manual payment manually as a seller"""
+    try:
+        payment = payment_service.confirm_manual_payment(db, str(id), user["id"])
+        return PaymentResponse.model_validate(payment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Manual confirmation error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Confirmation failed")
+
+
+@router.post("/{id}/request-change", response_model=PaymentResponse)
+async def request_method_change(
+    id: UUID,
+    request: PaymentMethodUpdateRequest,
+    user=Depends(role_required(["customer"])),
+    db: Session = Depends(get_db)
+):
+    """Request a change of payment method as a customer"""
+    try:
+        payment = payment_service.request_payment_method_change(db, str(id), user["id"], request.requested_method)
+        return PaymentResponse.model_validate(payment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Method change request error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Change request failed")
+
+@router.post("/seller/{id}/approve-change", response_model=PaymentResponse)
+async def approve_method_change(
+    id: UUID,
+    user=Depends(role_required(["seller"])),
+    db: Session = Depends(get_db)
+):
+    """Approve a payment method change request as a seller"""
+    try:
+        payment = payment_service.approve_payment_method_change(db, str(id), user["id"])
+        return PaymentResponse.model_validate(payment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Method change approval error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Approval failed")
+        
+@router.post("/seller/{id}/reject-change", response_model=PaymentResponse)
+async def reject_method_change(
+    id: UUID,
+    user=Depends(role_required(["seller"])),
+    db: Session = Depends(get_db)
+):
+    """Reject a payment method change request as a seller"""
+    try:
+        payment = payment_service.reject_payment_method_change(db, str(id), user["id"])
+        return PaymentResponse.model_validate(payment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Method change rejection error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Rejection failed")
+
+@router.post("/seller/agreements/{id}/record-payment", response_model=PaymentResponse)
+async def record_agreement_payment(
+    id: UUID,
+    request: RecordPaymentRequest,
+    user=Depends(role_required(["seller", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Record an offline/manual payment for an agreement as a seller"""
+    try:
+        payment = payment_service.record_manual_agreement_payment(
+            db=db,
+            seller_id=user["id"],
+            agreement_id=str(id),
+            amount=request.amount,
+            reference=request.reference,
+            notes=request.notes,
+        )
+        return PaymentResponse.model_validate(payment)
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Record payment error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to record payment")
 
 @router.post("/webhook")
 async def paystack_webhook(request: Request, db: Session = Depends(get_db)):

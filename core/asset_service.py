@@ -169,6 +169,10 @@ class AssetService():
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
         
+        unavailable_statuses = ["sold", "awaiting_payment", "under_financing", "pending", "archived"]
+        if getattr(asset, "status", None) in unavailable_statuses:
+            raise HTTPException(status_code=400, detail="Cannot schedule inspection. This asset is currently unavailable.")
+        
         seller_id = asset.seller_id
 
         new_inspection = GeneralInspection(

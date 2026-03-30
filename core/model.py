@@ -261,6 +261,7 @@ class Payment(Base):
     payment_type = Column(Enum("order", "deposit", "installment", "full_pay", 
                                name="asset_payment_type"), nullable=True)
     payment_method = Column(String(50), nullable=True, default="paystack")
+    requested_payment_method = Column(String(50), nullable=True)
     transaction_id = Column(String(100), unique=True, nullable=False)
     
     # Payment URL fields

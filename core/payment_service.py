@@ -32,7 +32,8 @@ class PaymentService:
         order_id: Optional[str] = None,
         agreement_id: Optional[str] = None,
         callback_url: Optional[str] = None,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        payment_method: str = "paystack"
     ) -> Dict[str, Any]:
         """Unified payment initialization for Orders and Asset Agreements"""
         
@@ -90,17 +91,36 @@ class PaymentService:
             **(metadata or {})
         }
 
-        # 5. Initialize Paystack
-        ps_res = self.paystack.initialize_transaction(
-            email=email,
-            amount=amount_kobo,
-            reference=reference,
-            metadata=ps_metadata,
-            callback_url=callback_url
-        )
+        # 5. Initialize Transfer/Payment
+        if payment_method == "manual":
+            # Bypass Paystack for manual transfers
+            ps_res = {
+                "status": True,
+                "data": {
+                    "authorization_url": "manual",
+                    "access_code": "manual_" + reference,
+                    "reference": reference,
+                    "payment_method": "manual"
+                }
+            }
+            # Attach Seller's bank details if available
+            if seller_id:
+                seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
+                if seller:
+                    ps_res["data"]["bank_name"] = seller.payout_bank_name or "Contact Seller"
+                    ps_res["data"]["account_number"] = seller.payout_account_number or "N/A"
+                    ps_res["data"]["account_name"] = seller.business_name
+        else:
+            ps_res = self.paystack.initialize_transaction(
+                email=email,
+                amount=amount_kobo,
+                reference=reference,
+                metadata=ps_metadata,
+                callback_url=callback_url
+            )
 
-        if not ps_res.get("status"):
-            raise HTTPException(status_code=400, detail="Paystack initialization failed")
+            if not ps_res.get("status"):
+                raise HTTPException(status_code=400, detail="Paystack initialization failed")
 
         # 6. Save or Update record
         if existing_payment:
@@ -122,7 +142,8 @@ class PaymentService:
                 transaction_id=reference,
                 reference=reference,
                 authorization_url=ps_res["data"]["authorization_url"],
-                access_code=ps_res["data"]["access_code"]
+                access_code=ps_res["data"]["access_code"],
+                payment_method=payment_method
             )
             db.add(payment)
         
@@ -136,6 +157,100 @@ class PaymentService:
 
         db.commit()
         return ps_res["data"]
+
+    def confirm_manual_payment(self, db: Session, payment_id: str, seller_id: str) -> Payment:
+        """Confirm a manual payment made directly to the seller via cash or transfer."""
+        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.seller_id == seller_id).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
+        
+        if payment.payment_method != "manual":
+            raise HTTPException(status_code=400, detail="Only manual payments can be verified directly")
+        
+        if payment.status == "completed":
+            raise HTTPException(status_code=400, detail="Payment is already completed")
+            
+        # Treat this like a successful callback from paystack
+        self._handle_completion(db, payment)
+        db.commit()
+        
+        return payment
+
+    def request_payment_method_change(self, db: Session, payment_id: str, user_id: str, requested_method: str) -> Payment:
+        """Buyer requests a formal change to the payment method"""
+        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.buyer_id == user_id).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        
+        if payment.status != "pending":
+            raise HTTPException(status_code=400, detail="Can only request method changes for pending payments")
+            
+        if payment.payment_method == requested_method:
+            raise HTTPException(status_code=400, detail=f"Payment is already set to {requested_method}")
+            
+        payment.requested_payment_method = requested_method
+        db.commit()
+        
+        # Notify the seller
+        if payment.seller_id:
+            create_notification(db, {
+                "user_id": str(payment.seller_id),
+                "type": "payment_change_requested",
+                "title": "Payment Method Change Request",
+                "message": f"A customer has requested to change their pending payment method to '{requested_method.upper()}'. Please review and approve this change on your dashboard.",
+                "priority": "normal"
+            })
+            
+        return payment
+        
+    def approve_payment_method_change(self, db: Session, payment_id: str, seller_id: str) -> Payment:
+        """Seller dynamically overrides the formal payment method to unblock the buyer"""
+        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.seller_id == seller_id).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
+        
+        if not payment.requested_payment_method:
+            raise HTTPException(status_code=400, detail="No method change requested for this payment")
+            
+        old_method = payment.payment_method
+        payment.payment_method = payment.requested_payment_method
+        payment.requested_payment_method = None
+        db.commit()
+        
+        # Notify buyer
+        create_notification(db, {
+            "user_id": str(payment.buyer_id),
+            "type": "payment_change_approved",
+            "title": "Payment Method Updated",
+            "message": f"The seller has approved changing your payment method from {old_method} to {payment.payment_method}.",
+            "priority": "high"
+        })
+        
+        return payment
+        
+    def reject_payment_method_change(self, db: Session, payment_id: str, seller_id: str) -> Payment:
+        """Seller rejects the method change request"""
+        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.seller_id == seller_id).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
+            
+        if not payment.requested_payment_method:
+             raise HTTPException(status_code=400, detail="No method change requested for this payment")
+             
+        requested = payment.requested_payment_method
+        payment.requested_payment_method = None
+        db.commit()
+        
+        # Notify buyer
+        create_notification(db, {
+            "user_id": str(payment.buyer_id),
+            "type": "payment_change_rejected",
+            "title": "Payment Method Change Declined",
+            "message": f"The seller declined your request to switch to {requested}. Your payment method remains {payment.payment_method}.",
+            "priority": "normal"
+        })
+        
+        return payment
 
     def verify_transaction(self, db: Session, reference: str) -> Dict[str, Any]:
         """Unified verification logic"""
@@ -292,5 +407,69 @@ class PaymentService:
                     })
 
         db.commit()
+
+    def record_manual_agreement_payment(
+        self,
+        db: Session,
+        seller_id: str,
+        agreement_id: str,
+        amount: float,
+        reference: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Payment:
+        """Record an offline payment (cash/bank transfer) for an agreement as a seller."""
+
+        # 1. Fetch and validate agreement
+        agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == agreement_id).first()
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found")
+
+        if str(agreement.seller_id) != str(seller_id):
+            raise HTTPException(status_code=403, detail="You are not the seller for this agreement")
+
+        if agreement.status in ["cancelled", "completed"]:
+            raise HTTPException(status_code=400, detail=f"Cannot record payments on a {agreement.status} agreement")
+
+        if amount <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be greater than zero")
+
+        remaining = float(agreement.remaining_balance or agreement.total_price or 0)
+        if amount > remaining:
+            raise HTTPException(status_code=400, detail=f"Amount ({amount}) exceeds remaining balance ({remaining})")
+
+        # 2. Determine payment sub-type
+        deposit_paid = float(agreement.deposit_paid or 0)
+        payment_type = "asset_deposit" if deposit_paid == 0 else "asset_installment"
+        category = payment_type
+
+        # 3. Generate reference
+        if not reference:
+            reference = f"MANUAL-{uuid.uuid4().hex[:12].upper()}"
+
+        # 4. Create a completed Payment record
+        payment = Payment(
+            agreement_id=agreement_id,
+            buyer_id=agreement.buyer_id,
+            seller_id=agreement.seller_id,
+            amount=Decimal(str(amount)),
+            status="completed",
+            payment_category=category,
+            payment_type=payment_type,
+            transaction_id=reference,
+            reference=reference,
+            payment_method="manual",
+        )
+        db.add(payment)
+        db.flush()  # Flush to get the ID before _handle_completion
+
+        # 5. Delegate to the existing completion engine
+        #    _handle_completion will update balances, statuses, notifications, and commit
+        self._handle_completion(db, payment)
+
+        logger.info(
+            f"Seller {seller_id} recorded offline payment of {amount} for agreement {agreement_id} (ref: {reference})"
+        )
+
+        return payment
 
 payment_service = PaymentService()
