@@ -74,6 +74,7 @@ class UpdateProfileRequest(BaseModel):
     contact_phone: Optional[str] = Field(None, min_length=7, max_length=20, strip_whitespace=True)
     website_url: Optional[str] = None
     logo_url: Optional[str] = None
+    default_grace_period_days: Optional[int] = Field(None, ge=1, le=30)
 
     class Config:
         from_attributes = True
@@ -121,6 +122,7 @@ class SellerProfileResponse(BaseModel):
     total_products: int
     total_orders: int
     total_revenue: float
+    default_grace_period_days: int = 3
     created_at: datetime
     
     class Config:

@@ -25,6 +25,7 @@ class SellerProfileData(BaseModel):
     total_products: int = 0
     total_orders: int = 0
     total_revenue: Decimal = Decimal('0.00')
+    default_grace_period_days: int = 3
     created_at: datetime
     updated_at: datetime
 
@@ -39,6 +40,7 @@ class SellerProfileUpdate(BaseModel):
     contact_email: Optional[str] = Field(None, max_length=255)
     contact_phone: Optional[str] = Field(None, max_length=50)
     website_url: Optional[str] = Field(None, max_length=500)
+    default_grace_period_days: Optional[int] = Field(None, ge=1, le=30)
 
 class SellerStatsResponse(BaseModel):
     success: bool

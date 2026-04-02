@@ -10,7 +10,8 @@ from routers import (
     notifications as notifications_router,
     seller as seller_router,
     admin as admin_router,
-    payments, banks, automotive, assets, properties
+    payments, banks, automotive, assets, properties, disputes, system_settings,
+    public as public_router
 )
 from core.config import settings
 from db.session import engine
@@ -119,6 +120,9 @@ app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])
 app.include_router(properties.router, prefix="/properties", tags=["Properties"])
 app.include_router(banks.router, prefix="/api/v1", tags=["Banks"])
+app.include_router(disputes.router, prefix="/disputes", tags=["Disputes"])
+app.include_router(system_settings.router, prefix="/system-settings", tags=["System Settings"])
+app.include_router(public_router.router, prefix="/public", tags=["Public"])
 
 # ------------------------------------------------------
 # Global exception handlers

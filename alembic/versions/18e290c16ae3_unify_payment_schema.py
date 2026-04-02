@@ -17,6 +17,37 @@ depends_on = None
 
 
 def upgrade() -> None:
+    migration_context = op.get_context()
+    if migration_context.as_sql:
+        op.execute("ALTER TYPE payment_category ADD VALUE IF NOT EXISTS 'full_pay'")
+        op.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'asset_payment_type') THEN
+                    CREATE TYPE asset_payment_type AS ENUM ('order', 'deposit', 'installment', 'full_pay');
+                END IF;
+            END
+            $$;
+            """
+        )
+        op.add_column(
+            'payments',
+            sa.Column(
+                'payment_type',
+                sa.Enum('order', 'deposit', 'installment', 'full_pay', name='asset_payment_type'),
+                nullable=True,
+            ),
+        )
+        op.alter_column(
+            'payments',
+            'payment_method',
+            existing_type=sa.VARCHAR(length=50),
+            nullable=True,
+            existing_nullable=False,
+        )
+        return
+
     conn = op.get_bind()
 
     # 1. Update payment_category enum (Postgres-specific)

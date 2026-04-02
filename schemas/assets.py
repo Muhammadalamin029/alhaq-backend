@@ -87,6 +87,10 @@ class AssetAgreementResponse(AssetAgreementBase):
     id: UUID
     seller_id: UUID
     user_id: UUID
+    total_paid: Optional[Decimal] = None
+    platform_fee_rate_percent: Optional[Decimal] = None
+    platform_fee_amount: Optional[Decimal] = None
+    seller_net_amount: Optional[Decimal] = None
     next_due_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime

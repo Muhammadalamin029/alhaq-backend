@@ -8,6 +8,7 @@ from core.config import settings
 from core.auth import create_access_token, create_refresh_token, decode_token, get_current_user
 from core.auth_service import auth_service
 from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
+from core.system_settings_service import system_settings_service
 from db.session import get_db
 from schemas.auth import (
     LoginRequest, RegisterRequest, SellerRegisterRequest, TokenResponse, RefreshRequest,
@@ -24,11 +25,12 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-def generate_tokens(user_id: str, role: str):
+def generate_tokens(db: Session, user_id: str, role: str):
     """Generate access and refresh tokens for user"""
     user_data = {"sub": user_id, "role": role}
+    access_token_lifetime_minutes = system_settings_service.get_access_token_lifetime_minutes(db)
     access_token = create_access_token(user_data, timedelta(
-        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+        minutes=access_token_lifetime_minutes))
     refresh_token = create_refresh_token(
         user_data, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
     return access_token, refresh_token
@@ -37,7 +39,7 @@ def generate_tokens(user_id: str, role: str):
 # ---------------- AUTHENTICATION ---------------- #
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_tokens(refresh_request: RefreshRequest):
+def refresh_tokens(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
     """Refresh access token using refresh token"""
     try:
         payload = decode_token(
@@ -52,7 +54,7 @@ def refresh_tokens(refresh_request: RefreshRequest):
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token data")
 
-    access_token, refresh_token = generate_tokens(user_id, role)
+    access_token, refresh_token = generate_tokens(db, user_id, role)
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
@@ -75,7 +77,7 @@ def login(form_data: LoginRequest, db: Session = Depends(get_db)):
             user_role=user.role
         )
         
-        access_token, refresh_token = generate_tokens(str(user.id), user.role)
+        access_token, refresh_token = generate_tokens(db, str(user.id), user.role)
         return TokenResponse(access_token=access_token, refresh_token=refresh_token)
         
     except HTTPException as e:
@@ -117,7 +119,7 @@ def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
         )
         
         # Generate tokens for immediate login after registration
-        access_token, refresh_token = generate_tokens(user_id, "customer")
+        access_token, refresh_token = generate_tokens(db, user_id, "customer")
         return TokenResponse(access_token=access_token, refresh_token=refresh_token)
         
     except IntegrityError as e:
@@ -183,7 +185,7 @@ def register_seller(body: SellerRegisterRequest, db: Session = Depends(get_db)):
         )
         
         # Generate tokens for immediate login after registration
-        access_token, refresh_token = generate_tokens(user_id, "seller")
+        access_token, refresh_token = generate_tokens(db, user_id, "seller")
         return TokenResponse(access_token=access_token, refresh_token=refresh_token)
         
     except IntegrityError as e:

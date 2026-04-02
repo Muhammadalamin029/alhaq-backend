@@ -11,6 +11,7 @@ from schemas.order import (
 from decimal import Decimal
 from uuid import UUID,  uuid4
 from core.logging_config import get_logger, log_error
+from core.system_settings_service import system_settings_service
 
 # Get logger for orders routes
 orders_logger = get_logger("routers.orders")
@@ -87,6 +88,8 @@ async def create_order_item(
     user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db)
 ):
+    system_settings_service.require_verified_email_for_user(db, user["id"], "create an order")
+
     # Additional validation for quantity (belt and suspenders approach)
     if payload.quantity <= 0:
         raise HTTPException(

@@ -6,6 +6,7 @@ from uuid import UUID
 from db.session import get_db
 from core.auth import get_current_user
 from core.automotive_service import automotive_service
+from core.system_settings_service import system_settings_service
 from schemas.automotive import (
     CarCreate, 
     CarUpdate, 
@@ -28,6 +29,9 @@ def update_car_unit(
     """Update a physical car unit (Seller only)"""
     if current_user["role"] not in ["seller", "admin"]:
         raise HTTPException(status_code=403, detail="Only sellers can update units")
+    system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a car unit")
+    if current_user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "update a car unit")
     
     unit = automotive_service.update_car_unit(db, unit_id, UUID(current_user["id"]), body)
     return {
@@ -78,6 +82,9 @@ def create_car_listing(
     """List a new car (Sellers only)"""
     if current_user["role"] not in ["seller", "admin"]:
         raise HTTPException(status_code=403, detail="Only sellers can list cars")
+    system_settings_service.require_verified_email_for_user(db, current_user["id"], "create a car listing")
+    if current_user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "create a car listing")
     
     car = automotive_service.create_car(db, UUID(current_user["id"]), body)
     return {
@@ -139,6 +146,9 @@ def update_car_listing(
     current_user: dict = Depends(get_current_user)
 ):
     """Update car listing (Seller only)"""
+    system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a car listing")
+    if current_user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "update a car listing")
     car = automotive_service.update_car(db, car_id, UUID(current_user["id"]), body)
     return {
         "success": True,
@@ -157,11 +167,13 @@ def add_car_units(
     """Add more physical units to an existing car listing (Seller only)"""
     if current_user["role"] not in ["seller", "admin"]:
         raise HTTPException(status_code=403, detail="Only sellers can add units")
+    system_settings_service.require_verified_email_for_user(db, current_user["id"], "add car units")
+    if current_user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "add car units")
     new_units = automotive_service.add_units_to_listing(db, car_id, UUID(current_user["id"]), units)
     return {
         "success": True,
         "message": "Units added successfully",
         "data": [CarUnitResponse.model_validate(u) for u in new_units]
     }
-
 

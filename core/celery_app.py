@@ -88,4 +88,25 @@ if 'broker_use_ssl' in redis_config:
 
 celery_app.conf.update(config_updates)
 
+from celery.schedules import crontab
+
+celery_app.conf.beat_schedule = {
+    "check_missed_inspections_daily": {
+        "task": "core.tasks.check_missed_inspections",
+        "schedule": crontab(minute=0, hour=0), # Run at midnight UTC
+    },
+    "send_installment_reminders_daily": {
+        "task": "core.tasks.send_installment_reminders",
+        "schedule": crontab(minute=0, hour=8), # Run at 8 AM UTC
+    },
+    "process_installment_defaults_daily": {
+        "task": "core.tasks.process_installment_defaults",
+        "schedule": crontab(minute=0, hour=1), # Run at 1 AM UTC
+    },
+    "send_weekly_admin_report": {
+        "task": "core.tasks.send_weekly_admin_report",
+        "schedule": crontab(minute=0, hour=8, day_of_week="mon"),
+    },
+}
+
 celery_app.autodiscover_tasks(["core"], force=True)

@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException
@@ -14,6 +14,8 @@ from core.model import (
 from core.notifications_service import create_notification
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
+from core.seller_payout_service import seller_payout_service
+from core.system_settings_service import system_settings_service
 from schemas.assets import (
     AssetInspectionSchedule, 
     AssetInspectionReview, 
@@ -24,6 +26,11 @@ from schemas.assets import (
 )
 
 class AssetService():
+    def _to_naive_utc(self, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
     def update_unit_status(self, db: Session, asset_type: str, status: str, unit_id: Optional[UUID] = None, asset_id: Optional[UUID] = None):
         """
         Unified method to update unit or asset status based on inspection/agreement stage.
@@ -157,6 +164,15 @@ class AssetService():
         return AssetMini(id=asset_id, type=asset_type, title=title, price=price, min_deposit_percentage=min_deposit, image_url=image_url)
 
     def schedule_inspection(self, db: Session, user_id: UUID, data: AssetInspectionSchedule) -> GeneralInspection:
+        inspection_date = self._to_naive_utc(data.inspection_date)
+        minimum_notice_hours = system_settings_service.get_minimum_inspection_notice_hours(db)
+        earliest_allowed = datetime.utcnow() + timedelta(hours=minimum_notice_hours)
+        if inspection_date < earliest_allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Inspections must be scheduled at least {minimum_notice_hours} hours in advance.",
+            )
+
         # Get seller_id from asset
         seller_id = None
         if data.asset_type == "automotive":
@@ -181,7 +197,7 @@ class AssetService():
             asset_type=data.asset_type,
             asset_id=data.asset_id,
             unit_id=data.unit_id,
-            inspection_date=data.inspection_date,
+            inspection_date=inspection_date,
             status="scheduled"
         )
         db.add(new_inspection)
@@ -221,6 +237,14 @@ class AssetService():
             if data.inspection_date:
                 # Basic check for date string or datetime
                 new_date = data.inspection_date if isinstance(data.inspection_date, datetime) else datetime.fromisoformat(data.inspection_date.replace('Z', '+00:00'))
+                new_date = self._to_naive_utc(new_date)
+                minimum_notice_hours = system_settings_service.get_minimum_inspection_notice_hours(db)
+                earliest_allowed = datetime.utcnow() + timedelta(hours=minimum_notice_hours)
+                if new_date < earliest_allowed:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Inspection dates must be at least {minimum_notice_hours} hours in advance.",
+                    )
                 if old_date.replace(tzinfo=None) != new_date.replace(tzinfo=None):
                     inspection.inspection_date = new_date
                     date_changed = True
@@ -267,16 +291,57 @@ class AssetService():
             inspection.asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
         return inspection
 
+    def _attach_agreement_financials(self, db: Session, agreement: GeneralAgreement) -> None:
+        total_price = Decimal(str(agreement.total_price or 0))
+        remaining_balance = Decimal(str(agreement.remaining_balance if agreement.remaining_balance is not None else agreement.total_price or 0))
+        platform_fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        completed_payments = db.query(Payment).filter(
+            Payment.agreement_id == agreement.id,
+            Payment.status == "completed",
+        ).all()
+
+        total_paid = Decimal("0.00")
+        platform_fee_amount = Decimal("0.00")
+        seller_net_amount = Decimal("0.00")
+
+        for payment in completed_payments:
+            gross_amount = Decimal(str(payment.amount or 0))
+            payment_metadata = payment.metadata or {}
+            total_paid += gross_amount
+            platform_fee_amount += Decimal(
+                str(
+                    payment_metadata.get(
+                        "agreement_fee_amount",
+                        (gross_amount * platform_fee_rate).quantize(Decimal("0.01")),
+                    )
+                )
+            )
+            seller_net_amount += Decimal(
+                str(
+                    payment_metadata.get(
+                        "seller_net_amount",
+                        gross_amount - (gross_amount * platform_fee_rate).quantize(Decimal("0.01")),
+                    )
+                )
+            )
+
+        agreement.total_paid = max(total_paid, max(total_price - remaining_balance, Decimal("0.00")))
+        agreement.platform_fee_rate_percent = (platform_fee_rate * Decimal("100")).quantize(Decimal("0.01"))
+        agreement.platform_fee_amount = platform_fee_amount
+        agreement.seller_net_amount = seller_net_amount
+
     def list_seller_agreements(self, db: Session, seller_id: UUID) -> List[GeneralAgreement]:
         agreements = db.query(GeneralAgreement).filter(GeneralAgreement.seller_id == seller_id).order_by(GeneralAgreement.created_at.desc()).all()
         for ag in agreements:
             ag.asset = self._get_asset_details(db, ag.asset_type, ag.asset_id)
+            self._attach_agreement_financials(db, ag)
         return agreements
 
     def list_user_agreements(self, db: Session, user_id: UUID) -> List[GeneralAgreement]:
         agreements = db.query(GeneralAgreement).filter(GeneralAgreement.user_id == user_id).order_by(GeneralAgreement.created_at.desc()).all()
         for ag in agreements:
             ag.asset = self._get_asset_details(db, ag.asset_type, ag.asset_id)
+            self._attach_agreement_financials(db, ag)
         return agreements
 
     def get_agreement(self, db: Session, user_id: UUID, agreement_id: UUID) -> Optional[GeneralAgreement]:
@@ -286,6 +351,7 @@ class AssetService():
         ).first()
         if agreement:
             agreement.asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+            self._attach_agreement_financials(db, agreement)
         return agreement
 
     def list_seller_payments(self, db: Session, seller_id: UUID) -> List[Payment]:
@@ -316,6 +382,11 @@ class AssetService():
         
         if not inspection:
             raise HTTPException(status_code=404, detail="Inspection not found")
+
+        # Check if inspection date has arrived
+        current_date = datetime.now().date()
+        if current_date < inspection.inspection_date.date():
+            raise HTTPException(status_code=400, detail="Cannot finalize offer before the scheduled inspection date.")
 
         # 1. Update Inspection
         inspection.status = "agreement_pending"
@@ -506,6 +577,21 @@ class AssetService():
         
         if not inspection:
             raise HTTPException(status_code=404, detail="Inspection not found or unauthorized")
+
+        if inspection.status not in ["scheduled", "confirmed"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Only scheduled or confirmed inspections can be cancelled.",
+            )
+
+        cutoff_hours = system_settings_service.get_inspection_cancellation_cutoff_hours(db)
+        inspection_date = self._to_naive_utc(inspection.inspection_date)
+        cutoff_time = inspection_date - timedelta(hours=cutoff_hours)
+        if datetime.utcnow() >= cutoff_time:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Inspection cancellations must happen at least {cutoff_hours} hours before the scheduled time.",
+            )
         
         db.delete(inspection)
         db.commit()
@@ -588,5 +674,34 @@ class AssetService():
     def verify_agreement_payment(self, db: Session, reference: str) -> Dict[str, Any]:
         """Verify an agreement payment using the unified payment service"""
         return payment_service.verify_transaction(db, reference)
+
+    def cancel_agreement(self, db: Session, user_id: UUID, agreement_id: UUID) -> GeneralAgreement:
+        """Allow a buyer to cancel their agreement if they haven't made a deposit yet"""
+        agreement = db.query(GeneralAgreement).filter(
+            GeneralAgreement.id == agreement_id,
+            GeneralAgreement.buyer_id == user_id
+        ).first()
+
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
+            
+        if agreement.status != "pending_deposit":
+            raise HTTPException(status_code=400, detail="Can only cancel agreements that are waiting for a deposit.")
+            
+        agreement.status = "cancelled"
+        
+        db.commit()
+        db.refresh(agreement)
+        
+        # Notify Seller
+        create_notification(db, {
+            "user_id": str(agreement.seller_id),
+            "type": "agreement_cancelled",
+            "title": "Agreement Cancelled By Buyer",
+            "message": f"A buyer has cancelled their agreement for your {agreement.asset_type}.",
+            "channels": ["in_app", "email"]
+        })
+        
+        return agreement
 
 asset_service = AssetService()

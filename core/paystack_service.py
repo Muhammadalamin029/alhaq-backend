@@ -269,6 +269,63 @@ class PaystackService:
             logger.error(f"Paystack status error: {str(e)}")
             raise Exception(f"Failed to get transaction status: {str(e)}")
 
+    def initiate_refund(self, reference: str, amount: Optional[int] = None, customer_note: str = "Refund processed") -> Dict[str, Any]:
+        """
+        Initiate a refund for a successful Paystack transaction
+        
+        Args:
+            reference: Transaction reference to refund
+            amount: Optional amount in kobo (NGN). If not provided, refunds entire amount.
+            customer_note: Note to customer
+            
+        Returns:
+            Dict containing refund details
+        """
+        if not self.secret_key or not self.public_key:
+            logger.warning("Paystack keys not configured. Using mock refund for development.")
+            return {
+                "status": True,
+                "message": "Refund has been queued for processing",
+                "data": {
+                    "transaction": {"reference": reference},
+                    "integration": 123456,
+                    "deducted_amount": amount or 0,
+                    "channel": "backend",
+                    "merchant_note": "Mock refund",
+                    "customer_note": customer_note,
+                    "status": "pending",
+                    "refunded_by": "System",
+                    "expected_at": "2024-01-01T00:00:00.000Z",
+                    "currency": "NGN",
+                    "domain": "test",
+                    "amount": amount or 0,
+                    "fully_deducted": False,
+                    "id": 1234,
+                    "createdAt": "2024-01-01T00:00:00.000Z",
+                    "updatedAt": "2024-01-01T00:00:00.000Z"
+                }
+            }
+            
+        try:
+            url = f"{self.base_url}/refund"
+            payload = {
+                "transaction": reference,
+                "customer_note": customer_note
+            }
+            if amount is not None:
+                payload["amount"] = amount
+                
+            response = requests.post(url, json=payload, headers=self.headers)
+            response.raise_for_status()
+            
+            data = response.json()
+            logger.info(f"Paystack refund initiated for: {reference}")
+            return data
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Paystack refund error: {str(e)}")
+            raise Exception(f"Failed to initiate refund: {str(e)}")
+
     def resolve_account_number(self, account_number: str, bank_code: str) -> Dict[str, Any]:
         """
         Resolve account number to get account name and verify account

@@ -22,6 +22,63 @@ class PaymentService:
     def __init__(self):
         self.paystack = paystack_service
 
+    def _calculate_agreement_fee_amount(self, db: Session, amount: Decimal) -> Decimal:
+        fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        return (Decimal(str(amount)) * fee_rate).quantize(Decimal("0.01"))
+
+    def _calculate_agreement_net_amount(self, db: Session, amount: Decimal) -> Decimal:
+        gross_amount = Decimal(str(amount))
+        return gross_amount - self._calculate_agreement_fee_amount(db, gross_amount)
+
+    def _build_agreement_payment_breakdown(self, db: Session, amount: Decimal) -> Dict[str, str]:
+        gross_amount = Decimal(str(amount))
+        fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        fee_amount = self._calculate_agreement_fee_amount(db, gross_amount)
+        seller_net_amount = gross_amount - fee_amount
+        return {
+            "agreement_fee_rate_percent": str((fee_rate * Decimal("100")).quantize(Decimal("0.01"))),
+            "agreement_fee_amount": str(fee_amount),
+            "seller_net_amount": str(seller_net_amount),
+        }
+
+    def _get_completed_agreement_totals(self, db: Session, agreement_id: str) -> Dict[str, Decimal]:
+        totals = {
+            "total_paid": Decimal("0.00"),
+            "platform_fee_amount": Decimal("0.00"),
+            "seller_net_amount": Decimal("0.00"),
+        }
+        completed_payments = (
+            db.query(Payment)
+            .filter(
+                Payment.agreement_id == agreement_id,
+                Payment.status == "completed",
+            )
+            .all()
+        )
+
+        for completed_payment in completed_payments:
+            gross_amount = Decimal(str(completed_payment.amount or 0))
+            payment_metadata = completed_payment.metadata or {}
+            fee_amount = payment_metadata.get("agreement_fee_amount")
+            seller_net_amount = payment_metadata.get("seller_net_amount")
+
+            totals["total_paid"] += gross_amount
+            totals["platform_fee_amount"] += (
+                Decimal(str(fee_amount))
+                if fee_amount is not None
+                else self._calculate_agreement_fee_amount(db, gross_amount)
+            )
+            totals["seller_net_amount"] += (
+                Decimal(str(seller_net_amount))
+                if seller_net_amount is not None
+                else self._calculate_agreement_net_amount(db, gross_amount)
+            )
+
+        return totals
+
+    def _get_total_agreement_net_paid(self, db: Session, agreement_id: str) -> Decimal:
+        return self._get_completed_agreement_totals(db, agreement_id)["seller_net_amount"]
+
     def initialize_payment(
         self, 
         db: Session, 
@@ -36,6 +93,8 @@ class PaymentService:
         payment_method: str = "paystack"
     ) -> Dict[str, Any]:
         """Unified payment initialization for Orders and Asset Agreements"""
+        if payment_method != "paystack":
+            raise HTTPException(status_code=400, detail="Manual payments have been removed. Please use Paystack.")
         
         # 1. Validation based on category
         if category == "order" and not order_id:
@@ -91,36 +150,17 @@ class PaymentService:
             **(metadata or {})
         }
 
-        # 5. Initialize Transfer/Payment
-        if payment_method == "manual":
-            # Bypass Paystack for manual transfers
-            ps_res = {
-                "status": True,
-                "data": {
-                    "authorization_url": "manual",
-                    "access_code": "manual_" + reference,
-                    "reference": reference,
-                    "payment_method": "manual"
-                }
-            }
-            # Attach Seller's bank details if available
-            if seller_id:
-                seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
-                if seller:
-                    ps_res["data"]["bank_name"] = seller.payout_bank_name or "Contact Seller"
-                    ps_res["data"]["account_number"] = seller.payout_account_number or "N/A"
-                    ps_res["data"]["account_name"] = seller.business_name
-        else:
-            ps_res = self.paystack.initialize_transaction(
-                email=email,
-                amount=amount_kobo,
-                reference=reference,
-                metadata=ps_metadata,
-                callback_url=callback_url
-            )
+        # 5. Initialize Paystack transaction
+        ps_res = self.paystack.initialize_transaction(
+            email=email,
+            amount=amount_kobo,
+            reference=reference,
+            metadata=ps_metadata,
+            callback_url=callback_url
+        )
 
-            if not ps_res.get("status"):
-                raise HTTPException(status_code=400, detail="Paystack initialization failed")
+        if not ps_res.get("status"):
+            raise HTTPException(status_code=400, detail="Paystack initialization failed")
 
         # 6. Save or Update record
         if existing_payment:
@@ -157,100 +197,6 @@ class PaymentService:
 
         db.commit()
         return ps_res["data"]
-
-    def confirm_manual_payment(self, db: Session, payment_id: str, seller_id: str) -> Payment:
-        """Confirm a manual payment made directly to the seller via cash or transfer."""
-        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.seller_id == seller_id).first()
-        if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
-        
-        if payment.payment_method != "manual":
-            raise HTTPException(status_code=400, detail="Only manual payments can be verified directly")
-        
-        if payment.status == "completed":
-            raise HTTPException(status_code=400, detail="Payment is already completed")
-            
-        # Treat this like a successful callback from paystack
-        self._handle_completion(db, payment)
-        db.commit()
-        
-        return payment
-
-    def request_payment_method_change(self, db: Session, payment_id: str, user_id: str, requested_method: str) -> Payment:
-        """Buyer requests a formal change to the payment method"""
-        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.buyer_id == user_id).first()
-        if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found")
-        
-        if payment.status != "pending":
-            raise HTTPException(status_code=400, detail="Can only request method changes for pending payments")
-            
-        if payment.payment_method == requested_method:
-            raise HTTPException(status_code=400, detail=f"Payment is already set to {requested_method}")
-            
-        payment.requested_payment_method = requested_method
-        db.commit()
-        
-        # Notify the seller
-        if payment.seller_id:
-            create_notification(db, {
-                "user_id": str(payment.seller_id),
-                "type": "payment_change_requested",
-                "title": "Payment Method Change Request",
-                "message": f"A customer has requested to change their pending payment method to '{requested_method.upper()}'. Please review and approve this change on your dashboard.",
-                "priority": "normal"
-            })
-            
-        return payment
-        
-    def approve_payment_method_change(self, db: Session, payment_id: str, seller_id: str) -> Payment:
-        """Seller dynamically overrides the formal payment method to unblock the buyer"""
-        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.seller_id == seller_id).first()
-        if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
-        
-        if not payment.requested_payment_method:
-            raise HTTPException(status_code=400, detail="No method change requested for this payment")
-            
-        old_method = payment.payment_method
-        payment.payment_method = payment.requested_payment_method
-        payment.requested_payment_method = None
-        db.commit()
-        
-        # Notify buyer
-        create_notification(db, {
-            "user_id": str(payment.buyer_id),
-            "type": "payment_change_approved",
-            "title": "Payment Method Updated",
-            "message": f"The seller has approved changing your payment method from {old_method} to {payment.payment_method}.",
-            "priority": "high"
-        })
-        
-        return payment
-        
-    def reject_payment_method_change(self, db: Session, payment_id: str, seller_id: str) -> Payment:
-        """Seller rejects the method change request"""
-        payment = db.query(Payment).filter(Payment.id == payment_id, Payment.seller_id == seller_id).first()
-        if not payment:
-            raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
-            
-        if not payment.requested_payment_method:
-             raise HTTPException(status_code=400, detail="No method change requested for this payment")
-             
-        requested = payment.requested_payment_method
-        payment.requested_payment_method = None
-        db.commit()
-        
-        # Notify buyer
-        create_notification(db, {
-            "user_id": str(payment.buyer_id),
-            "type": "payment_change_rejected",
-            "title": "Payment Method Change Declined",
-            "message": f"The seller declined your request to switch to {requested}. Your payment method remains {payment.payment_method}.",
-            "priority": "normal"
-        })
-        
-        return payment
 
     def verify_transaction(self, db: Session, reference: str) -> Dict[str, Any]:
         """Unified verification logic"""
@@ -303,14 +249,20 @@ class PaymentService:
             agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == payment.agreement_id).first()
             if agreement:
                 logger.info(f"Loaded agreement status: {agreement.status}, Asset Type: {agreement.asset_type}")
+                gross_amount = Decimal(str(payment.amount or 0))
+                payment_metadata = dict(payment.metadata or {})
+                if "seller_net_amount" not in payment_metadata or "agreement_fee_amount" not in payment_metadata:
+                    payment_metadata.update(self._build_agreement_payment_breakdown(db, gross_amount))
+                    payment.metadata = payment_metadata
+                seller_net_amount = Decimal(str(payment_metadata.get("seller_net_amount", "0")))
                 if (payment.payment_type or payment.payment_category) in ["deposit", "asset_deposit"]:
-                    agreement.deposit_paid = (agreement.deposit_paid or 0) + payment.amount
-                    agreement.remaining_balance = (agreement.remaining_balance or agreement.total_price) - payment.amount
+                    agreement.deposit_paid = Decimal(str(agreement.deposit_paid or 0)) + gross_amount
+                    agreement.remaining_balance = Decimal(str(agreement.remaining_balance or agreement.total_price)) - gross_amount
                     
                     # If this "deposit" actually paid the full price
                     if agreement.remaining_balance <= 0:
                         agreement.status = "completed"
-                        agreement.remaining_balance = 0
+                        agreement.remaining_balance = Decimal("0.00")
                         logger.info(f"Agreement {agreement.id} fully paid via deposit")
                     else:
                         agreement.status = "active"
@@ -329,20 +281,23 @@ class PaymentService:
                         asset_id=agreement.asset_id
                     )
                 else:
-                    agreement.remaining_balance = (agreement.remaining_balance or 0) - payment.amount
+                    agreement.remaining_balance = Decimal(str(agreement.remaining_balance or 0)) - gross_amount
                     if agreement.remaining_balance <= 0:
                         agreement.status = "completed"
+                        agreement.remaining_balance = Decimal("0.00")
 
                 # Update Seller Balance for Assets
                 seller = db.query(SellerProfile).filter(SellerProfile.id == agreement.seller_id).first()
                 if seller:
-                    seller.pending_balance = (seller.pending_balance or 0) + payment.amount
-                    seller.total_revenue = (seller.total_revenue or 0) + payment.amount
-                    
-                    # If agreement is completed, move the total paid from pending to available
+                    seller.total_revenue = Decimal(str(seller.total_revenue or 0)) + gross_amount
+                    seller.pending_balance = Decimal(str(seller.pending_balance or 0)) + seller_net_amount
+
                     if agreement.status == "completed":
-                        seller.pending_balance -= agreement.total_price
-                        seller.available_balance = (seller.available_balance or 0) + agreement.total_price
+                        total_net_paid = self._get_total_agreement_net_paid(db, str(agreement.id))
+                        seller.pending_balance = Decimal(str(seller.pending_balance or 0)) - total_net_paid
+                        if seller.pending_balance < 0:
+                            seller.pending_balance = Decimal("0.00")
+                        seller.available_balance = Decimal(str(seller.available_balance or 0)) + total_net_paid
                     else:
                         # Update next_due_date to 1 month from now for installments
                         from datetime import timedelta
@@ -407,69 +362,55 @@ class PaymentService:
                     })
 
         db.commit()
-
-    def record_manual_agreement_payment(
+        
+    def refund_payment(
         self,
         db: Session,
-        seller_id: str,
-        agreement_id: str,
-        amount: float,
-        reference: Optional[str] = None,
-        notes: Optional[str] = None,
+        payment_id: str,
+        admin_id: str,
+        reason: str = "Requested by admin/buyer"
     ) -> Payment:
-        """Record an offline payment (cash/bank transfer) for an agreement as a seller."""
-
-        # 1. Fetch and validate agreement
-        agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == agreement_id).first()
-        if not agreement:
-            raise HTTPException(status_code=404, detail="Agreement not found")
-
-        if str(agreement.seller_id) != str(seller_id):
-            raise HTTPException(status_code=403, detail="You are not the seller for this agreement")
-
-        if agreement.status in ["cancelled", "completed"]:
-            raise HTTPException(status_code=400, detail=f"Cannot record payments on a {agreement.status} agreement")
-
-        if amount <= 0:
-            raise HTTPException(status_code=400, detail="Amount must be greater than zero")
-
-        remaining = float(agreement.remaining_balance or agreement.total_price or 0)
-        if amount > remaining:
-            raise HTTPException(status_code=400, detail=f"Amount ({amount}) exceeds remaining balance ({remaining})")
-
-        # 2. Determine payment sub-type
-        deposit_paid = float(agreement.deposit_paid or 0)
-        payment_type = "asset_deposit" if deposit_paid == 0 else "asset_installment"
-        category = payment_type
-
-        # 3. Generate reference
-        if not reference:
-            reference = f"MANUAL-{uuid.uuid4().hex[:12].upper()}"
-
-        # 4. Create a completed Payment record
-        payment = Payment(
-            agreement_id=agreement_id,
-            buyer_id=agreement.buyer_id,
-            seller_id=agreement.seller_id,
-            amount=Decimal(str(amount)),
-            status="completed",
-            payment_category=category,
-            payment_type=payment_type,
-            transaction_id=reference,
-            reference=reference,
-            payment_method="manual",
-        )
-        db.add(payment)
-        db.flush()  # Flush to get the ID before _handle_completion
-
-        # 5. Delegate to the existing completion engine
-        #    _handle_completion will update balances, statuses, notifications, and commit
-        self._handle_completion(db, payment)
-
-        logger.info(
-            f"Seller {seller_id} recorded offline payment of {amount} for agreement {agreement_id} (ref: {reference})"
-        )
-
-        return payment
+        """Process a refund via Paystack and update local records"""
+        payment = db.query(Payment).filter(Payment.id == payment_id).first()
+        
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+            
+        if payment.status != "completed":
+            raise HTTPException(status_code=400, detail=f"Cannot refund a payment with status '{payment.status}'")
+            
+        if payment.payment_method != "paystack":
+            raise HTTPException(status_code=400, detail="Only Paystack payments can be refunded via API")
+            
+        # Call Paystack refund
+        try:
+            refund_res = self.paystack.initiate_refund(
+                reference=payment.reference,
+                customer_note=reason
+            )
+            
+            if refund_res.get("status"):
+                payment.status = "refunded"
+                payment.metadata = {**(payment.metadata or {}), "refund_reason": reason, "refunded_by": str(admin_id), "refund_data": refund_res.get("data")}
+                
+                # Notify Buyer
+                create_notification(db, {
+                    "user_id": str(payment.buyer_id),
+                    "type": "payment_successful", # fallback
+                    "title": "Payment Refunded",
+                    "message": f"Your payment of ₦{payment.amount:,.2f} has been refunded. Reason: {reason}",
+                    "channels": ["in_app", "email"]
+                })
+                
+                db.commit()
+                logger.info(f"Payment {payment_id} refunded successfully.")
+                return payment
+            else:
+                raise HTTPException(status_code=400, detail=refund_res.get("message", "Refund failed"))
+                
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error refunding payment {payment_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Refund failed: {str(e)}")
 
 payment_service = PaymentService()

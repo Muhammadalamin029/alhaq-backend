@@ -53,6 +53,53 @@ class User(Base):
     agreements = relationship("GeneralAgreement", back_populates="user")
 
 
+# ---------------- SYSTEM SETTINGS ----------------
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    scope = Column(String(50), unique=True, nullable=False, default="default")
+
+    # General settings
+    site_name = Column(String(255), nullable=False, default="Alhaq")
+    site_description = Column(Text, nullable=True)
+    contact_email = Column(String(255), nullable=True)
+    support_email = Column(String(255), nullable=True)
+    currency = Column(String(10), nullable=False, default="NGN")
+    language = Column(String(10), nullable=False, default="en")
+    timezone = Column(String(100), nullable=False, default="Africa/Lagos")
+
+    # Payment settings
+    commission_rate_percent = Column(Numeric(5, 2), nullable=False, default=5)
+    minimum_payout_amount = Column(Numeric(15, 2), nullable=False, default=10000)
+    payout_schedule = Column(String(20), nullable=False, default="weekly")
+
+    # Inspection policy settings
+    minimum_inspection_notice_hours = Column(Integer, nullable=False, default=24)
+    inspection_cancellation_cutoff_hours = Column(Integer, nullable=False, default=12)
+    missed_inspection_expiry_hours = Column(Integer, nullable=False, default=24)
+
+    # Security settings
+    require_email_verification = Column(Boolean, nullable=False, default=True)
+    require_seller_kyc = Column(Boolean, nullable=False, default=True)
+    access_token_lifetime_minutes = Column(Integer, nullable=False, default=30)
+    max_login_attempts = Column(Integer, nullable=False, default=5)
+    lockout_duration_minutes = Column(Integer, nullable=False, default=15)
+
+    # Notification settings
+    new_user_notifications = Column(Boolean, nullable=False, default=True)
+    new_seller_notifications = Column(Boolean, nullable=False, default=True)
+    dispute_notifications = Column(Boolean, nullable=False, default=True)
+    system_alerts = Column(Boolean, nullable=False, default=True)
+    weekly_reports = Column(Boolean, nullable=False, default=True)
+
+    updated_by_user_id = Column(UUID, ForeignKey("users.id"), nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+
 # ---------------- PROFILES (CUSTOMERS) ----------------
 class Profile(Base):
     __tablename__ = "profiles"
@@ -97,6 +144,8 @@ class SellerProfile(Base):
     kyc_status = Column(Enum("pending", "approved", "rejected",
                         name="seller_kyc_status"), default="pending")
     approval_date = Column(Date, nullable=True)
+    
+    default_grace_period_days = Column(Integer, default=3)
 
     total_products = Column(Integer, default=0)
     total_orders = Column(Integer, default=0)
@@ -261,7 +310,6 @@ class Payment(Base):
     payment_type = Column(Enum("order", "deposit", "installment", "full_pay", 
                                name="asset_payment_type"), nullable=True)
     payment_method = Column(String(50), nullable=True, default="paystack")
-    requested_payment_method = Column(String(50), nullable=True)
     transaction_id = Column(String(100), unique=True, nullable=False)
     
     # Payment URL fields
@@ -759,3 +807,27 @@ class AuditLog(Base):
 
     # Relationships
     admin = relationship("User")
+
+
+# ---------------- DISPUTES (NEW) ----------------
+
+class Dispute(Base):
+    __tablename__ = "disputes"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+    order_id = Column(UUID, ForeignKey("orders.id"), nullable=True, index=True)
+    agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=True, index=True)
+    
+    title = Column(String(255), nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(Enum("open", "under_review", "resolved", "closed", name="dispute_status_enum"), default="open")
+    resolution_notes = Column(Text, nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Relationships
+    user = relationship("User")
+    order = relationship("Order")
+    agreement = relationship("GeneralAgreement")

@@ -10,6 +10,7 @@ from core.auth import hashpassword, verify_password
 from core.password_policy import PasswordPolicy, validate_password_change
 from schemas.auth import UserRole, UserProfileResponse, CustomerProfileResponse, SellerProfileResponse
 from core.notifications_service import create_notification
+from core.system_settings_service import system_settings_service
 
 
 class AuthService:
@@ -74,6 +75,21 @@ class AuthService:
         except Exception as e:
             # Log error but don't fail user creation
             print(f"Failed to create welcome notification: {e}")
+
+        try:
+            system_settings_service.notify_admins(
+                db=db,
+                event_key="new_user",
+                title="New User Registration",
+                message=f"A new {role.value} account was created for {email}.",
+                data={
+                    "user_id": str(user.id),
+                    "email": email,
+                    "role": role.value,
+                },
+            )
+        except Exception as e:
+            print(f"Failed to notify admins about new user: {e}")
         
         return str(user.id)
 
@@ -113,6 +129,22 @@ class AuthService:
         db.add(seller_profile)
         db.commit()
         db.refresh(user)
+
+        try:
+            system_settings_service.notify_admins(
+                db=db,
+                event_key="new_user",
+                title="New Seller Registration",
+                message=f"A new seller account was created for {email}.",
+                data={
+                    "user_id": str(user.id),
+                    "email": email,
+                    "role": UserRole.SELLER.value,
+                },
+            )
+        except Exception as e:
+            print(f"Failed to notify admins about new seller: {e}")
+
         return str(user.id)
 
     def authenticate_user(self, db: Session, email: str, password: str) -> Tuple[User, bool]:
@@ -140,22 +172,25 @@ class AuthService:
                 detail=f"Account is locked. Try again in {int(remaining_time)} minutes."
             )
 
+        max_login_attempts = system_settings_service.get_max_login_attempts(db)
+        lockout_duration_minutes = system_settings_service.get_lockout_duration_minutes(db)
+
         # Verify password
         if not verify_password(password, user.hashed_password):
             # Increment failed login attempts
             user.failed_login_attempts += 1
 
-            # Lock account after 5 failed attempts
-            if user.failed_login_attempts >= 5:
-                user.locked_until = datetime.utcnow() + timedelta(minutes=15)
+            # Lock account after the configured number of failed attempts
+            if user.failed_login_attempts >= max_login_attempts:
+                user.locked_until = datetime.utcnow() + timedelta(minutes=lockout_duration_minutes)
                 db.commit()
                 raise HTTPException(
                     status_code=status.HTTP_423_LOCKED,
-                    detail="Account locked due to multiple failed login attempts. Try again in 15 minutes."
+                    detail=f"Account locked due to multiple failed login attempts. Try again in {lockout_duration_minutes} minutes."
                 )
 
             db.commit()
-            remaining_attempts = 5 - user.failed_login_attempts
+            remaining_attempts = max_login_attempts - user.failed_login_attempts
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Invalid credentials. {remaining_attempts} attempts remaining before account lock."
@@ -265,6 +300,8 @@ class AuthService:
                     profile.website_url = update_data["website_url"]
                 if "logo_url" in update_data:
                     profile.logo_url = update_data["logo_url"]
+                if "default_grace_period_days" in update_data:
+                    profile.default_grace_period_days = update_data["default_grace_period_days"]
 
         user.updated_at = datetime.utcnow()
         db.commit()

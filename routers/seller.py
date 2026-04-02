@@ -25,6 +25,7 @@ from schemas.seller_payout import (
 from core.seller_payout_service import seller_payout_service
 from core.logging_config import get_logger, log_error
 from core.order import OrderService
+from core.system_settings_service import system_settings_service
 from copy import deepcopy
 
 # Get logger for seller routes
@@ -447,6 +448,8 @@ async def get_seller_analytics(
 ):
     """Get comprehensive seller analytics data"""
     try:
+        if user["role"] == "seller":
+            system_settings_service.require_approved_seller_kyc(db, user["id"], "access seller analytics")
         seller_id = user["id"]
         
         # Calculate date range based on period
@@ -776,6 +779,17 @@ async def submit_kyc_documents(
         # Update KYC status to pending
         seller_profile.kyc_status = "pending"
         db.commit()
+
+        system_settings_service.notify_admins(
+            db=db,
+            event_key="new_seller",
+            title="Seller KYC Submitted",
+            message=f"{seller_profile.business_name} submitted KYC documents for review.",
+            data={
+                "seller_id": str(seller_profile.id),
+                "business_name": seller_profile.business_name,
+            },
+        )
         
         return {
             "success": True,
@@ -797,6 +811,9 @@ async def update_seller_order_status(
 ):
     """Update order status for seller's items only (seller-specific endpoint)"""
     try:
+        system_settings_service.require_verified_email_for_user(db, user["id"], "manage seller orders")
+        if user["role"] == "seller":
+            system_settings_service.require_approved_seller_kyc(db, user["id"], "manage seller orders")
         seller_logger.info(f"Seller {user['id']} updating order {order_id} status to {payload.status}")
         
         # Check if order exists and seller has items in it
@@ -879,6 +896,8 @@ async def get_seller_balance(
 ):
     """Get seller balance and payout information"""
     try:
+        if user["role"] == "seller":
+            system_settings_service.require_approved_seller_kyc(db, user["id"], "view payout balance")
         seller_id = user["id"]
         
         seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
@@ -900,7 +919,7 @@ async def get_seller_balance(
             pending_balance=seller.pending_balance,
             total_paid=seller.total_paid,
             total_revenue=seller.total_revenue,
-            platform_fee_rate=seller_payout_service.PLATFORM_FEE_RATE,
+            platform_fee_rate=seller_payout_service.get_platform_fee_rate(db),
             payout_account_configured=payout_account_configured
         )
         
@@ -927,6 +946,9 @@ async def request_payout(
 ):
     """Request a payout for seller earnings"""
     try:
+        system_settings_service.require_verified_email_for_user(db, user["id"], "request a payout")
+        if user["role"] == "seller":
+            system_settings_service.require_approved_seller_kyc(db, user["id"], "request a payout")
         seller_id = user["id"]
         
         # Validate payout amount

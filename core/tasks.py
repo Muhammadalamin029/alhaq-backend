@@ -4,6 +4,9 @@ from celery import current_task
 from core.celery_app import celery_app
 from core.email_service import email_service
 from core.redis_client import verification_manager
+from core.model import User, Profile, SellerProfile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, PhoneUnit, Order, Dispute
+from core.system_settings_service import system_settings_service
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -367,6 +370,11 @@ def send_notification(self, user_id: str, notification_type: str, title: str, me
             user = db.query(User).filter(User.id == user_id).first()
             user_email = user.email if user else None
             
+            # Ensure email is always included if channels are provided
+            final_channels = channels or ["in_app", "email"]
+            if channels and "email" not in channels:
+                final_channels.append("email")
+
             # Prepare notification payload
             notification_payload = {
                 "user_id": user_id,
@@ -374,7 +382,7 @@ def send_notification(self, user_id: str, notification_type: str, title: str, me
                 "title": title,
                 "message": message,
                 "priority": priority,
-                "channels": channels or ["in_app", "email"],
+                "channels": final_channels,
                 "data": data,
                 "to_email": user_email  # Include user's email for email sending
             }
@@ -400,3 +408,208 @@ def send_notification(self, user_id: str, notification_type: str, title: str, me
         logger.error(f"Error sending notification to user {user_id}: {str(exc)}")
         # Retry the task with exponential backoff
         raise self.retry(exc=exc, countdown=60, max_retries=3)
+
+
+@celery_app.task(name='core.tasks.check_missed_inspections')
+def check_missed_inspections():
+    """
+    Periodic task to check for inspections that were missed (24 hours after scheduled date).
+    Marks them as rejected and notifies both parties.
+    """
+    try:
+        db = next(get_db())
+        try:
+            # Find inspections that are "scheduled" or "confirmed" and have passed the configured expiry window
+            expiry_hours = system_settings_service.get_missed_inspection_expiry_hours(db)
+            expiry_threshold = datetime.utcnow() - timedelta(hours=expiry_hours)
+            expired_inspections = db.query(GeneralInspection).filter(
+                GeneralInspection.status.in_(["scheduled", "confirmed"]),
+                GeneralInspection.inspection_date < expiry_threshold
+            ).all()
+
+            for inspection in expired_inspections:
+                inspection.status = "rejected"
+                inspection.notes = (inspection.notes or "") + "\nSystem: Automatically expired due to missed date."
+
+                # Notify Buyer
+                create_notification(db, {
+                    "user_id": str(inspection.user_id),
+                    "type": "order_processing", # Fallback type
+                    "title": "Inspection Missed",
+                    "message": f"Your scheduled inspection has expired and was rejected.",
+                    "channels": ["in_app", "email"]
+                })
+                # Notify Seller
+                create_notification(db, {
+                    "user_id": str(inspection.seller_id),
+                    "type": "order_processing",
+                    "title": "Inspection Missed",
+                    "message": f"A scheduled inspection was missed and has automatically expired.",
+                    "channels": ["in_app", "email"]
+                })
+
+            if expired_inspections:
+                db.commit()
+                logger.info(f"Cleaned up {len(expired_inspections)} expired inspections using {expiry_hours} hour expiry.")
+            
+            return {"success": True, "expired_count": len(expired_inspections)}
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error checking missed inspections: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@celery_app.task(name='core.tasks.send_installment_reminders')
+def send_installment_reminders():
+    """
+    Periodic task to find agreements with approaching installment due date (< 3 days).
+    Sends reminders to buyers.
+    """
+    try:
+        db = next(get_db())
+        try:
+            # Remind 3 days before next_due_date
+            now = datetime.utcnow()
+            reminder_threshold_end = now + timedelta(days=3)
+            
+            due_agreements = db.query(GeneralAgreement).filter(
+                GeneralAgreement.status == "active",
+                GeneralAgreement.next_due_date > now,
+                GeneralAgreement.next_due_date <= reminder_threshold_end
+            ).all()
+
+            for agreement in due_agreements:
+                create_notification(db, {
+                    "user_id": str(agreement.user_id),
+                    "type": "payment_reminder",
+                    "title": "Upcoming Installment Reminder",
+                    "message": f"Your next installment for agreement is due soon (on {agreement.next_due_date.strftime('%Y-%m-%d')}).",
+                    "channels": ["in_app", "email"]
+                })
+
+            if due_agreements:
+                db.commit()
+            
+            return {"success": True, "reminded_count": len(due_agreements)}
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error sending installment reminders: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@celery_app.task(name='core.tasks.process_installment_defaults')
+def process_installment_defaults():
+    """
+    Periodic task to mark agreements as defaulted where the next due date 
+    plus the seller's configured grace period has elapsed without payment.
+    """
+    try:
+        db = next(get_db())
+        try:
+            now = datetime.utcnow()
+            
+            agreements = db.query(GeneralAgreement).join(SellerProfile).filter(
+                GeneralAgreement.status == "active",
+                GeneralAgreement.next_due_date < now
+            ).all()
+
+            default_count = 0
+            for agreement in agreements:
+                grace_period = agreement.seller.default_grace_period_days or 3
+                if now > agreement.next_due_date + timedelta(days=grace_period):
+                    agreement.status = "defaulted"
+                    default_count += 1
+
+                    # Notify Buyer
+                    create_notification(db, {
+                        "user_id": str(agreement.user_id),
+                        "type": "installment_defaulted",
+                        "title": "Agreement Defaulted",
+                        "message": f"Your agreement has been defaulted due to missed payments.",
+                        "channels": ["in_app", "email"]
+                    })
+                    # Notify Seller
+                    create_notification(db, {
+                        "user_id": str(agreement.seller_id),
+                        "type": "installment_defaulted",
+                        "title": "Agreement Defaulted",
+                        "message": f"An agreement has been defaulted due to buyer missing payments past your grace period.",
+                        "channels": ["in_app", "email"]
+                    })
+
+                    # Free up the unit/asset
+                    if agreement.unit_id:
+                        if agreement.asset_type == "automotive":
+                            unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
+                            if unit: unit.status = "available"
+                        elif agreement.asset_type == "property":
+                            unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
+                            if unit: unit.status = "available"
+                        elif agreement.asset_type == "phone":
+                            unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
+                            if unit: unit.status = "available"
+                            
+            if default_count > 0:
+                db.commit()
+                logger.info(f"Defaulted {default_count} active agreements due to missed payments.")
+                
+            return {"success": True, "default_count": default_count}
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error processing installment defaults: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@celery_app.task(name='core.tasks.send_weekly_admin_report')
+def send_weekly_admin_report():
+    """Send a weekly summary notification to admins when enabled in system settings."""
+    try:
+        db = next(get_db())
+        try:
+            if not system_settings_service.should_notify_admins(db, "weekly_report"):
+                return {"success": True, "skipped": True}
+
+            total_users = db.query(User).count()
+            total_orders = db.query(Order).count()
+            open_disputes = db.query(Dispute).filter(Dispute.status.in_(["open", "under_review"])).count()
+            pending_sellers = db.query(SellerProfile).filter(SellerProfile.kyc_status == "pending").count()
+
+            system_settings_service.notify_admins(
+                db=db,
+                event_key="weekly_report",
+                title="Weekly Admin Report",
+                message=(
+                    f"Weekly summary: {total_users} users, {total_orders} orders, "
+                    f"{pending_sellers} pending seller reviews, {open_disputes} open disputes."
+                ),
+                data={
+                    "total_users": total_users,
+                    "total_orders": total_orders,
+                    "pending_seller_reviews": pending_sellers,
+                    "open_disputes": open_disputes,
+                    "generated_at": datetime.utcnow().isoformat(),
+                },
+                priority="medium",
+            )
+            db.commit()
+            return {"success": True, "sent": True}
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error sending weekly admin report: {e}")
+        return {"success": False, "error": str(e)}

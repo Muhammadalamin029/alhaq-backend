@@ -215,3 +215,21 @@ def delete_inspection(
 ):
     """Delete an inspection record (Customer or Seller)"""
     return asset_service.delete_inspection(db, UUID(current_user["id"]), id)
+
+@router.post("/agreements/{id}/cancel", response_model=AssetAgreementResponse)
+def cancel_agreement(
+    id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Cancel an agreement before deposit (Customer only)"""
+    if current_user["role"] != "customer":
+        raise HTTPException(status_code=403, detail="Only customers can cancel their agreements")
+        
+    agreement = asset_service.cancel_agreement(db, UUID(current_user["id"]), id)
+    
+    # Notify the seller in background
+    background_tasks.add_task(notify_agreement_update, str(agreement.seller_id), agreement.asset_type, "cancelled")
+    
+    return agreement

@@ -16,6 +16,7 @@ from schemas.review import (
     ProductRatingStats,
     ProductRatingStatsResponse
 )
+from core.system_settings_service import system_settings_service
 
 router = APIRouter()
 
@@ -117,6 +118,7 @@ async def create_review(
     db: Session = Depends(get_db)
 ):
     """Create a new product review (customers only)"""
+    system_settings_service.require_verified_email_for_user(db, user["id"], "create a review")
     
     # Check if product exists
     product = db.query(Product).filter(Product.id == review_data.product_id).first()

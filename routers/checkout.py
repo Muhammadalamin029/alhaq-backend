@@ -17,6 +17,7 @@ from schemas.checkout import (
 )
 from schemas.order import OrderResponse
 from core.notifications_service import create_notification
+from core.system_settings_service import system_settings_service
 
 router = APIRouter()
 
@@ -74,6 +75,7 @@ async def process_checkout(
     db: Session = Depends(get_db)
 ):
     """Process checkout and convert pending order to processing"""
+    system_settings_service.require_verified_email_for_user(db, user["id"], "process checkout")
     
     # Log the incoming request for debugging
     print(f"Checkout request received: {checkout_data}")

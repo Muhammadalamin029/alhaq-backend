@@ -6,6 +6,7 @@ from uuid import UUID
 from db.session import get_db
 from core.auth import get_current_user, role_required
 from core.property_service import property_service
+from core.system_settings_service import system_settings_service
 from schemas.property import (
     PropertyResponse, PropertyCreate, PropertyUpdate, 
     SessionRequestResponse, SessionRequestCreate
@@ -29,6 +30,9 @@ def create_property(
     current_user: dict = Depends(role_required(["seller", "admin"]))
 ):
     """Create a new property listing (Seller/Admin only)"""
+    system_settings_service.require_verified_email_for_user(db, current_user["id"], "create a property listing")
+    if current_user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "create a property listing")
     prop = property_service.create_property(db, UUID(current_user["id"]), data)
     return {
         "success": True,
@@ -112,6 +116,9 @@ def update_property(
     current_user: dict = Depends(role_required(["seller", "admin"]))
 ):
     """Update a property listing"""
+    system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a property listing")
+    if current_user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "update a property listing")
     prop = property_service.update_property(db, id, UUID(current_user["id"]), data)
     return {
         "success": True,

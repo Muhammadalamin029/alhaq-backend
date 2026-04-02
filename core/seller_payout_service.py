@@ -9,6 +9,7 @@ import uuid
 from core.model import SellerProfile, SellerPayout, Order, OrderItem, Product
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
+from core.system_settings_service import system_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,14 @@ class SellerPayoutService:
     
     def __init__(self):
         self.paystack_service = paystack_service
+
+    def get_platform_fee_rate(self, db: Session) -> Decimal:
+        payment_settings = system_settings_service.get_payment_setting_values(db)
+        return Decimal(str(payment_settings["commission_rate_percent"])) / Decimal("100")
+
+    def get_minimum_payout_amount(self, db: Session) -> Decimal:
+        payment_settings = system_settings_service.get_payment_setting_values(db)
+        return Decimal(str(payment_settings["minimum_payout_amount"]))
     
     def calculate_seller_earnings(self, db: Session, seller_id: str, order_id: str) -> Dict[str, Any]:
         """
@@ -50,8 +59,8 @@ class SellerPayoutService:
         # Calculate gross amount (total from order items)
         gross_amount = sum(item.quantity * item.price for item in order_items)
         
-        # Calculate platform fee
-        platform_fee = gross_amount * self.PLATFORM_FEE_RATE
+        # Calculate platform fee using the configured system setting
+        platform_fee = gross_amount * self.get_platform_fee_rate(db)
         
         # Calculate net amount (what seller receives)
         net_amount = gross_amount - platform_fee
@@ -182,6 +191,10 @@ class SellerPayoutService:
             # Check if seller has sufficient balance
             if seller.available_balance < amount:
                 raise ValueError("Insufficient balance for payout")
+
+            minimum_payout_amount = self.get_minimum_payout_amount(db)
+            if Decimal(str(amount)) < minimum_payout_amount:
+                raise ValueError(f"Minimum payout amount is ₦{minimum_payout_amount:,.2f}")
             
             # No additional platform fee for payout - already deducted from earnings
             # The platform fee was already applied when calculating seller earnings
@@ -252,6 +265,17 @@ class SellerPayoutService:
                     payout.status = "failed"
                     payout.failure_reason = "Failed to create transfer recipient"
                     db.commit()
+                    system_settings_service.notify_admins(
+                        db=db,
+                        event_key="system_alert",
+                        title="Payout Recipient Setup Failed",
+                        message=f"Failed to create a payout recipient for seller {seller.business_name}.",
+                        data={
+                            "seller_id": str(seller.id),
+                            "payout_id": str(payout.id),
+                        },
+                        priority="high",
+                    )
                     return False
             
             # Initiate transfer
@@ -279,6 +303,14 @@ class SellerPayoutService:
                 payout.status = "failed"
                 payout.failure_reason = "Paystack transfer failed"
                 db.commit()
+                system_settings_service.notify_admins(
+                    db=db,
+                    event_key="system_alert",
+                    title="Payout Processing Failed",
+                    message=f"Paystack transfer failed for payout {payout.id}.",
+                    data={"payout_id": str(payout.id)},
+                    priority="high",
+                )
                 return False
                 
         except Exception as e:
@@ -287,6 +319,14 @@ class SellerPayoutService:
                 payout.status = "failed"
                 payout.failure_reason = str(e)
                 db.commit()
+                system_settings_service.notify_admins(
+                    db=db,
+                    event_key="system_alert",
+                    title="Payout Processing Error",
+                    message=f"An exception occurred while processing payout {payout_id}.",
+                    data={"payout_id": str(payout_id), "error": str(e)},
+                    priority="high",
+                )
             return False
     
     def get_seller_payouts(self, db: Session, seller_id: str, limit: int = 20, 

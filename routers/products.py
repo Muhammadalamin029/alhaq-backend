@@ -7,6 +7,7 @@ from core.auth import role_required
 from schemas.products import ProductCreate, ProductResponse, ProductUpdate
 from typing import Optional
 from core.logging_config import get_logger, log_error
+from core.system_settings_service import system_settings_service
 
 # Get logger for products routes
 products_logger = get_logger("routers.products")
@@ -52,6 +53,10 @@ async def list_products(
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "seller"])), db: Session = Depends(get_db)):
+    system_settings_service.require_verified_email_for_user(db, user["id"], "create a product")
+    if user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, user["id"], "create a product")
+
     # Validate price is positive
     if payload.price <= 0:
         raise HTTPException(
@@ -149,6 +154,10 @@ async def update_product(
     db: Session = Depends(get_db)
 ):
     """Update a product"""
+    system_settings_service.require_verified_email_for_user(db, user["id"], "update a product")
+    if user["role"] == "seller":
+        system_settings_service.require_approved_seller_kyc(db, user["id"], "update a product")
+
     # First check if product exists
     product = product_service.get_product_by_id(db, product_id)
     if not product:
