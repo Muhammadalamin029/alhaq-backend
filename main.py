@@ -68,7 +68,7 @@ origins = [
     "http://127.0.0.1:8080",                # Alternative local dev FE
     "http://localhost:3000",                 # Alternative dev port
     "http://127.0.0.1:3000",                # Alternative dev port
-    "https://demight-tech-frontend.vercel.app",     # Production FE (no trailing slash!)
+    "https://alhaq-frontend.vercel.app",     # Production FE (no trailing slash!)
 ]
 
 # Add CORS middleware with more permissive settings for development
