@@ -27,6 +27,7 @@ class User(Base):
     locked_until = Column(TIMESTAMP, nullable=True)
     last_login = Column(TIMESTAMP, nullable=True)
     password_changed_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    is_active = Column(Boolean, default=True)  # False = soft-deleted account
     
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -71,9 +72,8 @@ class SystemSettings(Base):
     timezone = Column(String(100), nullable=False, default="Africa/Lagos")
 
     # Payment settings
-    commission_rate_percent = Column(Numeric(5, 2), nullable=False, default=5)
+    commission_rate_percent = Column(Numeric(5, 2), nullable=False, default=5.00)
     minimum_payout_amount = Column(Numeric(15, 2), nullable=False, default=10000)
-    payout_schedule = Column(String(20), nullable=False, default="weekly")
 
     # Inspection policy settings
     minimum_inspection_notice_hours = Column(Integer, nullable=False, default=24)
@@ -831,3 +831,23 @@ class Dispute(Base):
     user = relationship("User")
     order = relationship("Order")
     agreement = relationship("GeneralAgreement")
+
+
+# ---------------- LEGAL DOCUMENTS (admin-editable public pages) ----------------
+
+
+class LegalDocument(Base):
+    """Terms of Service and Privacy Policy: structured JSON + rendered HTML; public read."""
+
+    __tablename__ = "legal_documents"
+
+    slug = Column(String(32), primary_key=True)
+    body_html = Column(Text, nullable=True)
+    effective_date_label = Column(String(120), nullable=True)
+    effective_date = Column(Date, nullable=True)
+    structure_json = Column(Text, nullable=True)
+    updated_at = Column(
+        TIMESTAMP,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )

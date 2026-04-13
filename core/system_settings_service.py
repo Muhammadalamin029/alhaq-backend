@@ -80,7 +80,6 @@ class SystemSettingsService:
             "payments": {
                 "commission_rate_percent": float(settings_row.commission_rate_percent or 0),
                 "minimum_payout_amount": float(settings_row.minimum_payout_amount or 0),
-                "payout_schedule": settings_row.payout_schedule,
             },
             "inspection": {
                 "minimum_inspection_notice_hours": int(settings_row.minimum_inspection_notice_hours),
@@ -194,7 +193,6 @@ class SystemSettingsService:
         return {
             "commission_rate_percent": float(settings_row.commission_rate_percent or 0),
             "minimum_payout_amount": float(settings_row.minimum_payout_amount or 0),
-            "payout_schedule": settings_row.payout_schedule,
         }
 
     def get_inspection_setting_values(self, db: Session) -> Dict[str, int]:

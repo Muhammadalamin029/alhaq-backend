@@ -25,6 +25,8 @@ class ReviewerInfo(BaseModel):
 
 class ReviewResponse(BaseModel):
     id: UUID
+    product_id: UUID
+    product_name: Optional[str] = None
     rating: int
     comment: Optional[str]
     created_at: datetime

@@ -13,6 +13,11 @@ from core.model import (
     Payment, SellerPayout, GeneralInspection, GeneralAgreement,
     Property, RealEstateSessionRequest, PropertyUnit, CarUnit, PhoneUnit
 )
+from fastapi.responses import StreamingResponse
+import csv
+from io import StringIO
+import os
+from core.redis_client import redis_client
 from schemas.property import SessionRequestResponse, PropertyPublish, PropertyResponse
 from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
@@ -27,6 +32,17 @@ from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
 from core.seller_payout_service import seller_payout_service
+from core.status_constants import (
+    AGREEMENT_STATUS_ACTIVE,
+    INSPECTION_STATUS_SCHEDULED,
+    AGREEMENT_STATUS_PENDING_REVIEW,
+    ORDER_STATUS_PENDING,
+    ORDER_STATUS_PROCESSING,
+    ORDER_STATUS_PAID,
+    ORDER_STATUS_SHIPPED,
+    ORDER_STATUS_DELIVERED,
+    ORDER_STATUS_CANCELLED,
+)
 from schemas.seller_payout import (
     AdminPayoutListResponse, AdminPayoutResponse, PayoutProcessRequest, PayoutProcessResponse
 )
@@ -103,22 +119,36 @@ async def create_admin_user(
 @router.get("/dashboard/stats", response_model=AdminResponse)
 async def get_admin_dashboard_stats(
     user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    range: Optional[str] = Query(None, pattern="^(today|7d|30d)$")
 ):
     """Get admin dashboard statistics"""
     try:
+        now = datetime.utcnow()
+        range_end = now
+        range_start = None
+        if range == "today":
+            range_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif range == "7d":
+            range_start = now - timedelta(days=7)
+        elif range == "30d":
+            range_start = now - timedelta(days=30)
+
         # Basic counts
         total_users = db.query(User).count()
         total_products = db.query(Product).count()
         total_orders = db.query(Order).count()
         
-        # Revenue calculation - include all paid orders (processing, shipped, delivered)
-        total_revenue = (
-            db.query(func.sum(OrderItem.quantity * OrderItem.price))
-            .join(Order)
-            .filter(Order.status.in_(["processing", "shipped", "delivered"]))
-            .scalar() or 0
-        )
+        # Revenue calculations (gross + net): include ALL completed payments (orders + asset payments)
+        completed_payments_query = db.query(Payment).filter(Payment.status == "completed")
+        if range_start:
+            completed_payments_query = completed_payments_query.filter(Payment.created_at >= range_start)
+
+        total_revenue = completed_payments_query.with_entities(func.sum(Payment.amount)).scalar() or 0
+
+        fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        platform_fee_amount = (Decimal(str(total_revenue)) * fee_rate) if total_revenue else Decimal("0.00")
+        net_revenue = Decimal(str(total_revenue)) - platform_fee_amount
         
         # Today's stats
         today = datetime.utcnow().date()
@@ -135,14 +165,12 @@ async def get_admin_dashboard_stats(
         )
         
         revenue_today = (
-            db.query(func.sum(OrderItem.quantity * OrderItem.price))
-            .join(Order)
-            .filter(
-                func.date(Order.created_at) == today,
-                Order.status.in_(["processing", "shipped", "delivered"])
-            )
+            db.query(func.sum(Payment.amount))
+            .filter(func.date(Payment.created_at) == today, Payment.status == "completed")
             .scalar() or 0
         )
+        platform_fee_today = (Decimal(str(revenue_today)) * fee_rate) if revenue_today else Decimal("0.00")
+        net_revenue_today = Decimal(str(revenue_today)) - platform_fee_today
         
         # Status counts
         pending_seller_approvals = (
@@ -163,11 +191,12 @@ async def get_admin_dashboard_stats(
             .count()
         )
         
-        pending_orders = (
-            db.query(Order)
-            .filter(Order.status == "pending")
-            .count()
-        )
+        pending_orders = db.query(Order).filter(Order.status == ORDER_STATUS_PENDING).count()
+        processing_orders = db.query(Order).filter(Order.status == ORDER_STATUS_PROCESSING).count()
+        paid_orders = db.query(Order).filter(Order.status == ORDER_STATUS_PAID).count()
+        shipped_orders = db.query(Order).filter(Order.status == ORDER_STATUS_SHIPPED).count()
+        delivered_orders = db.query(Order).filter(Order.status == ORDER_STATUS_DELIVERED).count()
+        cancelled_orders = db.query(Order).filter(Order.status == ORDER_STATUS_CANCELLED).count()
         
         total_payments = (
             db.query(Payment)
@@ -178,28 +207,149 @@ async def get_admin_dashboard_stats(
         # Asset stats
         total_inspections = db.query(GeneralInspection).count()
         total_agreements = db.query(GeneralAgreement).count()
-        pending_inspections = db.query(GeneralInspection).filter(GeneralInspection.status == "scheduled").count()
-        pending_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == "pending_review").count()
-        active_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == "active").count()
+        pending_inspections = db.query(GeneralInspection).filter(GeneralInspection.status == INSPECTION_STATUS_SCHEDULED).count()
+        pending_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == AGREEMENT_STATUS_PENDING_REVIEW).count()
+        active_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == AGREEMENT_STATUS_ACTIVE).count()
         
         # Real Estate stats
         total_session_requests = db.query(RealEstateSessionRequest).count()
         pending_session_requests = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.status == "pending").count()
         total_internal_properties = db.query(Property).filter(Property.title.ilike("[ACQUIRED]%")).count()
+
+        # ---------------- Trend series (for selected range) ----------------
+        revenue_series: List[dict] = []
+        orders_series: List[dict] = []
+        agreements_series: List[dict] = []
+
+        if range_start:
+            revenue_rows = (
+                db.query(
+                    func.date(Payment.created_at).label("date"),
+                    func.sum(Payment.amount).label("gross"),
+                )
+                .filter(Payment.status == "completed", Payment.created_at >= range_start)
+                .group_by(func.date(Payment.created_at))
+                .order_by(func.date(Payment.created_at))
+                .all()
+            )
+            revenue_series = [
+                {
+                    "date": str(r.date),
+                    "gross": float(r.gross or 0),
+                    "net": float((Decimal(str(r.gross or 0)) * (Decimal("1.00") - fee_rate))),
+                    "platform_fee": float((Decimal(str(r.gross or 0)) * fee_rate)),
+                }
+                for r in revenue_rows
+            ]
+
+            order_rows = (
+                db.query(func.date(Order.created_at).label("date"), func.count(Order.id).label("count"))
+                .filter(Order.created_at >= range_start)
+                .group_by(func.date(Order.created_at))
+                .order_by(func.date(Order.created_at))
+                .all()
+            )
+            orders_series = [{"date": str(r.date), "count": int(r.count)} for r in order_rows]
+
+            agreement_rows = (
+                db.query(func.date(GeneralAgreement.created_at).label("date"), func.count(GeneralAgreement.id).label("count"))
+                .filter(GeneralAgreement.created_at >= range_start)
+                .group_by(func.date(GeneralAgreement.created_at))
+                .order_by(func.date(GeneralAgreement.created_at))
+                .all()
+            )
+            agreements_series = [{"date": str(r.date), "count": int(r.count)} for r in agreement_rows]
+
+        # ---------------- Top lists ----------------
+        top_sellers: List[dict] = []
+        top_seller_rows = (
+            db.query(
+                SellerProfile.id.label("seller_id"),
+                SellerProfile.business_name.label("business_name"),
+                func.sum(Payment.amount).label("gross"),
+            )
+            .join(Payment, Payment.seller_id == SellerProfile.id)
+            .filter(Payment.status == "completed")
+            .group_by(SellerProfile.id, SellerProfile.business_name)
+            .order_by(desc(func.sum(Payment.amount)))
+            .limit(5)
+            .all()
+        )
+        top_sellers = [
+            {
+                "seller_id": str(r.seller_id),
+                "business_name": r.business_name,
+                "gross": float(r.gross or 0),
+                "net": float((Decimal(str(r.gross or 0)) * (Decimal("1.00") - fee_rate))),
+            }
+            for r in top_seller_rows
+        ]
+
+        recent_payment_rows = (
+            db.query(Payment)
+            .options(joinedload(Payment.seller))
+            .filter(Payment.status == "completed")
+            .order_by(desc(Payment.created_at))
+            .limit(5)
+            .all()
+        )
+        recent_payments = [
+            {
+                "id": str(p.id),
+                "amount": float(p.amount or 0),
+                "status": p.status,
+                "category": p.payment_category,
+                "order_id": str(p.order_id) if p.order_id else None,
+                "agreement_id": str(p.agreement_id) if p.agreement_id else None,
+                "seller_id": str(p.seller_id) if p.seller_id else None,
+                "seller_name": p.seller.business_name if getattr(p, "seller", None) else None,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in recent_payment_rows
+        ]
+
+        # ---------------- Alerts ----------------
+        sellers_missing_payout = (
+            db.query(SellerProfile)
+            .filter(or_(SellerProfile.payout_account_number.is_(None), SellerProfile.payout_bank_code.is_(None)))
+            .count()
+        )
+        overdue_agreements = (
+            db.query(GeneralAgreement)
+            .filter(GeneralAgreement.status == AGREEMENT_STATUS_ACTIVE, GeneralAgreement.next_due_date.isnot(None), GeneralAgreement.next_due_date < now)
+            .count()
+        )
+        alerts = {
+            "sellers_missing_payout_account": sellers_missing_payout,
+            "pending_seller_kyc": pending_seller_approvals,
+            "overdue_agreements": overdue_agreements,
+        }
         
         stats = AdminDashboardStats(
             total_users=total_users,
             total_products=total_products,
             total_orders=total_orders,
             total_payments=total_payments,  # Actual payment count
-            total_revenue=float(total_revenue),
+            total_revenue=Decimal(str(total_revenue)),
+            net_revenue=net_revenue,
+            platform_fee_amount=platform_fee_amount,
+            range=range,
+            range_start=range_start,
+            range_end=range_end,
             new_users_today=new_users_today,
             new_orders_today=new_orders_today,
-            revenue_today=float(revenue_today),
+            revenue_today=Decimal(str(revenue_today)),
+            net_revenue_today=net_revenue_today,
+            platform_fee_today=platform_fee_today,
             pending_seller_approvals=pending_seller_approvals,
             locked_users=locked_users,
             out_of_stock_products=out_of_stock_products,
             pending_orders=pending_orders,
+            processing_orders=processing_orders,
+            paid_orders=paid_orders,
+            shipped_orders=shipped_orders,
+            delivered_orders=delivered_orders,
+            cancelled_orders=cancelled_orders,
             
             # New asset stats
             total_inspections=total_inspections,
@@ -211,7 +361,13 @@ async def get_admin_dashboard_stats(
             # Real Estate stats
             total_session_requests=total_session_requests,
             pending_session_requests=pending_session_requests,
-            total_internal_properties=total_internal_properties
+            total_internal_properties=total_internal_properties,
+            revenue_series=revenue_series,
+            orders_series=orders_series,
+            agreements_series=agreements_series,
+            top_sellers=top_sellers,
+            recent_payments=recent_payments,
+            alerts=alerts,
         )
         
         return AdminResponse(
@@ -1867,3 +2023,97 @@ async def publish_acquired_property(
     except Exception as e:
         log_error(admin_logger, f"Failed to publish property {id}", e)
         raise HTTPException(status_code=500, detail="Failed to publish property")
+
+
+@router.post("/system/cache/clear", response_model=AdminResponse)
+async def clear_system_cache(
+    user=Depends(role_required(["admin"]))
+):
+    """Clear the system cache (Redis flushdb)"""
+    try:
+        redis_client.redis_client.flushdb()
+        admin_logger.info(f"System cache cleared by admin {user.get('email')}")
+        
+        return AdminResponse(
+            success=True,
+            message="System cache cleared successfully",
+            data=None
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to clear system cache", e)
+        raise HTTPException(status_code=500, detail="Failed to clear system cache")
+
+
+@router.get("/system/export/users")
+async def export_users_csv(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Export all users as CSV"""
+    try:
+        users = db.query(User).options(joinedload(User.profile), joinedload(User.seller_profile)).all()
+        
+        output = StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow([
+            "ID", "Email", "Role", "Email Verified", "Is Active", 
+            "Locked Until", "Created At", "Profile Name/Business", "Phone"
+        ])
+        
+        for u in users:
+            name = ""
+            phone = ""
+            if u.role == "customer" and u.profile:
+                name = u.profile.name
+                phone = u.profile.phone
+            elif u.role == "seller" and u.seller_profile:
+                name = u.seller_profile.business_name
+                phone = u.seller_profile.contact_phone
+                
+            writer.writerow([
+                str(u.id), 
+                u.email, 
+                u.role, 
+                str(u.email_verified), 
+                str(getattr(u, 'is_active', True)), 
+                str(u.locked_until) if u.locked_until else "", 
+                str(u.created_at), 
+                name or "", 
+                phone or ""
+            ])
+            
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=users_export.csv"}
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to export users", e)
+        raise HTTPException(status_code=500, detail="Failed to export users")
+
+
+@router.get("/system/logs", response_model=AdminResponse)
+async def get_system_logs(
+    user=Depends(role_required(["admin"])),
+    lines: int = Query(200, ge=10, le=1000)
+):
+    """Retrieve raw strings from the backend tail logs"""
+    try:
+        log_path = "server.log"
+        logs = []
+        if os.path.exists(log_path):
+            with open(log_path, 'r', encoding='utf-8') as f:
+                content = f.readlines()
+                logs = [line.strip() for line in content[-lines:]]
+        
+        return AdminResponse(
+            success=True,
+            message="Logs retrieved successfully",
+            data={"logs": logs}
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to retrieve logs", e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve system logs")

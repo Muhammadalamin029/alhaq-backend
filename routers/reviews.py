@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from db.session import get_db
@@ -53,7 +53,7 @@ async def get_product_reviews(
     return ProductReviewsResponse(
         success=True,
         message="Product reviews retrieved successfully",
-        data=[ReviewResponse.model_validate(review) for review in reviews],
+        data=[_review_to_response(r, product_name=product.name) for r in reviews],
         meta={
             "page": page,
             "limit": limit,
@@ -170,10 +170,10 @@ async def create_review(
     db.commit()
     db.refresh(new_review)
     
-    # Load the review with user data
+    # Load the review with user and product
     review_with_user = (
         db.query(Review)
-        .options(joinedload(Review.user))
+        .options(joinedload(Review.user), joinedload(Review.product))
         .filter(Review.id == new_review.id)
         .first()
     )
@@ -181,7 +181,39 @@ async def create_review(
     return ReviewSingleResponse(
         success=True,
         message="Review created successfully",
-        data=ReviewResponse.model_validate(review_with_user)
+        data=_review_to_response(review_with_user),
+    )
+
+
+@router.get("/seller", response_model=ProductReviewsResponse)
+async def get_seller_reviews(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    user=Depends(role_required(["seller", "admin"])),
+    db: Session = Depends(get_db),
+):
+    """Reviews left on this seller's products (retail listings)."""
+    seller_id = UUID(user["id"])
+    offset = (page - 1) * limit
+    reviews_query = (
+        db.query(Review)
+        .join(Product, Review.product_id == Product.id)
+        .options(joinedload(Review.user), joinedload(Review.product))
+        .filter(Product.seller_id == seller_id)
+        .order_by(desc(Review.created_at))
+    )
+    total_reviews = reviews_query.count()
+    reviews = reviews_query.offset(offset).limit(limit).all()
+    return ProductReviewsResponse(
+        success=True,
+        message="Seller reviews retrieved successfully",
+        data=[_review_to_response(r) for r in reviews],
+        meta={
+            "page": page,
+            "limit": limit,
+            "total": total_reviews,
+            "total_pages": (total_reviews + limit - 1) // limit if limit else 0,
+        },
     )
 
 
@@ -196,7 +228,7 @@ async def update_review(
     
     review = (
         db.query(Review)
-        .options(joinedload(Review.user))
+        .options(joinedload(Review.user), joinedload(Review.product))
         .filter(
             Review.id == review_id,
             Review.user_id == user["id"]
@@ -221,7 +253,7 @@ async def update_review(
     return ReviewSingleResponse(
         success=True,
         message="Review updated successfully",
-        data=ReviewResponse.model_validate(review)
+        data=_review_to_response(review),
     )
 
 
@@ -265,7 +297,7 @@ async def get_my_reviews(
     offset = (page - 1) * limit
     reviews_query = (
         db.query(Review)
-        .options(joinedload(Review.user))
+        .options(joinedload(Review.user), joinedload(Review.product))
         .filter(Review.user_id == user["id"])
         .order_by(desc(Review.created_at))
     )
@@ -276,7 +308,7 @@ async def get_my_reviews(
     return ProductReviewsResponse(
         success=True,
         message="Your reviews retrieved successfully",
-        data=[ReviewResponse.model_validate(review) for review in reviews],
+        data=[_review_to_response(review) for review in reviews],
         meta={
             "page": page,
             "limit": limit,

@@ -57,8 +57,7 @@ class AdminUserDetailResponse(BaseModel):
     failed_login_attempts: int
     locked_until: Optional[datetime] = None
     last_login: Optional[datetime] = None
-    password_changed_at: datetime
-    two_factor_enabled: bool
+    password_changed_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
     
@@ -199,18 +198,37 @@ class AdminDashboardStats(BaseModel):
     total_products: int
     total_orders: int
     total_payments: int
+    # Revenue (gross GMV)
     total_revenue: Decimal
+    # Revenue after platform fee (seller net)
+    net_revenue: Decimal = Decimal("0.00")
+    # Platform fees (gross - net)
+    platform_fee_amount: Decimal = Decimal("0.00")
+
+    # Range context for dashboards
+    range: Optional[str] = None
+    range_start: Optional[datetime] = None
+    range_end: Optional[datetime] = None
     
     # Today's stats
     new_users_today: int
     new_orders_today: int
     revenue_today: Decimal
+    net_revenue_today: Decimal = Decimal("0.00")
+    platform_fee_today: Decimal = Decimal("0.00")
     
     # Status counts
     pending_seller_approvals: int
     locked_users: int
     out_of_stock_products: int
     pending_orders: int
+
+    # Detailed order status breakdown
+    processing_orders: int = 0
+    paid_orders: int = 0
+    shipped_orders: int = 0
+    delivered_orders: int = 0
+    cancelled_orders: int = 0
     
     # Asset stats
     total_inspections: int
@@ -223,6 +241,18 @@ class AdminDashboardStats(BaseModel):
     total_session_requests: int
     pending_session_requests: int
     total_internal_properties: int
+
+    # Trend series for charts (date buckets)
+    revenue_series: List[Dict[str, Any]] = []
+    orders_series: List[Dict[str, Any]] = []
+    agreements_series: List[Dict[str, Any]] = []
+
+    # Top lists
+    top_sellers: List[Dict[str, Any]] = []
+    recent_payments: List[Dict[str, Any]] = []
+
+    # Alerts
+    alerts: Dict[str, Any] = {}
     
     class Config:
         from_attributes = True

@@ -10,8 +10,9 @@ from routers import (
     notifications as notifications_router,
     seller as seller_router,
     admin as admin_router,
-    payments, banks, automotive, assets, properties, disputes, system_settings,
-    public as public_router
+    payments, banks, automotive, phones, assets, properties, disputes, system_settings,
+    public as public_router,
+    legal_documents as legal_documents_router,
 )
 from core.config import settings
 from db.session import engine
@@ -117,12 +118,15 @@ app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])
+app.include_router(phones.router, prefix="/phones", tags=["Phones"])
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])
 app.include_router(properties.router, prefix="/properties", tags=["Properties"])
 app.include_router(banks.router, prefix="/api/v1", tags=["Banks"])
 app.include_router(disputes.router, prefix="/disputes", tags=["Disputes"])
 app.include_router(system_settings.router, prefix="/system-settings", tags=["System Settings"])
 app.include_router(public_router.router, prefix="/public", tags=["Public"])
+app.include_router(legal_documents_router.public_router, prefix="/public", tags=["Public"])
+app.include_router(legal_documents_router.admin_router, prefix="/admin", tags=["Admin"])
 
 # ------------------------------------------------------
 # Global exception handlers

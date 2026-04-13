@@ -18,7 +18,6 @@ class SystemSettingsGeneral(BaseModel):
 class SystemSettingsPayments(BaseModel):
     commission_rate_percent: float
     minimum_payout_amount: float
-    payout_schedule: str
 
 
 class SystemSettingsInspection(BaseModel):
@@ -71,7 +70,6 @@ class UpdateSystemSettingsGeneralRequest(BaseModel):
 class UpdateSystemSettingsPaymentsRequest(BaseModel):
     commission_rate_percent: float = Field(..., ge=0, le=100)
     minimum_payout_amount: float = Field(..., ge=0)
-    payout_schedule: str = Field(..., pattern="^(daily|weekly|monthly)$")
 
 
 class UpdateSystemSettingsInspectionRequest(BaseModel):

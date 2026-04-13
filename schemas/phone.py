@@ -3,7 +3,6 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
-from schemas.automotive import UserMini, CarMini # Reusing Mini schemas
 from schemas.media import AssetImageResponse, AssetImageCreate
 
 class PhoneBase(BaseModel):
@@ -22,6 +21,13 @@ class PhoneUnitBase(BaseModel):
 
 class PhoneUnitCreate(PhoneUnitBase):
     pass
+
+class PhoneUnitUpdate(BaseModel):
+    imei: Optional[str] = None
+    color: Optional[str] = None
+    grade: Optional[str] = None
+    battery_health: Optional[int] = None
+    status: Optional[str] = None
 
 class PhoneUnitResponse(PhoneUnitBase):
     id: UUID
@@ -77,7 +83,6 @@ class PhoneInspectionResponse(PhoneInspectionBase):
     created_at: datetime
     
     phone: Optional[PhoneResponse] = None
-    user: Optional[UserMini] = None
 
     class Config:
         from_attributes = True

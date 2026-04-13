@@ -163,6 +163,13 @@ class AuthService:
                 detail="Invalid credentials"
             )
 
+        # Check if account is active (not soft-deleted)
+        if hasattr(user, 'is_active') and user.is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+
         # Check if account is locked
         if user.locked_until and user.locked_until > datetime.utcnow():
             remaining_time = (user.locked_until -
@@ -272,8 +279,10 @@ class AuthService:
         if user.role == "customer":
             profile = db.query(Profile).filter(Profile.id == user.id).first()
             if profile:
-                # Full name = firstName + lastName
-                if "firstName" in update_data or "lastName" in update_data:
+                if "name" in update_data and str(update_data.get("name", "")).strip():
+                    profile.name = str(update_data["name"]).strip()
+                # Full name = firstName + lastName (alternative to single name field)
+                elif "firstName" in update_data or "lastName" in update_data:
                     first_name = update_data.get("firstName", "").strip()
                     last_name = update_data.get("lastName", "").strip()
                     profile.name = f"{first_name} {last_name}".strip()

@@ -236,6 +236,36 @@ def get_current_user_profile(
         raise HTTPException(status_code=500, detail="Failed to fetch profile")
 
 
+@router.delete("/me", status_code=200)
+def delete_current_user_account(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Soft-delete the authenticated user's account.
+    Sets is_active = False — account data is retained for audit purposes.
+    The user will no longer be able to log in.
+    """
+    from core.model import User as UserModel
+    try:
+        user = db.query(UserModel).filter(UserModel.id == current_user["id"]).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user.is_active = False
+        db.commit()
+
+        auth_logger.info(f"Account soft-deleted for user: {current_user['id']}")
+        return {"success": True, "message": "Account has been deactivated successfully."}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        log_error(auth_logger, f"Failed to delete account for user {current_user['id']}", e, user_id=current_user['id'])
+        raise HTTPException(status_code=500, detail="Failed to deactivate account")
+
+
 @router.put("/me", response_model=FullUserProfileResponse)
 def update_current_user_profile(
     payload: UpdateProfileRequest,

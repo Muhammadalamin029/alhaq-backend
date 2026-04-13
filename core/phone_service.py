@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import HTTPException
 from core.model import Phone, PhoneUnit, AssetImage
-from schemas.phone import PhoneCreate, PhoneUpdate
+from schemas.phone import PhoneCreate, PhoneUpdate, PhoneUnitCreate, PhoneUnitUpdate
 
 class PhoneService:
     def create_phone(self, db: Session, seller_id: UUID, phone_data: PhoneCreate) -> Phone:
@@ -121,5 +121,29 @@ class PhoneService:
         for u in new_units:
             db.refresh(u)
         return new_units
+
+    def update_phone_unit(self, db: Session, unit_id: UUID, seller_id: UUID, update_data: PhoneUnitUpdate) -> PhoneUnit:
+        unit = db.query(PhoneUnit).join(Phone).filter(
+            PhoneUnit.id == unit_id,
+            Phone.seller_id == seller_id
+        ).first()
+        
+        if not unit:
+            raise HTTPException(status_code=404, detail="Phone unit not found or unauthorized")
+            
+        update_dict = update_data.model_dump(exclude_unset=True)
+        
+        # Check IMEI uniqueness if updating IMEI
+        if "imei" in update_dict and update_dict["imei"] != unit.imei:
+            existing = db.query(PhoneUnit).filter(PhoneUnit.imei == update_dict["imei"]).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="IMEI already exists")
+                
+        for key, value in update_dict.items():
+            setattr(unit, key, value)
+            
+        db.commit()
+        db.refresh(unit)
+        return unit
 
 phone_service = PhoneService()

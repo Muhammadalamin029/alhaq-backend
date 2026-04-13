@@ -59,14 +59,34 @@ class SellerStatsData(BaseModel):
     shipped_orders: int
     delivered_orders: int
     cancelled_orders: int
+    # Revenue (gross from completed payments / seller totals)
     total_revenue: float
+    # Revenue after platform fees
+    net_revenue: float = 0.0
+    platform_fee_amount: float = 0.0
+    range: Optional[str] = None
+    range_start: Optional[datetime] = None
+    range_end: Optional[datetime] = None
     kyc_status: str
     business_name: str
     # Enhanced dashboard data
     recent_orders: List[Dict[str, Any]] = []
     recent_products: List[Dict[str, Any]] = []
-    revenue_trend: Optional[str] = None
-    orders_trend: Optional[str] = None
+
+    # Asset stats (Inspections & Agreements)
+    total_inspections: int = 0
+    pending_inspections: int = 0
+    total_agreements: int = 0
+    pending_agreements: int = 0
+    active_agreements: int = 0
+
+    # Trend series
+    revenue_series: List[Dict[str, Any]] = []
+    orders_series: List[Dict[str, Any]] = []
+    agreements_series: List[Dict[str, Any]] = []
+
+    # Alerts
+    alerts: Dict[str, Any] = {}
 
 
 class SellerProductsResponse(BaseModel):

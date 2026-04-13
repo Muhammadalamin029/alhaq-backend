@@ -466,35 +466,52 @@ def check_missed_inspections():
 @celery_app.task(name='core.tasks.send_installment_reminders')
 def send_installment_reminders():
     """
-    Periodic task to find agreements with approaching installment due date (< 3 days).
-    Sends reminders to buyers.
+    Periodic task to remind buyers of upcoming installment due dates.
+    Sends reminders at exactly 7, 5, and 3 days before next_due_date.
+    Exact-day matching ensures no duplicate sends across daily runs.
     """
     try:
         db = next(get_db())
         try:
-            # Remind 3 days before next_due_date
-            now = datetime.utcnow()
-            reminder_threshold_end = now + timedelta(days=3)
-            
-            due_agreements = db.query(GeneralAgreement).filter(
-                GeneralAgreement.status == "active",
-                GeneralAgreement.next_due_date > now,
-                GeneralAgreement.next_due_date <= reminder_threshold_end
-            ).all()
+            today = datetime.utcnow().date()
 
-            for agreement in due_agreements:
-                create_notification(db, {
-                    "user_id": str(agreement.user_id),
-                    "type": "payment_reminder",
-                    "title": "Upcoming Installment Reminder",
-                    "message": f"Your next installment for agreement is due soon (on {agreement.next_due_date.strftime('%Y-%m-%d')}).",
-                    "channels": ["in_app", "email"]
-                })
+            # Define the three reminder windows with labels
+            reminder_windows = [
+                (7, "1 week"),
+                (5, "5 days"),
+                (3, "3 days"),
+            ]
 
-            if due_agreements:
+            total_reminded = 0
+
+            for days_ahead, label in reminder_windows:
+                target_date = today + timedelta(days=days_ahead)
+
+                due_agreements = db.query(GeneralAgreement).filter(
+                    GeneralAgreement.status == "active",
+                    GeneralAgreement.next_due_date != None,
+                    GeneralAgreement.next_due_date >= target_date,
+                    GeneralAgreement.next_due_date < target_date + timedelta(days=1),
+                ).all()
+
+                for agreement in due_agreements:
+                    create_notification(db, {
+                        "user_id": str(agreement.user_id),
+                        "type": "payment_reminder",
+                        "title": "Upcoming Installment Reminder",
+                        "message": (
+                            f"Your next installment payment is due in {label} "
+                            f"(on {agreement.next_due_date.strftime('%Y-%m-%d')}). "
+                            f"Please ensure your account is funded to avoid a default."
+                        ),
+                        "channels": ["in_app", "email"]
+                    })
+                    total_reminded += 1
+
+            if total_reminded > 0:
                 db.commit()
-            
-            return {"success": True, "reminded_count": len(due_agreements)}
+
+            return {"success": True, "reminded_count": total_reminded}
         except Exception as e:
             db.rollback()
             raise e

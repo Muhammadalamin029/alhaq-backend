@@ -41,7 +41,7 @@ class SellerRegisterRequest(BaseModel):
     contact_phone: str = Field(..., min_length=10, max_length=20)
     description: str = Field(..., max_length=1000)
     website_url: Optional[str] = Field(None, max_length=500)
-    seller_type: Optional[str] = Field("retailer", pattern=r'^(retailer|car_dealer|real_agent)$')
+    seller_type: Optional[str] = Field("retailer", pattern=r'^(retailer|car_dealer|real_agent|phone_dealer)$')
 
 
 class ChangePasswordRequest(BaseModel):
@@ -61,6 +61,7 @@ class UpdateProfileRequest(BaseModel):
     email: Optional[str] = None
 
     # Customer fields
+    name: Optional[str] = Field(None, min_length=1, max_length=255, strip_whitespace=True)
     firstName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
     lastName: Optional[str] = Field(None, min_length=1, max_length=100, strip_whitespace=True)
     phone: Optional[str] = Field(None, min_length=7, max_length=20, strip_whitespace=True)
