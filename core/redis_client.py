@@ -224,6 +224,19 @@ class VerificationCodeManager:
         else:
             return self.redis.incr(key) or 1
     
+    def get_rate_limit_ttl(self, email: str) -> int:
+        """
+        Get remaining time for email rate limit in seconds
+        
+        Args:
+            email: User's email address
+            
+        Returns:
+            int: Remaining time in seconds, -1 if not found
+        """
+        key = f"{self.EMAIL_RATE_LIMIT_PREFIX}{email}"
+        return self.redis.ttl(key)
+    
     def get_remaining_time(self, email: str, code_type: str = "verification") -> int:
         """
         Get remaining time for verification code in seconds

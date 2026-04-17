@@ -479,6 +479,8 @@ def request_password_reset(payload: RequestPasswordResetRequest, db: Session = D
                 "expires_in_minutes": result["expires_in_minutes"]
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         # Always return success for security (prevent email enumeration)
         return PasswordResetResponse(

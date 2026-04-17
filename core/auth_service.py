@@ -174,9 +174,10 @@ class AuthService:
         if user.locked_until and user.locked_until > datetime.utcnow():
             remaining_time = (user.locked_until -
                               datetime.utcnow()).total_seconds() / 60
+            minutes = int(remaining_time) or 1
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
-                detail=f"Account is locked. Try again in {int(remaining_time)} minutes."
+                detail=f"Account is locked. Try again in {minutes} minutes."
             )
 
         max_login_attempts = system_settings_service.get_max_login_attempts(db)
@@ -459,9 +460,12 @@ class AuthService:
 
         # Check rate limiting
         if verification_manager.is_rate_limited(email):
+            ttl = verification_manager.get_rate_limit_ttl(email)
+            minutes = ttl // 60 if ttl > 0 else 60
+            minutes = minutes or 1
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many verification requests. Please try again later."
+                detail=f"Too many verification requests. Please try again in {minutes} minutes."
             )
 
         # Get user name based on profile type
@@ -564,36 +568,40 @@ class AuthService:
         from core.redis_client import verification_manager
         from core.tasks import send_password_reset_email
 
+        # Check rate limiting before user existence check to prevent enumeration
+        if verification_manager.is_rate_limited(email, max_attempts=3, window_minutes=60):
+            ttl = verification_manager.get_rate_limit_ttl(email)
+            minutes = ttl // 60 if ttl > 0 else 60
+            minutes = minutes or 1
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many password reset requests. Please try again in {minutes} minutes."
+            )
+
         # Check if user exists (but don't reveal if email doesn't exist for security)
         user = self.get_user_by_email(db, email)
+        
+        # Increment rate limit counter
+        verification_manager.increment_rate_limit(email, window_minutes=60)
 
         # Always return success to prevent email enumeration attacks
         # But only send email if user actually exists
         if user:
-            # Check rate limiting
-            if verification_manager.is_rate_limited(email, max_attempts=3, window_minutes=60):
-                # Still return success but log the attempt
-                pass
-            else:
-                # Get user name based on profile type
-                user_name = "User"  # Default fallback
-                if user.role == "customer":
-                    profile = db.query(Profile).filter(
-                        Profile.id == user.id).first()
-                    if profile:
-                        user_name = profile.name
-                elif user.role in ["seller", "admin"]:
-                    profile = db.query(SellerProfile).filter(
-                        SellerProfile.id == user.id).first()
-                    if profile:
-                        user_name = profile.business_name
+            # Get user name based on profile type
+            user_name = "User"  # Default fallback
+            if user.role == "customer":
+                profile = db.query(Profile).filter(
+                    Profile.id == user.id).first()
+                if profile:
+                    user_name = profile.name
+            elif user.role in ["seller", "admin"]:
+                profile = db.query(SellerProfile).filter(
+                    SellerProfile.id == user.id).first()
+                if profile:
+                    user_name = profile.business_name
 
-                # Increment rate limit counter
-                verification_manager.increment_rate_limit(
-                    email, window_minutes=60)
-
-                # Send password reset email asynchronously
-                send_password_reset_email.delay(email, user_name)
+            # Send password reset email asynchronously
+            send_password_reset_email.delay(email, user_name)
 
         return {
             "message": f"If an account with {email} exists, a password reset email has been sent",
