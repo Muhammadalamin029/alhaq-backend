@@ -306,7 +306,9 @@ class AssetService():
 
         for payment in completed_payments:
             gross_amount = Decimal(str(payment.amount or 0))
-            payment_metadata = payment.metadata or {}
+            payment_metadata = getattr(payment, 'transaction_metadata', {}) or {}
+            if not isinstance(payment_metadata, dict):
+                payment_metadata = {}
             total_paid += gross_amount
             platform_fee_amount += Decimal(
                 str(
