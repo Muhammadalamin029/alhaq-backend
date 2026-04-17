@@ -32,6 +32,7 @@ from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
 from core.seller_payout_service import seller_payout_service
+from core.admin_service import admin_service
 from core.status_constants import (
     AGREEMENT_STATUS_ACTIVE,
     INSPECTION_STATUS_SCHEDULED,
@@ -134,9 +135,10 @@ async def get_admin_dashboard_stats(
         elif range == "30d":
             range_start = now - timedelta(days=30)
 
-        # Basic counts
+        # Basic counts using unified helper
+        asset_counts = admin_service.get_asset_counts(db)
         total_users = db.query(User).count()
-        total_products = db.query(Product).count()
+        total_products = sum(asset_counts.values())
         total_orders = db.query(Order).count()
         
         # Revenue calculations (gross + net): include ALL completed payments (orders + asset payments)
@@ -591,7 +593,7 @@ async def get_admin_sellers(
                 website_url=seller.website_url,
                 kyc_status=seller.kyc_status,
                 approval_date=seller.approval_date,
-                total_products=seller.total_products,
+                total_products=admin_service.get_seller_total_count(db, seller.id),
                 total_orders=seller.total_orders,
                 total_revenue=seller.total_revenue,
                 available_balance=seller.available_balance or Decimal('0.00'),

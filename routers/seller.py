@@ -50,6 +50,7 @@ from schemas.seller_payout import (
     PayoutAccountVerifyResponse,
 )
 from core.seller_payout_service import seller_payout_service
+from core.admin_service import admin_service
 from core.logging_config import get_logger, log_error
 from core.order import OrderService
 from core.system_settings_service import system_settings_service
@@ -178,10 +179,10 @@ async def get_seller_stats(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Seller profile not found"
             )
 
-        # Get additional real-time stats
-        total_products = (
-            db.query(Product).filter(Product.seller_id == seller_id).count()
-        )
+        # Get additional real-time stats using unified helper
+        asset_counts = admin_service.get_asset_counts(db, seller_id=seller_id)
+        
+        total_products = sum(asset_counts.values())
 
         active_products = (
             db.query(Product)

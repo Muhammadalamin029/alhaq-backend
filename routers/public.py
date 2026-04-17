@@ -6,6 +6,7 @@ from core.model import SellerProfile, Product, Order, OrderItem
 from schemas.seller import SellerProfileResponse
 from core.automotive_service import automotive_service
 from core.property_service import property_service
+from core.admin_service import admin_service
 from schemas.automotive import CarResponse
 from schemas.property import PropertyResponse
 from .seller import SellerStatsResponse
@@ -34,7 +35,7 @@ def get_public_sellers(db: Session = Depends(get_db)):
             "business_name": seller.business_name,
             "description": seller.description,
             "seller_type": seller.seller_type,
-            "total_products": seller.total_products,
+            "total_products": admin_service.get_seller_total_count(db, seller.id),
             "kyc_status": seller.kyc_status
         })
 
@@ -96,7 +97,7 @@ def get_public_seller(seller_id: str, db: Session = Depends(get_db)):
             "business_name": seller.business_name,
             "description": seller.description,
             "seller_type": seller.seller_type,
-            "total_products": seller.total_products,
+            "total_products": admin_service.get_seller_total_count(db, seller.id),
             "kyc_status": seller.kyc_status,
             "created_at": seller.created_at.isoformat() if seller.created_at else None
         }
@@ -151,6 +152,6 @@ def get_public_seller_inventory(seller_id: str, db: Session = Depends(get_db)):
         "data": {
             "type": seller_type,
             "items": items,
-            "item_count": len(items)
+            "item_count": admin_service.get_seller_total_count(db, seller_uuid)
         }
     }
