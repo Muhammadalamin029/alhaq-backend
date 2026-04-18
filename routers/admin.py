@@ -587,6 +587,7 @@ async def get_admin_sellers(
                 email=seller.user.email,
                 business_name=seller.business_name,
                 seller_type=seller.seller_type,
+                logo_url=seller.logo_url,
                 description=seller.description,
                 contact_email=seller.contact_email,
                 contact_phone=seller.contact_phone,

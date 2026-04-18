@@ -100,6 +100,7 @@ class AdminSellerListResponse(BaseModel):
     email: str  # From User
     business_name: str
     seller_type: Optional[str] = None
+    logo_url: Optional[str] = None
     description: Optional[str] = None
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None

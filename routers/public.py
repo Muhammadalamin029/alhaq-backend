@@ -36,7 +36,8 @@ def get_public_sellers(db: Session = Depends(get_db)):
             "description": seller.description,
             "seller_type": seller.seller_type,
             "total_products": admin_service.get_seller_total_count(db, seller.id),
-            "kyc_status": seller.kyc_status
+            "kyc_status": seller.kyc_status,
+            "logo_url": seller.logo_url
         })
 
     return {
@@ -86,7 +87,6 @@ def get_public_seller(seller_id: str, db: Session = Depends(get_db)):
     )
     
     if not seller:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Seller not found")
         
     return {
@@ -96,6 +96,7 @@ def get_public_seller(seller_id: str, db: Session = Depends(get_db)):
             "id": str(seller.id),
             "business_name": seller.business_name,
             "description": seller.description,
+            "logo_url": seller.logo_url,
             "seller_type": seller.seller_type,
             "total_products": admin_service.get_seller_total_count(db, seller.id),
             "kyc_status": seller.kyc_status,
