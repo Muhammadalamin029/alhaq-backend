@@ -9,7 +9,7 @@ from fastapi import HTTPException, status
 
 from core.model import (
     Payment, Order, GeneralAgreement, Profile, SellerProfile, 
-    GeneralInspection, CarUnit, PhoneUnit, Property, PropertyUnit, 
+    GeneralInspection, CarUnit, Property, PropertyUnit,
     RealEstateSessionRequest
 )
 from core.paystack_service import paystack_service
@@ -329,10 +329,6 @@ class PaymentService:
                             elif agreement.asset_type == "automotive" and agreement.unit_id:
                                 unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
                                 if unit: unit.status = "sold" # Or other appropriate status
-                            elif agreement.asset_type == "phone" and agreement.unit_id:
-                                from core.model import PhoneUnit
-                                unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
-                                if unit: unit.status = "sold"
                         elif agreement.status == "active":
                             session_req.status = "processing"
                 else:

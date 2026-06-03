@@ -126,11 +126,6 @@ def get_public_seller_inventory(seller_id: str, db: Session = Depends(get_db)):
     elif seller_type == "real_agent":
         properties = property_service.list_properties(db, status="available", seller_id=seller_uuid)
         items = [PropertyResponse.model_validate(p).model_dump() for p in properties]
-    elif seller_type == "phone_dealer":
-        from core.phone_service import phone_service
-        from schemas.phone import PhoneResponse
-        phones = phone_service.list_phones(db, seller_id=seller_uuid)
-        items = [PhoneResponse.model_validate(p).model_dump() for p in phones]
     else:
         # Default to retailer
         query = db.query(Product).filter(Product.seller_id == seller_uuid, Product.status == "active")

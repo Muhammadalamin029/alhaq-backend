@@ -10,7 +10,7 @@ from routers import (
     notifications as notifications_router,
     seller as seller_router,
     admin as admin_router,
-    payments, banks, automotive, phones, assets, properties, disputes, system_settings,
+    payments, banks, automotive, assets, properties, disputes, system_settings,
     public as public_router,
     legal_documents as legal_documents_router,
 )
@@ -118,7 +118,6 @@ app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])
-app.include_router(phones.router, prefix="/phones", tags=["Phones"])
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])
 app.include_router(properties.router, prefix="/properties", tags=["Properties"])
 app.include_router(banks.router, prefix="/api/v1", tags=["Banks"])

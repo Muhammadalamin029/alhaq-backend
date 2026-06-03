@@ -41,7 +41,7 @@ class SellerRegisterRequest(BaseModel):
     contact_phone: str = Field(..., min_length=10, max_length=20)
     description: str = Field(..., max_length=1000)
     website_url: Optional[str] = Field(None, max_length=500)
-    seller_type: Optional[str] = Field("retailer", pattern=r'^(retailer|car_dealer|real_agent|phone_dealer)$')
+    seller_type: Optional[str] = Field("retailer", pattern=r'^(retailer|car_dealer|real_agent)$')
 
 
 class ChangePasswordRequest(BaseModel):

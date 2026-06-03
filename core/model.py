@@ -138,7 +138,7 @@ class SellerProfile(Base):
     contact_phone = Column(String(50), nullable=True)
     website_url = Column(Text, nullable=True)
 
-    seller_type = Column(Enum("retailer", "car_dealer", "real_agent", "phone_dealer",
+    seller_type = Column(Enum("retailer", "car_dealer", "real_agent",
                              name="seller_type"), nullable=True)
     
     kyc_status = Column(Enum("pending", "approved", "rejected",
@@ -224,16 +224,14 @@ class AssetImage(Base):
     product_id = Column(UUID, ForeignKey("products.id", ondelete="CASCADE"), nullable=True)
     car_id = Column(UUID, ForeignKey("cars.id", ondelete="CASCADE"), nullable=True)
     property_id = Column(UUID, ForeignKey("properties.id", ondelete="CASCADE"), nullable=True)
-    phone_id = Column(UUID, ForeignKey("phones.id", ondelete="CASCADE"), nullable=True)
     session_request_id = Column(UUID, ForeignKey("re_session_requests.id", ondelete="CASCADE"), nullable=True)
-    
+
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
     product = relationship("Product", back_populates="images")
     car = relationship("Car", back_populates="images")
     property = relationship("Property", back_populates="images")
-    phone = relationship("Phone", back_populates="images")
     session_request = relationship("RealEstateSessionRequest", back_populates="images")
 
 
@@ -480,8 +478,6 @@ class Notification(Base):
         "promotional_offer",
         "car_approved",
         "car_rejected",
-        "phone_approved",
-        "phone_rejected",
         "inspection_scheduled",
         "inspection_confirmed",
         "inspection_rejected",
@@ -683,7 +679,7 @@ class GeneralInspection(Base):
     seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
     user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     
-    asset_type = Column(Enum("automotive", "property", "phone", name="asset_category"), nullable=False)
+    asset_type = Column(Enum("automotive", "property", name="asset_category"), nullable=False)
     asset_id = Column(UUID, nullable=False) 
     unit_id = Column(UUID, nullable=True)
     
@@ -705,7 +701,6 @@ class GeneralInspection(Base):
     user = relationship("User", back_populates="inspections")
     car = relationship("Car", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Car.id, GeneralInspection.asset_type=='automotive')", back_populates="inspections", overlaps="inspections")
     property = relationship("Property", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Property.id, GeneralInspection.asset_type=='property')", back_populates="inspections", overlaps="inspections")
-    phone = relationship("Phone", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Phone.id, GeneralInspection.asset_type=='phone')", back_populates="inspections", overlaps="inspections")
 
 
 class GeneralAgreement(Base):
@@ -716,7 +711,7 @@ class GeneralAgreement(Base):
     user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     inspection_id = Column(UUID, ForeignKey("general_inspections.id"), nullable=True)
     
-    asset_type = Column(Enum("automotive", "property", "phone", name="asset_category"), nullable=False)
+    asset_type = Column(Enum("automotive", "property", name="asset_category"), nullable=False)
     asset_id = Column(UUID, nullable=False)
     unit_id = Column(UUID, nullable=True)
     
@@ -743,53 +738,6 @@ class GeneralAgreement(Base):
     payments = relationship("Payment", back_populates="agreement")
     car = relationship("Car", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Car.id, GeneralAgreement.asset_type=='automotive')", back_populates="agreements", overlaps="agreements")
     property = relationship("Property", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Property.id, GeneralAgreement.asset_type=='property')", back_populates="agreements", overlaps="agreements")
-    phone = relationship("Phone", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Phone.id, GeneralAgreement.asset_type=='phone')", back_populates="agreements", overlaps="agreements")
-
-
-# ---------------- PHONES (NEW) ----------------
-
-class Phone(Base):
-    __tablename__ = "phones"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
-    brand = Column(String(100), nullable=False)
-    model = Column(String(100), nullable=False)
-    specs = Column(Text, nullable=True) # RAM, Storage, CPU etc.
-    price = Column(Numeric(15, 2), nullable=False)
-    min_deposit_percentage = Column(Numeric(5, 2), default=10)
-    
-    status = Column(Enum("available", "out_of_stock", name="phone_listing_status"), default="available")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-
-    # Relationships
-    seller = relationship("SellerProfile")
-    units = relationship("PhoneUnit", back_populates="phone_listing", cascade="all, delete-orphan")
-    inspections = relationship("GeneralInspection", primaryjoin="and_(Phone.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='phone')", back_populates="phone", cascade="all, delete-orphan")
-    agreements = relationship("GeneralAgreement", primaryjoin="and_(Phone.id==foreign(GeneralAgreement.asset_id), GeneralAgreement.asset_type=='phone')", back_populates="phone", cascade="all, delete-orphan")
-    images = relationship("AssetImage", back_populates="phone", cascade="all, delete-orphan")
-
-
-class PhoneUnit(Base):
-    __tablename__ = "phone_units"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    phone_id = Column(UUID, ForeignKey("phones.id"), nullable=False)
-    imei = Column(String(100), unique=True, nullable=False)
-    color = Column(String(50), nullable=True)
-    grade = Column(String(20), nullable=True) # e.g. New, Open Box, Grade A
-    battery_health = Column(Integer, nullable=True)
-    
-    status = Column(Enum("available", "inspected", "awaiting_payment", "sold", "reserved", 
-                        name="phone_unit_status"), default="available")
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-
-    # Relationships
-    phone_listing = relationship("Phone", back_populates="units")
 
 
 # ---------------- AUDIT LOGS ----------------

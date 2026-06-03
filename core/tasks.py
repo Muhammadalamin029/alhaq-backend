@@ -4,7 +4,7 @@ from celery import current_task
 from core.celery_app import celery_app
 from core.email_service import email_service
 from core.redis_client import verification_manager
-from core.model import User, Profile, SellerProfile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, PhoneUnit, Order, Dispute
+from core.model import User, Profile, SellerProfile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, Order, Dispute
 from core.system_settings_service import system_settings_service
 from datetime import datetime, timedelta
 import logging
@@ -279,6 +279,54 @@ def send_welcome_email(self, user_email: str, user_name: str):
             "task_id": self.request.id,
             "user_email": user_email
         }
+
+
+@celery_app.task(bind=True, name='core.tasks.send_login_email')
+def send_login_email(self, user_email: str, user_name: str,
+                     login_time: str, ip_address: str = None, device: str = None):
+    """Send a security notification when a user logs in."""
+    try:
+        html_body, text_body = email_service.render_login_email(
+            user_name, login_time, ip_address, device
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"New Sign-In to {email_service.from_name}",
+            html_body=html_body,
+            text_body=text_body,
+        )
+        if success:
+            logger.info(f"Login email sent to {user_email}")
+            return {"success": True}
+        else:
+            raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending login email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_payout_requested_email')
+def send_payout_requested_email(self, seller_email: str, business_name: str,
+                                 amount: str, bank_name: str, account_number: str):
+    """Notify a seller that their payout request was received."""
+    try:
+        html_body, text_body = email_service.render_payout_requested_email(
+            business_name, amount, bank_name, account_number
+        )
+        success = email_service.send_email_sync(
+            to_email=seller_email,
+            subject=f"Payout Request Received — {amount}",
+            html_body=html_body,
+            text_body=text_body,
+        )
+        if success:
+            logger.info(f"Payout requested email sent to {seller_email}")
+            return {"success": True}
+        else:
+            raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending payout requested email to {seller_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
 
 
 @celery_app.task(name='core.tasks.cleanup_expired_codes')
@@ -570,10 +618,6 @@ def process_installment_defaults():
                         elif agreement.asset_type == "property":
                             unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
                             if unit: unit.status = "available"
-                        elif agreement.asset_type == "phone":
-                            unit = db.query(PhoneUnit).filter(PhoneUnit.id == agreement.unit_id).first()
-                            if unit: unit.status = "available"
-                            
             if default_count > 0:
                 db.commit()
                 logger.info(f"Defaulted {default_count} active agreements due to missed payments.")

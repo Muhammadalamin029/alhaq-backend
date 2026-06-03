@@ -78,8 +78,25 @@ def login(form_data: LoginRequest, db: Session = Depends(get_db)):
         )
         
         access_token, refresh_token = generate_tokens(db, str(user.id), user.role)
+
+        # Fire-and-forget login security email
+        try:
+            from core.tasks import send_login_email
+            from datetime import datetime, timezone
+            from core.model import Profile, SellerProfile
+            if user.role == "seller":
+                sp = db.query(SellerProfile).filter(SellerProfile.id == user.id).first()
+                display_name = sp.business_name if sp else user.email
+            else:
+                profile = db.query(Profile).filter(Profile.id == user.id).first()
+                display_name = profile.name if profile else user.email
+            login_time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
+            send_login_email.delay(user.email, display_name, login_time)
+        except Exception:
+            pass  # Never block login due to email failure
+
         return TokenResponse(access_token=access_token, refresh_token=refresh_token)
-        
+
     except HTTPException as e:
         # Log failed login attempt
         log_auth_event(

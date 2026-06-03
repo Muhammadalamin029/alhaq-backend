@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from core.model import (
-    Car, CarUnit, Property, PropertyUnit, Phone, PhoneUnit, 
+    Car, CarUnit, Property, PropertyUnit,
     GeneralInspection, GeneralAgreement, Payment, AssetImage,
     Profile, User, SellerProfile
 )
@@ -34,7 +34,7 @@ class AssetService():
     def update_unit_status(self, db: Session, asset_type: str, status: str, unit_id: Optional[UUID] = None, asset_id: Optional[UUID] = None):
         """
         Unified method to update unit or asset status based on inspection/agreement stage.
-        Handles CarUnit, PhoneUnit, and PropertyUnit consistently.
+        Handles CarUnit and PropertyUnit consistently.
         """
         # Mapping from GeneralInspection/GeneralAgreement statuses to physical unit statuses
         unit_status_map = {
@@ -77,22 +77,6 @@ class AssetService():
                     if available_count == 0:
                         car = db.query(Car).filter(Car.id == unit.car_id).first()
                         if car: car.status = "out_of_stock"
-
-        elif asset_type == "phone" and unit_id:
-            unit = db.query(PhoneUnit).filter(PhoneUnit.id == unit_id).first()
-            if unit:
-                if new_status != "pending_inspection":
-                    unit.status = new_status
-                
-                if new_status in ["sold", "awaiting_payment"]:
-                    available_count = db.query(PhoneUnit).filter(
-                        PhoneUnit.phone_id == unit.phone_id,
-                        PhoneUnit.status.in_(["available", "inspected"]),
-                        PhoneUnit.id != unit.id
-                    ).count()
-                    if available_count == 0:
-                        phone = db.query(Phone).filter(Phone.id == unit.phone_id).first()
-                        if phone: phone.status = "out_of_stock"
 
         elif asset_type == "property":
             # If unit_id is provided, update specific unit
@@ -142,19 +126,11 @@ class AssetService():
                 title = asset.title
                 price = asset.price
                 min_deposit = asset.min_deposit_percentage
-        elif asset_type == "phone":
-            asset = db.query(Phone).filter(Phone.id == asset_id).first()
-            if asset:
-                title = f"{asset.brand} {asset.model}"
-                price = asset.price
-                min_deposit = asset.min_deposit_percentage
-        
         # Get first image
         img = db.query(AssetImage).filter(
             or_(
                 AssetImage.car_id == asset_id,
                 AssetImage.property_id == asset_id,
-                AssetImage.phone_id == asset_id,
                 AssetImage.product_id == asset_id
             )
         ).first()
@@ -179,12 +155,12 @@ class AssetService():
             asset = db.query(Car).filter(Car.id == data.asset_id).first()
         elif data.asset_type == "property":
             asset = db.query(Property).filter(Property.id == data.asset_id).first()
-        elif data.asset_type == "phone":
-            asset = db.query(Phone).filter(Phone.id == data.asset_id).first()
-        
+        else:
+            asset = None
+
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
-        
+
         unavailable_statuses = ["sold", "awaiting_payment", "under_financing", "pending", "archived"]
         if getattr(asset, "status", None) in unavailable_statuses:
             raise HTTPException(status_code=400, detail="Cannot schedule inspection. This asset is currently unavailable.")
@@ -459,9 +435,9 @@ class AssetService():
             asset = db.query(Car).filter(Car.id == data.asset_id).first()
         elif data.asset_type == "property":
             asset = db.query(Property).filter(Property.id == data.asset_id).first()
-        elif data.asset_type == "phone":
-            asset = db.query(Phone).filter(Phone.id == data.asset_id).first()
-        
+        else:
+            asset = None
+
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 

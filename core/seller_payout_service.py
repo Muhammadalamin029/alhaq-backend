@@ -217,9 +217,25 @@ class SellerPayoutService:
             db.add(payout)
             db.commit()
             db.refresh(payout)
-            
+
             logger.info(f"Created payout {payout.id} for seller {seller_id}: {amount}")
-            
+
+            # Send confirmation email to seller
+            try:
+                from core.model import User
+                from core.tasks import send_payout_requested_email
+                user = db.query(User).filter(User.id == seller_id).first()
+                if user:
+                    send_payout_requested_email.delay(
+                        seller_email=user.email,
+                        business_name=seller.business_name,
+                        amount=f"₦{float(amount):,.2f}",
+                        bank_name=bank_name,
+                        account_number=account_number,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send payout requested email: {e}")
+
             return payout
             
         except Exception as e:
@@ -409,7 +425,9 @@ class SellerPayoutService:
                 payout.status = "completed"
                 payout.processed_at = datetime.utcnow()
                 
-                # Create success notification
+                # Create success notification (data keys trigger specific email template)
+                seller_for_notif = db.query(SellerProfile).filter(
+                    SellerProfile.id == payout.seller_id).first()
                 create_notification(db, {
                     "user_id": str(payout.seller_id),
                     "type": "payment_successful",
@@ -420,8 +438,10 @@ class SellerPayoutService:
                     "data": {
                         "payout_id": str(payout.id),
                         "amount": float(payout.net_amount),
-                        "transfer_reference": payout.transfer_reference
-                    }
+                        "bank_name": payout.bank_name,
+                        "transfer_reference": payout.transfer_reference,
+                        "business_name": seller_for_notif.business_name if seller_for_notif else "",
+                    },
                 })
                 
                 logger.info(f"Payout {payout.id} completed successfully")
@@ -436,7 +456,7 @@ class SellerPayoutService:
                     seller.available_balance += payout.amount
                     seller.total_paid -= payout.net_amount
                 
-                # Create failure notification
+                # Create failure notification (data keys trigger specific email template)
                 create_notification(db, {
                     "user_id": str(payout.seller_id),
                     "type": "payment_failed",

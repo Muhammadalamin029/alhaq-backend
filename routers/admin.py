@@ -11,7 +11,7 @@ from core.auth import role_required
 from core.model import (
     User, Profile, SellerProfile, Product, Order, OrderItem, Category, 
     Payment, SellerPayout, GeneralInspection, GeneralAgreement,
-    Property, RealEstateSessionRequest, PropertyUnit, CarUnit, PhoneUnit
+    Property, RealEstateSessionRequest, PropertyUnit, CarUnit
 )
 from fastapi.responses import StreamingResponse
 import csv

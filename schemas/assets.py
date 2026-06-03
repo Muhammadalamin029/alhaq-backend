@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 class AssetInspectionBase(BaseModel):
-    asset_type: str = Field(..., pattern="^(automotive|property|phone)$")
+    asset_type: str = Field(..., pattern="^(automotive|property)$")
     asset_id: UUID
     unit_id: Optional[UUID] = None
     inspection_date: datetime
@@ -14,7 +14,7 @@ class AssetInspectionBase(BaseModel):
     status: str = "scheduled"
 
 class AssetInspectionSchedule(BaseModel):
-    asset_type: str = Field(..., pattern="^(automotive|property|phone)$")
+    asset_type: str = Field(..., pattern="^(automotive|property)$")
     asset_id: UUID
     unit_id: Optional[UUID] = None
     inspection_date: datetime
