@@ -23,7 +23,7 @@ class SystemSettingsService:
         )
         return {
             "scope": self.DEFAULT_SCOPE,
-            "site_name": "Alhaq",
+            "site_name": "LEL Marketplace",
             "site_description": marketplace_copy,
             "contact_email": support_email,
             "support_email": support_email,

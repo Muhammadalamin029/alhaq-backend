@@ -112,7 +112,7 @@ def setup_logging(
                 "handlers": ["console"],
                 "propagate": False
             },
-            "alhaq_backend": {
+            "lel_backend": {
                 "level": log_level,
                 "handlers": ["console"],
                 "propagate": False
@@ -155,7 +155,7 @@ def setup_logging(
     logging.config.dictConfig(config)
     
     # Log the startup
-    logger = logging.getLogger("alhaq_backend")
+    logger = logging.getLogger("lel_backend")
     logger.info("Logging system initialized (console only)", extra={
         "log_level": log_level,
         "log_to_console": log_to_console

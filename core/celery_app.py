@@ -34,7 +34,7 @@ def get_redis_config():
 redis_config = get_redis_config()
 
 celery_app = Celery(
-    "alhaq_backend",
+    "lel_backend",
     broker=redis_config['broker_url'],
     backend=redis_config['result_backend'],
     include=["core.tasks"]

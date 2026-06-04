@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from datetime import timedelta
@@ -59,7 +59,7 @@ def refresh_tokens(refresh_request: RefreshRequest, db: Session = Depends(get_db
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(form_data: LoginRequest, db: Session = Depends(get_db)):
+def login(request: Request, form_data: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate user and return tokens"""
     try:
         auth_logger.info(f"Login attempt for user: {form_data.email}")
@@ -91,7 +91,35 @@ def login(form_data: LoginRequest, db: Session = Depends(get_db)):
                 profile = db.query(Profile).filter(Profile.id == user.id).first()
                 display_name = profile.name if profile else user.email
             login_time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
-            send_login_email.delay(user.email, display_name, login_time)
+            # Extract real IP (respects X-Forwarded-For from reverse proxies)
+            forwarded_for = request.headers.get("x-forwarded-for")
+            ip_address = forwarded_for.split(",")[0].strip() if forwarded_for else (
+                request.client.host if request.client else None
+            )
+            # Parse a short device string from User-Agent
+            ua = request.headers.get("user-agent", "")
+            if "iPhone" in ua or "iPad" in ua:
+                device = "iOS Device"
+            elif "Android" in ua:
+                device = "Android Device"
+            elif "Windows" in ua:
+                device = "Windows"
+            elif "Macintosh" in ua or "Mac OS" in ua:
+                device = "macOS"
+            elif "Linux" in ua:
+                device = "Linux"
+            else:
+                device = "Unknown Device"
+            # Append browser if detectable
+            if "Chrome" in ua and "Edg" not in ua and "OPR" not in ua:
+                device += " / Chrome"
+            elif "Firefox" in ua:
+                device += " / Firefox"
+            elif "Safari" in ua and "Chrome" not in ua:
+                device += " / Safari"
+            elif "Edg" in ua:
+                device += " / Edge"
+            send_login_email.delay(user.email, display_name, login_time, ip_address, device)
         except Exception:
             pass  # Never block login due to email failure
 

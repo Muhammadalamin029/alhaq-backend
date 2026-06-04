@@ -62,7 +62,7 @@ class AuthService:
             create_notification(db, {
                 "user_id": str(user.id),
                 "type": "account_verified",
-                "title": "Welcome to Alhaq!",
+                "title": "Welcome to LEL Marketplace!",
                 "message": f"Welcome {full_name}! Your account has been created successfully. Start exploring our marketplace.",
                 "priority": "medium",
                 "channels": ["in_app", "email"],

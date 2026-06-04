@@ -63,7 +63,7 @@ class SystemSettings(Base):
     scope = Column(String(50), unique=True, nullable=False, default="default")
 
     # General settings
-    site_name = Column(String(255), nullable=False, default="Alhaq")
+    site_name = Column(String(255), nullable=False, default="LEL Marketplace")
     site_description = Column(Text, nullable=True)
     contact_email = Column(String(255), nullable=True)
     support_email = Column(String(255), nullable=True)

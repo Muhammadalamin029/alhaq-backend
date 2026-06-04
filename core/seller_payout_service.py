@@ -272,7 +272,7 @@ class SellerPayoutService:
                     name=seller.business_name,
                     account_number=payout.account_number,
                     bank_code=payout.bank_code,
-                    email=seller.contact_email or f"seller_{seller.id}@alhaq.com"
+                    email=seller.contact_email or f"seller_{seller.id}@lel-marketplace.com"
                 )
                 
                 if recipient_data.get("status"):
