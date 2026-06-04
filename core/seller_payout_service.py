@@ -10,6 +10,7 @@ from core.model import SellerProfile, SellerPayout, Order, OrderItem, Product
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
 from core.system_settings_service import system_settings_service
+from core.tasks import send_payout_completed_email, send_payout_failed_email
 
 logger = logging.getLogger(__name__)
 
@@ -445,7 +446,17 @@ class SellerPayoutService:
                 })
                 
                 logger.info(f"Payout {payout.id} completed successfully")
-                
+                try:
+                    send_payout_completed_email.delay(
+                        seller_for_notif.contact_email,
+                        seller_for_notif.business_name,
+                        f"₦{payout.net_amount:,.2f}",
+                        payout.bank_name,
+                        payout.transfer_reference,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to queue payout completed email: {e}")
+
             elif status == "failed":
                 payout.status = "failed"
                 payout.failure_reason = transfer_data.get("failure_reason", "Transfer failed")
@@ -472,7 +483,17 @@ class SellerPayoutService:
                 })
                 
                 logger.warning(f"Payout {payout.id} failed: {payout.failure_reason}")
-            
+                if seller:
+                    try:
+                        send_payout_failed_email.delay(
+                            seller.contact_email,
+                            seller.business_name,
+                            f"₦{payout.net_amount:,.2f}",
+                            payout.failure_reason,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to queue payout failed email: {e}")
+
             db.commit()
             
         except Exception as e:

@@ -32,6 +32,7 @@ from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
 from core.seller_payout_service import seller_payout_service
+from core.tasks import send_kyc_approved_email, send_kyc_rejected_email
 from core.admin_service import admin_service
 from core.status_constants import (
     AGREEMENT_STATUS_ACTIVE,
@@ -659,7 +660,15 @@ async def update_seller_kyc_status(
                 })
             except Exception as e:
                 admin_logger.error(f"Failed to create KYC approval notification: {e}")
-                
+            try:
+                send_kyc_approved_email.delay(
+                    seller.contact_email,
+                    seller.business_name,
+                    seller.approval_date.isoformat()
+                )
+            except Exception as e:
+                admin_logger.error(f"Failed to queue KYC approved email: {e}")
+
         elif action.action == "reject_kyc":
             seller.kyc_status = "rejected"
             seller.approval_date = None
@@ -682,9 +691,17 @@ async def update_seller_kyc_status(
                 })
             except Exception as e:
                 admin_logger.error(f"Failed to create KYC rejection notification: {e}")
+            try:
+                send_kyc_rejected_email.delay(
+                    seller.contact_email,
+                    seller.business_name,
+                    action.reason
+                )
+            except Exception as e:
+                admin_logger.error(f"Failed to queue KYC rejected email: {e}")
         else:
             raise HTTPException(status_code=400, detail="Invalid action")
-        
+
         db.commit()
         
         admin_logger.info(f"Admin {user['id']} {action.action} for seller {seller_id}")

@@ -170,14 +170,15 @@ class EmailService:
         try:
             msg = self._create_message(to_email, subject, html_body, text_body)
             if self.use_ssl:
+                # Port 465 — SSL from the start
+                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port,
+                                       use_tls=True, timeout=30)
+            else:
+                # Port 587 — aiosmtplib v4 auto-performs STARTTLS on connect
+                # when the server announces it; do not call starttls() manually
                 smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port,
                                        use_tls=False, timeout=30)
-                await smtp.connect()
-                await smtp.starttls()
-            else:
-                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port,
-                                       use_tls=self.use_tls, timeout=30)
-                await smtp.connect()
+            await smtp.connect()
             if self.username and self.password:
                 await smtp.login(self.username, self.password)
             await smtp.send_message(msg)

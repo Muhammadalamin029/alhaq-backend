@@ -329,6 +329,268 @@ def send_payout_requested_email(self, seller_email: str, business_name: str,
         raise self.retry(exc=exc, countdown=60, max_retries=2)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# KYC emails
+# ──────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name='core.tasks.send_kyc_approved_email')
+def send_kyc_approved_email(self, seller_email: str, business_name: str, approval_date: str):
+    """Notify a seller their KYC verification was approved."""
+    try:
+        html_body, text_body = email_service.render_kyc_approved_email(business_name, approval_date)
+        success = email_service.send_email_sync(
+            to_email=seller_email,
+            subject=f"KYC Approved — Welcome to {email_service.from_name}!",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"KYC approved email sent to {seller_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending KYC approved email to {seller_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_kyc_rejected_email')
+def send_kyc_rejected_email(self, seller_email: str, business_name: str, reason: str = None):
+    """Notify a seller their KYC verification was rejected."""
+    try:
+        html_body, text_body = email_service.render_kyc_rejected_email(business_name, reason)
+        success = email_service.send_email_sync(
+            to_email=seller_email,
+            subject=f"KYC Verification — Action Required",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"KYC rejected email sent to {seller_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending KYC rejected email to {seller_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Payout emails
+# ──────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name='core.tasks.send_payout_completed_email')
+def send_payout_completed_email(self, seller_email: str, business_name: str,
+                                 amount: str, bank_name: str, reference: str):
+    """Notify a seller their payout was successfully processed."""
+    try:
+        html_body, text_body = email_service.render_payout_completed_email(
+            business_name, amount, bank_name, reference
+        )
+        success = email_service.send_email_sync(
+            to_email=seller_email,
+            subject=f"Payout Successful — {amount} Sent",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Payout completed email sent to {seller_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending payout completed email to {seller_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_payout_failed_email')
+def send_payout_failed_email(self, seller_email: str, business_name: str,
+                              amount: str, reason: str):
+    """Notify a seller their payout failed and the balance was restored."""
+    try:
+        html_body, text_body = email_service.render_payout_failed_email(business_name, amount, reason)
+        success = email_service.send_email_sync(
+            to_email=seller_email,
+            subject=f"Payout Failed — {amount} Returned to Balance",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Payout failed email sent to {seller_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending payout failed email to {seller_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Inspection / Agreement emails
+# ──────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name='core.tasks.send_inspection_confirmed_email')
+def send_inspection_confirmed_email(self, user_email: str, user_name: str,
+                                     asset_title: str, inspection_date: str,
+                                     location: str, seller_name: str,
+                                     seller_contact: str = None):
+    """Notify a buyer their inspection has been confirmed by the seller."""
+    try:
+        html_body, text_body = email_service.render_inspection_confirmed_email(
+            user_name, asset_title, inspection_date, location, seller_name, seller_contact
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"Inspection Confirmed — {asset_title}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Inspection confirmed email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending inspection confirmed email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_agreement_created_email')
+def send_agreement_created_email(self, seller_email: str, seller_name: str,
+                                  buyer_name: str, asset_title: str,
+                                  total_price: str, deposit: str, plan_type: str,
+                                  monthly: str = None, duration: str = None):
+    """Notify the seller a new agreement has been created (pending their review)."""
+    try:
+        html_body, text_body = email_service.render_agreement_created_email(
+            seller_name, buyer_name, asset_title, total_price, deposit, plan_type, monthly, duration
+        )
+        success = email_service.send_email_sync(
+            to_email=seller_email,
+            subject=f"New Agreement Awaiting Review — {asset_title}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Agreement created email sent to {seller_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending agreement created email to {seller_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_agreement_approved_email')
+def send_agreement_approved_email(self, user_email: str, user_name: str,
+                                   asset_title: str, total_price: str, remaining: str,
+                                   next_due: str = None, monthly: str = None):
+    """Notify the buyer their agreement is now active after deposit confirmation."""
+    try:
+        html_body, text_body = email_service.render_agreement_approved_email(
+            user_name, asset_title, total_price, remaining, next_due, monthly
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"Agreement Active — {asset_title}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Agreement approved email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending agreement approved email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dispute emails
+# ──────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name='core.tasks.send_dispute_opened_email')
+def send_dispute_opened_email(self, user_email: str, user_name: str,
+                               dispute_title: str, reference: str,
+                               order_or_agreement_id: str = None):
+    """Notify the user their dispute has been received and is under review."""
+    try:
+        html_body, text_body = email_service.render_dispute_opened_email(
+            user_name, dispute_title, reference, order_or_agreement_id
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"Dispute Received — {dispute_title}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Dispute opened email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending dispute opened email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_dispute_resolved_email')
+def send_dispute_resolved_email(self, user_email: str, user_name: str,
+                                 dispute_title: str, resolution: str,
+                                 notes: str = None):
+    """Notify the user their dispute has been resolved."""
+    try:
+        html_body, text_body = email_service.render_dispute_resolved_email(
+            user_name, dispute_title, resolution, notes
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"Dispute Resolved — {dispute_title}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Dispute resolved email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending dispute resolved email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Order status emails
+# ──────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name='core.tasks.send_order_shipped_email')
+def send_order_shipped_email(self, user_email: str, user_name: str,
+                              order_id: str, items_summary: str, total: str,
+                              tracking_note: str = None):
+    """Notify the buyer their order has been shipped."""
+    try:
+        html_body, text_body = email_service.render_order_shipped_email(
+            user_name, order_id, items_summary, total, tracking_note
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"Your Order Has Shipped — #{order_id[:8].upper()}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Order shipped email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending order shipped email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_order_delivered_email')
+def send_order_delivered_email(self, user_email: str, user_name: str,
+                                order_id: str, items_summary: str, total: str):
+    """Notify the buyer their order has been delivered."""
+    try:
+        html_body, text_body = email_service.render_order_delivered_email(
+            user_name, order_id, items_summary, total
+        )
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject=f"Order Delivered — #{order_id[:8].upper()}",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Order delivered email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending order delivered email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
 @celery_app.task(name='core.tasks.cleanup_expired_codes')
 def cleanup_expired_codes():
     """

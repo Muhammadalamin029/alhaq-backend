@@ -4,6 +4,7 @@ from core.model import Dispute, User
 from schemas.dispute import DisputeCreate, DisputeUpdate
 from core.notifications_service import create_notification
 from core.system_settings_service import system_settings_service
+from core.tasks import send_dispute_opened_email, send_dispute_resolved_email
 import logging
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,20 @@ class DisputeService:
             priority="high",
         )
 
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                ref_id = str(data.order_id or data.agreement_id or "")
+                send_dispute_opened_email.delay(
+                    user.email,
+                    user.profile.name if user.profile else user.email,
+                    data.title,
+                    str(dispute.id)[:8].upper(),
+                    ref_id or None,
+                )
+        except Exception:
+            pass  # non-critical
+
         return dispute
 
     def update_dispute(self, db: Session, dispute_id: str, admin_id: str,
@@ -95,6 +110,20 @@ class DisputeService:
                   "updated_by": admin_id},
             priority="medium",
         )
+
+        if is_resolved:
+            try:
+                user = db.query(User).filter(User.id == dispute.user_id).first()
+                if user:
+                    send_dispute_resolved_email.delay(
+                        user.email,
+                        user.profile.name if user.profile else user.email,
+                        dispute.title,
+                        dispute.status,
+                        dispute.resolution_notes,
+                    )
+            except Exception:
+                pass  # non-critical
 
         return dispute
 

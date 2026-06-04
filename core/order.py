@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple, Dict
 from schemas.order import OrderItemCreate
 from core.inventory import inventory_service
 from core.seller_payout_service import seller_payout_service
+from core.tasks import send_order_shipped_email, send_order_delivered_email
 from fastapi import HTTPException, status
 from decimal import Decimal
 import logging
@@ -918,6 +919,36 @@ class OrderService:
                     )
                     
                     logger.info(f"Queued Celery notification tasks for seller item status change in order {order_id}: customer={customer_task_id}, seller={seller_task_id}")
+
+                    if new_status in ("shipped", "delivered"):
+                        try:
+                            buyer_profile = order.buyer
+                            buyer_user = buyer_profile.user if buyer_profile else None
+                            if buyer_user:
+                                items_summary = ", ".join(
+                                    f"{item.product.name} x{item.quantity}"
+                                    for item in seller_items
+                                    if item.product
+                                )
+                                order_total = f"₦{sum(item.quantity * item.price for item in seller_items):,.2f}"
+                                if new_status == "shipped":
+                                    send_order_shipped_email.delay(
+                                        buyer_user.email,
+                                        buyer_profile.name or buyer_user.email,
+                                        str(order.id),
+                                        items_summary,
+                                        order_total,
+                                    )
+                                else:
+                                    send_order_delivered_email.delay(
+                                        buyer_user.email,
+                                        buyer_profile.name or buyer_user.email,
+                                        str(order.id),
+                                        items_summary,
+                                        order_total,
+                                    )
+                        except Exception as e:
+                            logger.error(f"Failed to queue order {new_status} email: {e}")
                 else:
                     logger.warning(f"No notification type mapping for status {new_status} in order {order_id}")
 

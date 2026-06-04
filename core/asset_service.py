@@ -16,6 +16,11 @@ from core.paystack_service import paystack_service
 from core.payment_service import payment_service
 from core.seller_payout_service import seller_payout_service
 from core.system_settings_service import system_settings_service
+from core.tasks import (
+    send_inspection_confirmed_email,
+    send_agreement_created_email,
+    send_agreement_approved_email,
+)
 from schemas.assets import (
     AssetInspectionSchedule, 
     AssetInspectionReview, 
@@ -243,6 +248,24 @@ class AssetService():
             "priority": "high",
             "channel": ["email", "in_app"]
         })
+
+        if data.action == "approve":
+            try:
+                user = db.query(User).filter(User.id == inspection.user_id).first()
+                seller = db.query(SellerProfile).filter(SellerProfile.id == inspection.seller_id).first()
+                asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
+                if user and seller and asset:
+                    send_inspection_confirmed_email.delay(
+                        user.email,
+                        user.profile.name if user.profile else user.email,
+                        asset.title,
+                        inspection.inspection_date.strftime("%B %d, %Y at %I:%M %p"),
+                        None,
+                        seller.business_name,
+                        seller.contact_phone,
+                    )
+            except Exception as e:
+                pass  # email is non-critical; notification already sent
 
         return inspection
 
@@ -498,6 +521,25 @@ class AssetService():
             "channels": ["in_app", "email"]
         })
 
+        try:
+            seller = db.query(SellerProfile).filter(SellerProfile.id == new_agreement.seller_id).first()
+            buyer = db.query(User).filter(User.id == new_agreement.user_id).first()
+            asset = self._get_asset_details(db, new_agreement.asset_type, new_agreement.asset_id)
+            if seller and buyer and asset:
+                send_agreement_created_email.delay(
+                    seller.contact_email,
+                    seller.business_name,
+                    buyer.profile.name if buyer.profile else buyer.email,
+                    asset.title,
+                    f"₦{new_agreement.total_price:,.2f}",
+                    f"₦{new_agreement.deposit_paid:,.2f}",
+                    new_agreement.plan_type,
+                    f"₦{new_agreement.monthly_installment:,.2f}" if new_agreement.monthly_installment else None,
+                    f"{new_agreement.duration_months} months" if new_agreement.duration_months else None,
+                )
+        except Exception as e:
+            pass  # non-critical
+
         return new_agreement
 
     def approve_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID, unit_id: Optional[UUID] = None) -> GeneralAgreement:
@@ -544,6 +586,22 @@ class AssetService():
             "priority": "high",
             "channels": ["in_app", "email"]
         })
+
+        try:
+            buyer = db.query(User).filter(User.id == agreement.user_id).first()
+            asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+            if buyer and asset:
+                send_agreement_approved_email.delay(
+                    buyer.email,
+                    buyer.profile.name if buyer.profile else buyer.email,
+                    asset.title,
+                    f"₦{agreement.total_price:,.2f}",
+                    f"₦{agreement.remaining_balance:,.2f}",
+                    agreement.next_due_date.strftime("%B %d, %Y") if agreement.next_due_date else None,
+                    f"₦{agreement.monthly_installment:,.2f}" if agreement.monthly_installment else None,
+                )
+        except Exception as e:
+            pass  # non-critical
 
         return agreement
 
