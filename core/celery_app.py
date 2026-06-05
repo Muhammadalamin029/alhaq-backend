@@ -53,10 +53,31 @@ config_updates = {
     "worker_max_tasks_per_child": 1000,
     "result_expires": 3600,
     "task_routes": {
-        "core.tasks.send_verification_email": {"queue": "emails"},
-        "core.tasks.send_password_reset_email": {"queue": "emails"},
-        "core.tasks.send_notification_email": {"queue": "emails"},
-        "core.tasks.send_notification": {"queue": "notifications"},
+        # Auth emails
+        "core.tasks.send_verification_email":       {"queue": "emails"},
+        "core.tasks.send_password_reset_email":     {"queue": "emails"},
+        "core.tasks.send_welcome_email":            {"queue": "emails"},
+        "core.tasks.send_login_email":              {"queue": "emails"},
+        # Notification / generic
+        "core.tasks.send_notification_email":       {"queue": "emails"},
+        "core.tasks.send_notification":             {"queue": "notifications"},
+        # Payout emails
+        "core.tasks.send_payout_requested_email":   {"queue": "emails"},
+        "core.tasks.send_payout_completed_email":   {"queue": "emails"},
+        "core.tasks.send_payout_failed_email":      {"queue": "emails"},
+        # KYC emails
+        "core.tasks.send_kyc_approved_email":       {"queue": "emails"},
+        "core.tasks.send_kyc_rejected_email":       {"queue": "emails"},
+        # Inspection / agreement emails
+        "core.tasks.send_inspection_confirmed_email": {"queue": "emails"},
+        "core.tasks.send_agreement_created_email":  {"queue": "emails"},
+        "core.tasks.send_agreement_approved_email": {"queue": "emails"},
+        # Dispute emails
+        "core.tasks.send_dispute_opened_email":     {"queue": "emails"},
+        "core.tasks.send_dispute_resolved_email":   {"queue": "emails"},
+        # Order emails
+        "core.tasks.send_order_shipped_email":      {"queue": "emails"},
+        "core.tasks.send_order_delivered_email":    {"queue": "emails"},
     },
     "task_default_queue": "default",
     "task_annotations": {
