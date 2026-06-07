@@ -1,14 +1,13 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import Optional, Dict, Any, List
+from sqlalchemy.orm import Session, joinedload
+from typing import Optional, Dict, Any
 from decimal import Decimal
 import uuid
 import logging
 from datetime import datetime
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 
 from core.model import (
-    Payment, Order, GeneralAgreement, Profile, SellerProfile, 
+    Payment, Order, OrderItem, GeneralAgreement, SellerProfile,
     GeneralInspection, CarUnit, Property, PropertyUnit,
     RealEstateSessionRequest
 )
@@ -187,13 +186,16 @@ class PaymentService:
             )
             db.add(payment)
         
-        # 7. Specific link logic
+        # 7. Specific link logic — update order and all its items to "processing"
         if category == "order":
             order = db.query(Order).filter(Order.id == order_id).first()
             if order:
                 order.payment_url = ps_res["data"]["authorization_url"]
                 order.payment_reference = reference
                 order.status = "processing"
+                db.query(OrderItem).filter(OrderItem.order_id == order_id).update(
+                    {"status": "processing"}, synchronize_session=False
+                )
 
         db.commit()
         return ps_res["data"]
@@ -225,16 +227,31 @@ class PaymentService:
         """Processes logic after successful payment confirmation"""
         logger.info(f"Completing payment {payment.id} (Category: {payment.payment_category}, Amount: {payment.amount})")
         payment.status = "completed"
-        category = payment.payment_category
-        
+
         # 1. Handle Order Logic
         if hasattr(payment, 'order_id') and payment.order_id:
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
                 order.status = "paid"
-                # Update seller balances
-                seller_payout_service.update_seller_balance(db, str(payment.seller_id), str(payment.order_id), "paid", "processing")
-                
+
+                # Sync all order items to "paid"
+                db.query(OrderItem).filter(OrderItem.order_id == payment.order_id).update(
+                    {"status": "paid"}, synchronize_session=False
+                )
+
+                # Update seller balances for every seller in this order
+                order_items = (
+                    db.query(OrderItem)
+                    .options(joinedload(OrderItem.product))
+                    .filter(OrderItem.order_id == payment.order_id)
+                    .all()
+                )
+                seller_ids = {str(item.product.seller_id) for item in order_items if item.product and item.product.seller_id}
+                for sid in seller_ids:
+                    seller_payout_service.update_seller_balance(
+                        db, sid, str(payment.order_id), "paid", "processing"
+                    )
+
                 create_notification(db, {
                     "user_id": str(payment.buyer_id),
                     "type": "payment_successful",

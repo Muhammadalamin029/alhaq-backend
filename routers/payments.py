@@ -75,10 +75,16 @@ async def verify_payment(
     try:
         ps_res = payment_service.verify_transaction(db, request.reference)
         is_success = ps_res.get("status", False) and ps_res.get("data", {}).get("status") == "success"
-        
+
+        if not is_success:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=ps_res.get("message", "Payment verification failed")
+            )
+
         return PaymentVerifyResponse(
-            success=is_success,
-            message=ps_res.get("message", "Verification finished"),
+            success=True,
+            message=ps_res.get("message", "Payment verified successfully"),
             data=ps_res.get("data", {})
         )
     except Exception as e:

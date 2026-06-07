@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional
-from uuid import UUID
 from datetime import datetime
 from pydantic.types import UUID4
 from enum import Enum
@@ -15,6 +14,9 @@ class OrderStatus(str, Enum):
     SHIPPED = "shipped"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    PARTIALLY_SHIPPED = "partially_shipped"
+    PARTIALLY_DELIVERED = "partially_delivered"
+    PARTIALLY_CANCELLED = "partially_cancelled"
 
 
 # ----------------- SUPPORTING -----------------

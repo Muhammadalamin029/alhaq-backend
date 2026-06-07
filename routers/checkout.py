@@ -3,11 +3,14 @@ from sqlalchemy.orm import Session, joinedload
 from decimal import Decimal
 from datetime import datetime, timedelta
 from uuid import UUID
+import logging
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import Order, OrderItem, Address, Product
+from core.model import Order, OrderItem, Address
 from core.order import order_service
+
+logger = logging.getLogger(__name__)
 from schemas.checkout import (
     CheckoutRequest, 
     CheckoutSummary, 
@@ -77,10 +80,7 @@ async def process_checkout(
     """Process checkout and convert pending order to processing"""
     system_settings_service.require_verified_email_for_user(db, user["id"], "process checkout")
     
-    # Log the incoming request for debugging
-    print(f"Checkout request received: {checkout_data}")
-    print(f"User ID: {user.get('id')}")
-    print(f"Delivery address ID: {checkout_data.delivery_address_id}")
+    logger.info(f"Checkout request from user {user.get('id')}, address {checkout_data.delivery_address_id}")
     
     # Get pending order
     pending_order = order_service.get_orders_by_status(
@@ -105,26 +105,8 @@ async def process_checkout(
             detail="Delivery address not found"
         )
     
-    # Validate stock availability for all items
-    for item in pending_order.order_items:
-        product = db.query(Product).filter(Product.id == item.product_id).first()
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product {item.product_id} not found"
-            )
-        
-        if product.stock_quantity < item.quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for {product.name}. Available: {product.stock_quantity}, Required: {item.quantity}"
-            )
-    
-    # Reserve stock for all items
-    for item in pending_order.order_items:
-        product = db.query(Product).filter(Product.id == item.product_id).first()
-        product.stock_quantity -= item.quantity
-    
+    # Stock was already reserved when the order was created — no re-validation or deduction needed here.
+
     # Update order with delivery address (keep as pending until payment)
     pending_order.delivery_address = checkout_data.delivery_address_id
     # Don't change status to processing yet - wait for payment confirmation
@@ -168,11 +150,9 @@ async def process_checkout(
                 "estimated_delivery": estimated_delivery
             }
         })
-        print(f"Order confirmation notification created for order {pending_order.id}")
+        logger.info(f"Order confirmation notification created for order {pending_order.id}")
     except Exception as e:
-        # Log error but don't fail the checkout
-        print(f"Failed to create order confirmation notification: {e}")
-        # Continue with checkout even if notification fails
+        logger.warning(f"Failed to create order confirmation notification: {e}")
     
     return OrderConfirmationResponse(
         success=True,

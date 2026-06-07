@@ -3,7 +3,7 @@ from sqlalchemy import (
     Column, String, UUID, Text, Date, Integer, DECIMAL,
     TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric, JSON
 )
-from sqlalchemy.orm import relationship, foreign
+from sqlalchemy.orm import relationship
 
 # ---------------- USERS ----------------
 
@@ -314,6 +314,7 @@ class Payment(Base):
     authorization_url = Column(Text, nullable=True)  # Paystack authorization URL
     access_code = Column(String(100), nullable=True)  # Paystack access code
     reference = Column(String(100), nullable=True)  # Paystack reference
+    metadata = Column(JSON, nullable=True)  # Arbitrary payment metadata (fee breakdown, etc.)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(

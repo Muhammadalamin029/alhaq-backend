@@ -285,10 +285,14 @@ async def update_order_item_quantity(
             detail="Product not found"
         )
     
-    if product.stock_quantity < quantity:
+    # stock_quantity already has order_item.quantity reserved out of it.
+    # Only the additional quantity beyond what's currently reserved needs new stock.
+    extra_needed = quantity - order_item.quantity
+    if extra_needed > 0 and product.stock_quantity < extra_needed:
+        available_to_buyer = product.stock_quantity + order_item.quantity
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Insufficient stock. Only {product.stock_quantity} items available"
+            detail=f"Insufficient stock. Maximum quantity for this item is {available_to_buyer}"
         )
 
     updated_order = order_service.update_order_item_quantity(
@@ -403,6 +407,39 @@ async def delete_order_item(
 
 # ---------------- ORDER STATUS MANAGEMENT ----------------
 
+@router.patch("/bulk/status", response_model=OrderStatusResponse)
+async def bulk_update_order_status(
+    payload: BulkOrderStatusUpdate,
+    user=Depends(role_required(["admin", "seller"])),
+    db: Session = Depends(get_db)
+):
+    """Update status for multiple orders (admin and sellers only)"""
+    try:
+        results = order_service.bulk_update_order_status(
+            db=db,
+            order_ids=payload.order_ids,
+            new_status=payload.status.value,
+            user_id=user["id"],
+            user_role=user["role"],
+            notes=payload.notes
+        )
+
+        success_count = len(results["successful_updates"])
+        total_count = results["total_processed"]
+
+        return OrderStatusResponse(
+            success=success_count == total_count,
+            message=f"Updated {success_count}/{total_count} orders to {payload.status.value}",
+            data=results
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to bulk update order status"
+        )
+
+
 @router.patch("/{order_id}/status", response_model=OrderStatusResponse)
 async def update_order_status(
     order_id: str,
@@ -420,52 +457,19 @@ async def update_order_status(
             user_role=user["role"],
             notes=payload.notes
         )
-        
+
         return OrderStatusResponse(
             success=True,
             message=f"Order status updated to {payload.status.value}",
             data=result
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update order status"
-        )
-
-
-@router.patch("/bulk/status", response_model=OrderStatusResponse)
-async def bulk_update_order_status(
-    payload: BulkOrderStatusUpdate,
-    user=Depends(role_required(["admin", "seller"])),
-    db: Session = Depends(get_db)
-):
-    """Update status for multiple orders (admin and sellers only)"""
-    try:
-        results = order_service.bulk_update_order_status(
-            db=db,
-            order_ids=payload.order_ids,
-            new_status=payload.status.value,
-            user_id=user["id"],
-            user_role=user["role"],
-            notes=payload.notes
-        )
-        
-        success_count = len(results["successful_updates"])
-        total_count = results["total_processed"]
-        
-        return OrderStatusResponse(
-            success=success_count == total_count,
-            message=f"Updated {success_count}/{total_count} orders to {payload.status.value}",
-            data=results
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to bulk update order status"
         )
 
 

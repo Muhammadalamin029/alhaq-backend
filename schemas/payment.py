@@ -7,7 +7,7 @@ from uuid import UUID
 class PaymentInitializeRequest(BaseModel):
     order_id: Optional[UUID] = None
     agreement_id: Optional[UUID] = None
-    category: str = Field("order", pattern="^(order|asset_deposit|asset_installment)$")
+    category: str = Field("order", pattern="^(order|asset_deposit|asset_installment|full_pay)$")
     amount: float = Field(..., gt=0, description="Amount in Naira (NGN)")
     email: str = Field(..., description="Customer email")
     callback_url: Optional[str] = None
