@@ -5,9 +5,6 @@ primary_region = "iad"
   builder = "paketobuildpacks/builder:base"
   buildpacks = ["paketo-buildpacks/python"]
 
-[env]
-  PORT = "8000"
-
 [[vm]]
   cpu_kind = "shared"
   cpus = 2
@@ -17,4 +14,4 @@ primary_region = "iad"
   strategy = "rolling"
 
 [processes]
-  celery = "python start_celery_only.py 2"
+  app = "python start_celery_only.py 2"
