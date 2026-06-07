@@ -12,14 +12,14 @@ from sqlalchemy.dialects.postgresql import JSON
 
 # revision identifiers, used by Alembic.
 revision = 'a2b3c4d5e6f7'
-down_revision = 'f3b4c5d6e7f8'
+down_revision = 'a1b2c3d4e5f6'
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('payments', sa.Column('metadata', JSON, nullable=True))
+    op.add_column('payments', sa.Column('transaction_metadata', JSON, nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column('payments', 'metadata')
+    op.drop_column('payments', 'transaction_metadata')

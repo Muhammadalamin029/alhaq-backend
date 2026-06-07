@@ -50,7 +50,7 @@ async def initialize_payment(
             order_id=str(request.order_id) if request.order_id else None,
             agreement_id=str(request.agreement_id) if request.agreement_id else None,
             callback_url=request.callback_url,
-            metadata=request.metadata,
+            metadata=request.metadata,  # passed through to Paystack, not stored on model
             payment_method=request.payment_method
         )
         

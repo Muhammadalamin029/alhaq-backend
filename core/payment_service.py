@@ -57,7 +57,7 @@ class PaymentService:
 
         for completed_payment in completed_payments:
             gross_amount = Decimal(str(completed_payment.amount or 0))
-            payment_metadata = completed_payment.metadata or {}
+            payment_metadata = completed_payment.transaction_metadata or {}
             fee_amount = payment_metadata.get("agreement_fee_amount")
             seller_net_amount = payment_metadata.get("seller_net_amount")
 
@@ -267,10 +267,10 @@ class PaymentService:
             if agreement:
                 logger.info(f"Loaded agreement status: {agreement.status}, Asset Type: {agreement.asset_type}")
                 gross_amount = Decimal(str(payment.amount or 0))
-                payment_metadata = dict(payment.metadata or {})
+                payment_metadata = dict(payment.transaction_metadata or {})
                 if "seller_net_amount" not in payment_metadata or "agreement_fee_amount" not in payment_metadata:
                     payment_metadata.update(self._build_agreement_payment_breakdown(db, gross_amount))
-                    payment.metadata = payment_metadata
+                    payment.transaction_metadata = payment_metadata
                 seller_net_amount = Decimal(str(payment_metadata.get("seller_net_amount", "0")))
                 if (payment.payment_type or payment.payment_category) in ["deposit", "asset_deposit"]:
                     agreement.deposit_paid = Decimal(str(agreement.deposit_paid or 0)) + gross_amount
@@ -404,7 +404,7 @@ class PaymentService:
             
             if refund_res.get("status"):
                 payment.status = "refunded"
-                payment.metadata = {**(payment.metadata or {}), "refund_reason": reason, "refunded_by": str(admin_id), "refund_data": refund_res.get("data")}
+                payment.transaction_metadata = {**(payment.transaction_metadata or {}), "refund_reason": reason, "refunded_by": str(admin_id), "refund_data": refund_res.get("data")}
                 
                 # Notify Buyer
                 create_notification(db, {
