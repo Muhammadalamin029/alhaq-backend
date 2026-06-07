@@ -196,7 +196,8 @@ class AdminOrderListResponse(BaseModel):
 class AdminDashboardStats(BaseModel):
     """Admin dashboard statistics - matches AdminStats model"""
     total_users: int
-    total_products: int
+    total_assets: int
+    total_products: int = 0
     total_orders: int
     total_payments: int
     # Revenue (gross GMV)

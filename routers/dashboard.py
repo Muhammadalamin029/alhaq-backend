@@ -1,18 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, and_
+from sqlalchemy import func, and_
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-from decimal import Decimal
+import logging
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import Order, OrderItem, Product, Wishlist, Profile, GeneralInspection, GeneralAgreement, Payment
+from core.model import Order, OrderItem, Wishlist, GeneralInspection, GeneralAgreement, Payment
 from core.status_constants import (
     AGREEMENT_PENDING_STATUSES,
     AGREEMENT_STATUS_ACTIVE,
     INSPECTION_PENDING_STATUSES,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -23,12 +25,12 @@ async def get_customer_dashboard_stats(
     range: Optional[str] = Query(None, pattern="^(today|7d|30d)$"),
 ) -> Dict[str, Any]:
     """Get customer dashboard statistics"""
+    from uuid import UUID
     try:
-        from uuid import UUID
         user_id = UUID(user["id"])
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid user id")
-    
+
     # Get total orders count
     total_orders = db.query(Order).filter(Order.buyer_id == user_id).count()
     
@@ -46,10 +48,11 @@ async def get_customer_dashboard_stats(
     # Get wishlist items count
     wishlist_count = db.query(Wishlist).filter(Wishlist.user_id == user_id).count()
     
-    # Get recent orders (last 5)
+    # Get recent orders (last 5) — eager-load items to avoid N+1 on items_count
     recent_orders = (
         db.query(Order)
         .filter(Order.buyer_id == user_id)
+        .options(joinedload(Order.order_items))
         .order_by(Order.created_at.desc())
         .limit(5)
         .all()

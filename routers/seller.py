@@ -7,21 +7,18 @@ from uuid import UUID
 from datetime import datetime, timedelta
 
 from db.session import get_db
-from core.auth import role_required, get_current_user
+from core.auth import role_required
 from core.model import (
-    User,
     Profile,
     SellerProfile,
     Product,
     Order,
     OrderItem,
-    AssetImage,
-    Category,
     GeneralInspection,
     GeneralAgreement,
     Payment,
 )
-from schemas.products import ProductResponse, ProductCreate, ProductUpdate
+from schemas.products import ProductResponse
 from schemas.order import (
     OrderResponse,
     OrderStatus,
@@ -29,8 +26,6 @@ from schemas.order import (
     OrderStatusResponse,
 )
 from schemas.seller import (
-    SellerProfileResponse,
-    SellerProfileUpdate,
     SellerStatsResponse,
     SellerProductsResponse,
     SellerOrdersResponse,
@@ -59,7 +54,6 @@ from core.status_constants import (
     AGREEMENT_STATUS_ACTIVE,
     INSPECTION_PENDING_STATUSES,
 )
-from copy import deepcopy
 
 # Get logger for seller routes
 seller_logger = get_logger("routers.seller")
@@ -70,85 +64,34 @@ router = APIRouter()
 
 
 def calculate_seller_item_status(order, seller_id: str) -> str:
-    """
-    Calculate seller item status based ONLY on OrderItem statuses for this seller
-    Completely ignores the main order status
-    """
+    """Calculate seller's aggregate item status for an order, based solely on OrderItem statuses."""
     if not order.order_items:
-        print(f"DEBUG: No order items for order {order.id}")
         return "pending"
 
-    # Get items belonging to this seller
     seller_items = [
-        item
-        for item in order.order_items
+        item for item in order.order_items
         if item.product and str(item.product.seller_id) == str(seller_id)
     ]
 
     if not seller_items:
-        print(
-            f"DEBUG: No seller items found for seller {seller_id} in order {order.id}"
-        )
-        # If no seller items found, check if order is cancelled
-        if order.status == "cancelled":
-            return "cancelled"
-        return "pending"
+        return "cancelled" if order.status == "cancelled" else "pending"
 
-    # Check if order is cancelled first - this takes priority
     if order.status == "cancelled":
-        print(f"DEBUG: Order is cancelled, returning cancelled")
         return "cancelled"
 
-    # Use seller item statuses for non-cancelled orders
     item_statuses = [item.status for item in seller_items]
-    print(f"DEBUG: Seller {seller_id} items statuses: {item_statuses}")
 
-    # If all items are cancelled, seller status is cancelled
-    if all(status == "cancelled" for status in item_statuses):
-        print(f"DEBUG: All items cancelled, returning cancelled")
-        return "cancelled"
+    # Uniform statuses first
+    for s in ("cancelled", "delivered", "shipped", "paid", "processing", "pending"):
+        if all(st == s for st in item_statuses):
+            return s
 
-    # If all items are delivered, seller status is delivered
-    if all(status == "delivered" for status in item_statuses):
-        print(f"DEBUG: All items delivered, returning delivered")
-        return "delivered"
+    # Mixed: return the most advanced status present
+    for s in ("delivered", "shipped", "paid", "processing"):
+        if s in item_statuses:
+            return s
 
-    # If all items are shipped, seller status is shipped
-    if all(status == "shipped" for status in item_statuses):
-        print(f"DEBUG: All items shipped, returning shipped")
-        return "shipped"
-
-    # If all items are paid, seller status is paid
-    if all(status == "paid" for status in item_statuses):
-        print(f"DEBUG: All items paid, returning paid")
-        return "paid"
-
-    # If all items are processing, seller status is processing
-    if all(status == "processing" for status in item_statuses):
-        print(f"DEBUG: All items processing, returning processing")
-        return "processing"
-
-    # If all items are pending, seller status is pending
-    if all(status == "pending" for status in item_statuses):
-        print(f"DEBUG: All items pending, returning pending")
-        return "pending"
-
-    # Mixed statuses - determine the most advanced status
-    if "delivered" in item_statuses:
-        print(f"DEBUG: Mixed statuses with delivered, returning delivered")
-        return "delivered"
-    elif "shipped" in item_statuses:
-        print(f"DEBUG: Mixed statuses with shipped, returning shipped")
-        return "shipped"
-    elif "paid" in item_statuses:
-        print(f"DEBUG: Mixed statuses with paid, returning paid")
-        return "paid"
-    elif "processing" in item_statuses:
-        print(f"DEBUG: Mixed statuses with processing, returning processing")
-        return "processing"
-    else:
-        print(f"DEBUG: Mixed statuses, returning pending")
-        return "pending"
+    return "pending"
 
 
 # NOTE: Profile management (GET/PUT /profile) has been moved to /auth/me
@@ -179,10 +122,12 @@ async def get_seller_stats(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Seller profile not found"
             )
 
-        # Get additional real-time stats using unified helper
+        # Product counts — query Product table directly so active/out-of-stock are consistent
         asset_counts = admin_service.get_asset_counts(db, seller_id=seller_id)
-        
-        total_products = sum(asset_counts.values())
+
+        total_products = asset_counts.get("products", 0)
+        total_cars = asset_counts.get("cars", 0)
+        total_properties = asset_counts.get("properties", 0)
 
         active_products = (
             db.query(Product)
@@ -196,60 +141,31 @@ async def get_seller_stats(
             .count()
         )
 
-        # Get all orders that have items from this seller
-        seller_orders_query = (
+        # Order counts — eager-load items+products to avoid N+1
+        all_seller_orders = (
             db.query(Order)
             .join(OrderItem)
             .join(Product)
             .filter(Product.seller_id == seller_id)
+            .options(
+                joinedload(Order.order_items).joinedload(OrderItem.product)
+            )
             .distinct()
+            .all()
         )
 
-        total_orders = seller_orders_query.count()
-
-        # Count orders based on seller item status, not general order status
-        pending_orders = 0
-        processing_orders = 0
-        paid_orders = 0
-        shipped_orders = 0
-        delivered_orders = 0
-        cancelled_orders = 0
-
-        # Get all orders for this seller to calculate accurate stats
-        all_seller_orders = seller_orders_query.all()
+        total_orders = len(all_seller_orders)
+        pending_orders = processing_orders = paid_orders = 0
+        shipped_orders = delivered_orders = cancelled_orders = 0
 
         for order in all_seller_orders:
-            seller_item_status = calculate_seller_item_status(order, str(seller_id))
-
-            # Debug logging to see what's happening
-            print(f"DEBUG: Order {order.id}, Status: {seller_item_status}")
-            if order.order_items:
-                for item in order.order_items:
-                    if item.product and str(item.product.seller_id) == str(seller_id):
-                        print(f"  - Item {item.id}: {item.status}")
-
-            if seller_item_status == "pending":
-                pending_orders += 1
-            elif seller_item_status == "processing":
-                processing_orders += 1
-            elif seller_item_status == "paid":
-                paid_orders += 1
-            elif seller_item_status == "shipped":
-                shipped_orders += 1
-            elif seller_item_status == "delivered":
-                delivered_orders += 1
-            elif seller_item_status == "cancelled":
-                cancelled_orders += 1
-
-        # Debug: Print final counts
-        print(f"DEBUG: Final counts for seller {seller_id}:")
-        print(f"  - Pending: {pending_orders}")
-        print(f"  - Processing: {processing_orders}")
-        print(f"  - Paid: {paid_orders}")
-        print(f"  - Shipped: {shipped_orders}")
-        print(f"  - Delivered: {delivered_orders}")
-        print(f"  - Cancelled: {cancelled_orders}")
-        print(f"  - Total orders: {total_orders}")
+            s = calculate_seller_item_status(order, str(seller_id))
+            if s == "pending":         pending_orders += 1
+            elif s == "processing":    processing_orders += 1
+            elif s == "paid":          paid_orders += 1
+            elif s == "shipped":       shipped_orders += 1
+            elif s == "delivered":     delivered_orders += 1
+            elif s == "cancelled":     cancelled_orders += 1
 
         now = datetime.utcnow()
         range_end = now
@@ -261,26 +177,44 @@ async def get_seller_stats(
         elif range == "30d":
             range_start = now - timedelta(days=30)
 
-        # Revenue (gross/net) from completed payments tied to this seller
+        # ---------------- Revenue ----------------
+        # Payment.seller_id is NULL for regular order payments (only set for asset payments).
+        # Use OrderItem × Product to compute order revenue; add asset payments separately.
         fee_rate = seller_payout_service.get_platform_fee_rate(db)
-        seller_payments = db.query(Payment).filter(
-            Payment.seller_id == seller_id, Payment.status == "completed"
-        )
+
+        def _order_revenue_query(since=None):
+            q = (
+                db.query(func.sum(OrderItem.quantity * OrderItem.price))
+                .join(Product, OrderItem.product_id == Product.id)
+                .join(Order, OrderItem.order_id == Order.id)
+                .filter(
+                    Product.seller_id == seller_id,
+                    Order.status.in_(["paid", "shipped", "delivered"]),
+                )
+            )
+            if since:
+                q = q.filter(Order.created_at >= since)
+            return q.scalar() or Decimal("0")
+
+        def _asset_revenue_query(since=None):
+            q = db.query(func.sum(Payment.amount)).filter(
+                Payment.seller_id == seller_id,
+                Payment.status == "completed",
+            )
+            if since:
+                q = q.filter(Payment.created_at >= since)
+            return q.scalar() or Decimal("0")
+
+        gross_revenue = Decimal(str(_order_revenue_query())) + Decimal(str(_asset_revenue_query()))
         if range_start:
-            seller_payments = seller_payments.filter(Payment.created_at >= range_start)
+            range_gross = Decimal(str(_order_revenue_query(range_start))) + Decimal(str(_asset_revenue_query(range_start)))
+        else:
+            range_gross = gross_revenue
 
-        gross_revenue = (
-            seller_payments.with_entities(func.sum(Payment.amount)).scalar() or 0
-        )
-        platform_fee_amount = (
-            Decimal(str(gross_revenue)) * fee_rate if gross_revenue else Decimal("0.00")
-        )
-        net_revenue = Decimal(str(gross_revenue)) - platform_fee_amount
+        platform_fee_amount = gross_revenue * fee_rate
+        net_revenue = gross_revenue - platform_fee_amount
 
-        # Keep existing field name for FE compatibility
-        total_revenue = float(gross_revenue)
-
-        # ---------------- ASSET STATS (Inspections & Agreements) ----------------
+        # ---------------- ASSET STATS ----------------
         total_inspections = (
             db.query(GeneralInspection)
             .filter(GeneralInspection.seller_id == seller_id)
@@ -317,33 +251,33 @@ async def get_seller_stats(
             .count()
         )
 
-        # ---------------- Series for charts ----------------
+        # ---------------- Chart series ----------------
         revenue_series: List[dict] = []
         orders_series: List[dict] = []
         agreements_series: List[dict] = []
         if range_start:
             revenue_rows = (
                 db.query(
-                    func.date(Payment.created_at).label("date"),
-                    func.sum(Payment.amount).label("gross"),
+                    func.date(Order.created_at).label("date"),
+                    func.sum(OrderItem.quantity * OrderItem.price).label("gross"),
                 )
+                .join(OrderItem, Order.id == OrderItem.order_id)
+                .join(Product, OrderItem.product_id == Product.id)
                 .filter(
-                    Payment.seller_id == seller_id,
-                    Payment.status == "completed",
-                    Payment.created_at >= range_start,
+                    Product.seller_id == seller_id,
+                    Order.status.in_(["paid", "shipped", "delivered"]),
+                    Order.created_at >= range_start,
                 )
-                .group_by(func.date(Payment.created_at))
-                .order_by(func.date(Payment.created_at))
+                .group_by(func.date(Order.created_at))
+                .order_by(func.date(Order.created_at))
                 .all()
             )
             revenue_series = [
                 {
                     "date": str(r.date),
                     "gross": float(r.gross or 0),
-                    "net": float(
-                        (Decimal(str(r.gross or 0)) * (Decimal("1.00") - fee_rate))
-                    ),
-                    "platform_fee": float((Decimal(str(r.gross or 0)) * fee_rate)),
+                    "net": float(Decimal(str(r.gross or 0)) * (Decimal("1") - fee_rate)),
+                    "platform_fee": float(Decimal(str(r.gross or 0)) * fee_rate),
                 }
                 for r in revenue_rows
             ]
@@ -351,7 +285,7 @@ async def get_seller_stats(
             order_rows = (
                 db.query(
                     func.date(Order.created_at).label("date"),
-                    func.count(Order.id).label("count"),
+                    func.count(Order.id.distinct()).label("count"),
                 )
                 .join(OrderItem)
                 .join(Product)
@@ -360,9 +294,7 @@ async def get_seller_stats(
                 .order_by(func.date(Order.created_at))
                 .all()
             )
-            orders_series = [
-                {"date": str(r.date), "count": int(r.count)} for r in order_rows
-            ]
+            orders_series = [{"date": str(r.date), "count": int(r.count)} for r in order_rows]
 
             agreement_rows = (
                 db.query(
@@ -377,9 +309,7 @@ async def get_seller_stats(
                 .order_by(func.date(GeneralAgreement.created_at))
                 .all()
             )
-            agreements_series = [
-                {"date": str(r.date), "count": int(r.count)} for r in agreement_rows
-            ]
+            agreements_series = [{"date": str(r.date), "count": int(r.count)} for r in agreement_rows]
 
         # ---------------- Alerts ----------------
         overdue_agreements = (
@@ -392,98 +322,71 @@ async def get_seller_stats(
             )
             .count()
         )
-        payout_account_configured = bool(
-            seller_profile.payout_account_number and seller_profile.payout_bank_code
-        )
         alerts = {
             "overdue_agreements": overdue_agreements,
-            "payout_account_configured": payout_account_configured,
+            "payout_account_configured": bool(
+                seller_profile.payout_account_number and seller_profile.payout_bank_code
+            ),
             "kyc_status": seller_profile.kyc_status,
         }
 
-        # Get recent orders (last 5)
-        recent_orders_query = (
+        # Recent orders — eager-load buyer for email, items already loaded above
+        recent_orders_raw = (
             db.query(Order)
             .join(OrderItem)
             .join(Product)
             .filter(Product.seller_id == seller_id)
-            .options(joinedload(Order.buyer).joinedload(Profile.user))
+            .options(
+                joinedload(Order.buyer).joinedload(Profile.user),
+                joinedload(Order.order_items).joinedload(OrderItem.product),
+            )
             .order_by(desc(Order.created_at))
+            .distinct()
             .limit(5)
+            .all()
         )
 
         recent_orders = []
-        for order in recent_orders_query.all():
-            # Count items for this seller in this order
-            seller_items = (
-                db.query(OrderItem)
-                .join(Product)
-                .filter(Product.seller_id == seller_id, OrderItem.order_id == order.id)
-                .count()
+        for order in recent_orders_raw:
+            s_items = [
+                item for item in order.order_items
+                if item.product and str(item.product.seller_id) == str(seller_id)
+            ]
+            seller_amount = sum(item.quantity * item.price for item in s_items)
+            recent_orders.append({
+                "id": str(order.id),
+                "status": order.status,
+                "seller_item_status": calculate_seller_item_status(order, str(seller_id)),
+                "total_amount": float(seller_amount),
+                "items_count": len(s_items),
+                "created_at": order.created_at.isoformat(),
+                "buyer": {
+                    "email": order.buyer.user.email if order.buyer and order.buyer.user else None
+                },
+            })
+
+        recent_products = [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "price": float(p.price),
+                "stock_quantity": p.stock_quantity,
+                "status": p.status,
+            }
+            for p in (
+                db.query(Product)
+                .filter(Product.seller_id == seller_id)
+                .order_by(desc(Product.created_at))
+                .limit(3)
+                .all()
             )
-
-            # Calculate total amount for this seller's items in this order
-            seller_amount = (
-                db.query(func.sum(OrderItem.quantity * OrderItem.price))
-                .join(Product)
-                .filter(Product.seller_id == seller_id, OrderItem.order_id == order.id)
-                .scalar()
-            ) or 0
-
-            # Calculate seller_item_status using the same logic as seller orders page
-            seller_item_status = calculate_seller_item_status(order, seller_id)
-
-            recent_orders.append(
-                {
-                    "id": str(order.id),
-                    "status": order.status,  # Keep original status
-                    "seller_item_status": seller_item_status,  # Add calculated seller status
-                    "total_amount": float(seller_amount),
-                    "created_at": order.created_at.isoformat(),
-                    "buyer": {
-                        "email": (
-                            order.buyer.user.email
-                            if order.buyer and order.buyer.user
-                            else None
-                        )
-                    },
-                    "order_items": [{"length": seller_items}],  # For compatibility
-                }
-            )
-
-        # Get recent products (last 3)
-        recent_products_query = (
-            db.query(Product)
-            .filter(Product.seller_id == seller_id)
-            .order_by(desc(Product.created_at))
-            .limit(3)
-        )
-
-        recent_products = []
-        for product in recent_products_query.all():
-            recent_products.append(
-                {
-                    "id": str(product.id),
-                    "name": product.name,
-                    "price": float(product.price),
-                    "stock_quantity": product.stock_quantity,
-                    "status": product.status,
-                }
-            )
-
-        # Debug: Print values right before API response
-        print(f"DEBUG: Values right before API response:")
-        print(f"  - pending_orders: {pending_orders}")
-        print(f"  - processing_orders: {processing_orders}")
-        print(f"  - paid_orders: {paid_orders}")
-        print(f"  - shipped_orders: {shipped_orders}")
-        print(f"  - delivered_orders: {delivered_orders}")
-        print(f"  - cancelled_orders: {cancelled_orders}")
+        ]
 
         return SellerStatsResponse(
             success=True,
             message="Seller statistics retrieved successfully",
             data={
+                "total_assets": total_cars + total_properties,
                 "total_products": total_products,
                 "active_products": active_products,
                 "out_of_stock_products": out_of_stock_products,
@@ -494,12 +397,13 @@ async def get_seller_stats(
                 "shipped_orders": shipped_orders,
                 "delivered_orders": delivered_orders,
                 "cancelled_orders": cancelled_orders,
-                "total_revenue": total_revenue,
+                "total_revenue": float(gross_revenue),
                 "net_revenue": float(net_revenue),
                 "platform_fee_amount": float(platform_fee_amount),
                 "range": range,
-                "range_start": range_start,
-                "range_end": range_end,
+                "range_start": range_start.isoformat() if range_start else None,
+                "range_end": range_end.isoformat(),
+                "range_gross": float(range_gross),
                 "kyc_status": seller_profile.kyc_status,
                 "business_name": seller_profile.business_name,
                 "recent_orders": recent_orders,
@@ -1412,8 +1316,7 @@ async def update_payout_account(
 @router.post("/payout-account/verify", response_model=PayoutAccountVerifyResponse)
 async def verify_payout_account(
     verify_request: PayoutAccountVerifyRequest,
-    user=Depends(role_required(["seller", "admin"])),
-    db: Session = Depends(get_db),
+    _user=Depends(role_required(["seller", "admin"])),
 ):
     """Verify payout account details using Paystack API"""
     try:

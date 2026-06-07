@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, and_, or_
+from sqlalchemy import func, desc, or_
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime, timedelta
@@ -11,7 +11,7 @@ from core.auth import role_required
 from core.model import (
     User, Profile, SellerProfile, Product, Order, OrderItem, Category, 
     Payment, SellerPayout, GeneralInspection, GeneralAgreement,
-    Property, RealEstateSessionRequest, PropertyUnit, CarUnit
+    Property, RealEstateSessionRequest, PropertyUnit
 )
 from fastapi.responses import StreamingResponse
 import csv
@@ -20,11 +20,10 @@ import os
 from core.redis_client import redis_client
 from schemas.property import SessionRequestResponse, PropertyPublish, PropertyResponse
 from schemas.admin import (
-    AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
+    AdminDashboardStats, AdminUserListResponse,
     AdminSellerListResponse, AdminProductListResponse, AdminOrderListResponse,
     AdminUserActionRequest, AdminSellerActionRequest, AdminProductActionRequest,
-    AdminResponse, AdminListResponse, AdminUserListFilters,
-    AdminSellerListFilters, AdminProductListFilters, AdminOrderListFilters
+    AdminResponse, AdminListResponse, AdminProductListFilters
 )
 from core.property_service import property_service
 from core.asset_service import asset_service
@@ -46,12 +45,11 @@ from core.status_constants import (
     ORDER_STATUS_CANCELLED,
 )
 from schemas.seller_payout import (
-    AdminPayoutListResponse, AdminPayoutResponse, PayoutProcessRequest, PayoutProcessResponse
+    AdminPayoutListResponse, PayoutProcessRequest, PayoutProcessResponse
 )
 from pydantic import BaseModel, Field
 
 from core.order import OrderService
-from schemas.order import OrderStatusResponse
 
 
 # Get logger for admin routes
@@ -139,7 +137,8 @@ async def get_admin_dashboard_stats(
         # Basic counts using unified helper
         asset_counts = admin_service.get_asset_counts(db)
         total_users = db.query(User).count()
-        total_products = sum(asset_counts.values())
+        total_assets = asset_counts.get("cars", 0) + asset_counts.get("properties", 0)
+        total_products = asset_counts.get("products", 0)
         total_orders = db.query(Order).count()
         
         # Revenue calculations (gross + net): include ALL completed payments (orders + asset payments)
@@ -330,6 +329,7 @@ async def get_admin_dashboard_stats(
         
         stats = AdminDashboardStats(
             total_users=total_users,
+            total_assets=total_assets,
             total_products=total_products,
             total_orders=total_orders,
             total_payments=total_payments,  # Actual payment count

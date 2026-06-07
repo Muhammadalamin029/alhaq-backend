@@ -49,6 +49,7 @@ class SellerStatsResponse(BaseModel):
 
 
 class SellerStatsData(BaseModel):
+    total_assets: int = 0
     total_products: int
     active_products: int
     out_of_stock_products: int
