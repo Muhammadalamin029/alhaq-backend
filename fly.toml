@@ -2,8 +2,7 @@ app = "alhaq-backend"
 primary_region = "iad"
 
 [build]
-  builder = "paketobuildpacks/builder:base"
-  buildpacks = ["paketo-buildpacks/python"]
+  dockerfile = "Dockerfile"
 
 [[vm]]
   cpu_kind = "shared"
