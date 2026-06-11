@@ -1,16 +1,29 @@
-app = "alhaq-backend"
-primary_region = "iad"
+# fly.toml app configuration file generated for alhaq-backend on 2026-06-11T21:30:46Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'alhaq-backend'
+primary_region = 'iad'
 
 [build]
-  dockerfile = "Dockerfile"
-
-[[vm]]
-  cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 512
+  dockerfile = 'Dockerfile'
 
 [deploy]
-  strategy = "rolling"
+  strategy = 'rolling'
 
 [processes]
-  app = "python start_celery_only.py 2"
+  app = 'python start_celery_only.py 2'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 2
+  memory_mb = 512
