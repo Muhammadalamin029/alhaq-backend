@@ -192,6 +192,7 @@ class OrderService:
                         "status": payment.status,
                         "payment_method": payment.payment_method,
                         "transaction_id": payment.transaction_id,
+                        "transaction_metadata": payment.transaction_metadata,
                         "created_at": payment.created_at.isoformat()
                     } for payment in order.payments
                 ] if order.payments else []
@@ -211,6 +212,7 @@ class OrderService:
                         "status": payment.status,
                         "payment_method": payment.payment_method,
                         "transaction_id": payment.transaction_id,
+                        "transaction_metadata": payment.transaction_metadata,
                         "created_at": payment.created_at.isoformat()
                     } for payment in order.payments
                 ] if order.payments else []
@@ -236,6 +238,7 @@ class OrderService:
                     "status": payment.status,
                     "payment_method": payment.payment_method,
                     "transaction_id": payment.transaction_id,
+                    "transaction_metadata": payment.transaction_metadata,
                     "created_at": payment.created_at.isoformat()
                 } for payment in order.payments
             ] if order.payments else []

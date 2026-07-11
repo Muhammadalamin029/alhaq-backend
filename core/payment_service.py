@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 from decimal import Decimal
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from core.model import (
@@ -14,8 +14,12 @@ from core.model import (
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
 from core.seller_payout_service import seller_payout_service
+from core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
+
+BANK_TRANSFER_EXPIRY_PREFIX = "bank_transfer_expiry:"
+
 
 class PaymentService:
     def __init__(self):
@@ -199,6 +203,182 @@ class PaymentService:
 
         db.commit()
         return ps_res["data"]
+
+    def _normalize_bank_transfer_details(self, data: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        """Defensively extract account details from a Paystack /charge bank_transfer response.
+
+        Paystack returns account_number/account_name/bank/account_expires_at at the
+        top level of `data` (not nested under a `bank_transfer` key); the nested
+        lookups are kept as a fallback in case the shape differs across API versions.
+        """
+        bt = data.get("bank_transfer") or {}
+        bank = data.get("bank") or bt.get("bank")
+        if isinstance(bank, dict):
+            bank_name = bank.get("name") or data.get("bank_name") or bt.get("bank_name") or ""
+        else:
+            bank_name = data.get("bank_name") or bt.get("bank_name") or (bank if isinstance(bank, str) else "") or ""
+
+        return {
+            "account_number": data.get("account_number") or bt.get("account_number") or bt.get("transfer_account") or "",
+            "account_name": data.get("account_name") or bt.get("account_name") or "",
+            "bank_name": bank_name,
+            "expires_at": data.get("account_expires_at") or bt.get("account_expires_at") or bt.get("expires_at"),
+        }
+
+    def initialize_bank_transfer_payment(
+        self,
+        db: Session,
+        user_id: str,
+        email: str,
+        amount_kobo: int,
+        category: str,
+        order_id: Optional[str] = None,
+        agreement_id: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Generate a one-time 'Pay with Transfer' account number for an order or agreement payment"""
+        # 1. Validation based on category
+        if category == "order" and not order_id:
+            raise HTTPException(status_code=400, detail="order_id is required for order payments")
+        if category in ["asset_deposit", "asset_installment"] and not agreement_id:
+            raise HTTPException(status_code=400, detail="agreement_id is required for asset payments")
+
+        # 2. Check if we have an existing pending payment and reuse it
+        existing_payment = db.query(Payment).filter(
+            Payment.buyer_id == user_id,
+            Payment.status == "pending",
+            Payment.payment_category == category
+        )
+        if order_id: existing_payment = existing_payment.filter(Payment.order_id == order_id)
+        if agreement_id: existing_payment = existing_payment.filter(Payment.agreement_id == agreement_id)
+
+        existing_payment = existing_payment.first()
+        amount_naira = Decimal(amount_kobo) / 100
+
+        # 2b. Reuse existing bank transfer details if still valid for this amount
+        if existing_payment and existing_payment.transaction_metadata:
+            cached = existing_payment.transaction_metadata
+            cached_bank_transfer = cached.get("bank_transfer") if cached.get("channel") == "bank_transfer" else None
+            if cached_bank_transfer and cached_bank_transfer.get("account_number") and existing_payment.amount == amount_naira:
+                is_expired = not redis_client.exists(f"{BANK_TRANSFER_EXPIRY_PREFIX}{existing_payment.reference}")
+
+                if not is_expired:
+                    logger.info(f"Reusing existing bank transfer account for {category}: {existing_payment.id}")
+                    return {
+                        "account_number": cached_bank_transfer["account_number"],
+                        "account_name": cached_bank_transfer.get("account_name", ""),
+                        "bank_name": cached_bank_transfer.get("bank_name", ""),
+                        "amount": amount_naira,
+                        "reference": existing_payment.reference,
+                        "expires_at": cached_bank_transfer.get("expires_at"),
+                        "currency": "NGN",
+                    }
+
+        # 3. Infer payment_type if missing in metadata
+        payment_type = (metadata or {}).get("payment_type")
+        if not payment_type:
+            if category == "asset_deposit": payment_type = "deposit"
+            elif category == "asset_installment": payment_type = "installment"
+            elif category == "order": payment_type = "order"
+            elif category == "full_pay": payment_type = "full_pay"
+
+        # Get seller_id if applicable
+        seller_id = None
+        if agreement_id:
+            agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == agreement_id).first()
+            if agreement:
+                seller_id = agreement.seller_id
+
+        if existing_payment:
+            logger.info(f"Re-using existing pending payment for {category}: {existing_payment.id}")
+            existing_payment.amount = amount_naira
+
+        # 4. Generate unique reference
+        reference = f"DEMIGHT_{uuid.uuid4().hex[:10].upper()}"
+
+        # 5. Prepare metadata for Paystack
+        ps_metadata = {
+            "user_id": str(user_id),
+            "category": category,
+            "order_id": str(order_id) if order_id else None,
+            "agreement_id": str(agreement_id) if agreement_id else None,
+            **(metadata or {})
+        }
+
+        # 6. Initiate the Pay with Transfer charge
+        ps_res = self.paystack.charge_bank_transfer(
+            email=email,
+            amount=amount_kobo,
+            reference=reference,
+            metadata=ps_metadata,
+        )
+
+        if not ps_res.get("status"):
+            raise HTTPException(status_code=400, detail=ps_res.get("message", "Paystack bank transfer initialization failed"))
+
+        bank_details = self._normalize_bank_transfer_details(ps_res["data"])
+        if not bank_details["account_number"]:
+            logger.error(f"Bank transfer charge for {reference} returned no account number: {ps_res}")
+            raise HTTPException(status_code=502, detail="Bank transfer details unavailable from Paystack")
+
+        if bank_details["expires_at"]:
+            try:
+                expiry_dt = datetime.fromisoformat(str(bank_details["expires_at"]).replace("Z", "+00:00"))
+                ttl_seconds = max(30, int((expiry_dt - datetime.now(timezone.utc)).total_seconds()))
+                redis_client.set(f"{BANK_TRANSFER_EXPIRY_PREFIX}{reference}", bank_details["expires_at"], expire=ttl_seconds)
+            except ValueError:
+                logger.warning(f"Could not parse account_expires_at for {reference}: {bank_details['expires_at']}")
+
+        payment_metadata = {
+            "channel": "bank_transfer",
+            "bank_transfer": bank_details,
+            "bank_transfer_raw": ps_res["data"],
+        }
+
+        # 7. Save or update record
+        if existing_payment:
+            payment = existing_payment
+            payment.transaction_id = reference
+            payment.reference = reference
+            payment.transaction_metadata = payment_metadata
+        else:
+            payment = Payment(
+                order_id=order_id,
+                agreement_id=agreement_id,
+                buyer_id=user_id,
+                seller_id=seller_id,
+                amount=amount_naira,
+                status="pending",
+                payment_category=category,
+                payment_type=payment_type,
+                transaction_id=reference,
+                reference=reference,
+                transaction_metadata=payment_metadata,
+                payment_method="paystack",
+            )
+            db.add(payment)
+
+        # 8. Order-specific side effects — mirror initialize_payment, minus payment_url
+        if category == "order":
+            order = db.query(Order).filter(Order.id == order_id).first()
+            if order:
+                order.payment_reference = reference
+                order.status = "processing"
+                db.query(OrderItem).filter(OrderItem.order_id == order_id).update(
+                    {"status": "processing"}, synchronize_session=False
+                )
+
+        db.commit()
+
+        return {
+            "account_number": bank_details["account_number"],
+            "account_name": bank_details["account_name"],
+            "bank_name": bank_details["bank_name"],
+            "amount": amount_naira,
+            "reference": reference,
+            "expires_at": bank_details["expires_at"],
+            "currency": "NGN",
+        }
 
     def verify_transaction(self, db: Session, reference: str) -> Dict[str, Any]:
         """Unified verification logic"""

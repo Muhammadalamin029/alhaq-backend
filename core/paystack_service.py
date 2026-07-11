@@ -2,6 +2,7 @@ import requests
 import logging
 import hmac
 import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from core.config import settings
 
@@ -157,6 +158,70 @@ class PaystackService:
         except requests.exceptions.RequestException as e:
             logger.error(f"Paystack verification error: {str(e)}")
             raise Exception(f"Failed to verify payment: {str(e)}")
+
+    def charge_bank_transfer(self, email: str, amount: int, reference: str, metadata: Optional[Dict] = None, account_expires_at: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Initiate a "Pay with Transfer" charge - generates a one-time bank account
+        number tied to this transaction for the customer to transfer funds to.
+
+        Args:
+            email: Customer email
+            amount: Amount in kobo (NGN)
+            reference: Unique transaction reference
+            metadata: Additional data to store with transaction
+            account_expires_at: Optional ISO8601 expiry for the generated account
+                (Paystack defaults to 15 minutes, capped at 8 hours)
+
+        Returns:
+            Dict containing charge details, including a `bank_transfer` block with
+            the account number, bank name and account name to display to the customer
+        """
+        if not self.secret_key or not self.public_key:
+            logger.warning("Paystack keys not configured. Using mock bank transfer charge for development.")
+            if not account_expires_at:
+                expires_dt = datetime.now(timezone.utc) + timedelta(hours=1)
+                account_expires_at = expires_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            return {
+                "status": True,
+                "message": "Charge attempted",
+                "data": {
+                    "reference": reference,
+                    "status": "pending_bank_transfer",
+                    "display_text": "Make a bank transfer to the account below to complete this payment.",
+                    "amount": amount,
+                    "currency": "NGN",
+                    "account_number": "9999999999",
+                    "account_name": "MOCK/PAYSTACK TEST ACCOUNT",
+                    "bank": {"slug": "test-bank", "name": "Test Bank", "id": 24},
+                    "account_expires_at": account_expires_at
+                }
+            }
+
+        try:
+            url = f"{self.base_url}/charge"
+            if not account_expires_at:
+                # Paystack requires account_expires_at to be present and in the future
+                expires_dt = datetime.now(timezone.utc) + timedelta(hours=1)
+                account_expires_at = expires_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+            payload = {
+                "email": email,
+                "amount": amount,
+                "reference": reference,
+                "metadata": metadata or {},
+                "bank_transfer": {"account_expires_at": account_expires_at}
+            }
+
+            response = requests.post(url, json=payload, headers=self.headers)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.info(f"Paystack bank transfer charge initiated: {reference}")
+            return data
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Paystack bank transfer charge error: {str(e)}")
+            raise Exception(f"Failed to initiate bank transfer charge: {str(e)}")
 
     def create_transfer_recipient(self, name: str, account_number: str, bank_code: str, email: str) -> Dict[str, Any]:
         """

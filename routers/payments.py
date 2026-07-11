@@ -21,7 +21,9 @@ from schemas.payment import (
     TransferResponse,
     BankResponse,
     PaymentResponse,
-    PaymentListResponse
+    PaymentListResponse,
+    BankTransferInitializeRequest,
+    BankTransferInitializeResponse,
 )
 from core.logging_config import get_logger, log_error
 from core.notifications_service import create_notification
@@ -65,6 +67,37 @@ async def initialize_payment(
         payment_logger.error(f"Failed to initialize payment: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/initialize-bank-transfer", response_model=BankTransferInitializeResponse)
+async def initialize_bank_transfer(
+    request: BankTransferInitializeRequest,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Generate a one-time bank account number (Pay with Transfer) for an order or agreement payment"""
+    try:
+        system_settings_service.require_verified_email_for_user(db, user["id"], "initialize a payment")
+        data = payment_service.initialize_bank_transfer_payment(
+            db=db,
+            user_id=user["id"],
+            email=request.email,
+            amount_kobo=int(request.amount * 100),
+            category=request.category,
+            order_id=str(request.order_id) if request.order_id else None,
+            agreement_id=str(request.agreement_id) if request.agreement_id else None,
+            metadata=request.metadata,
+        )
+
+        return BankTransferInitializeResponse(
+            success=True,
+            message="Bank transfer details generated successfully",
+            data=data
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Failed to initialize bank transfer payment: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/verify", response_model=PaymentVerifyResponse)
 async def verify_payment(
     request: PaymentVerifyRequest,
@@ -77,9 +110,20 @@ async def verify_payment(
         is_success = ps_res.get("status", False) and ps_res.get("data", {}).get("status") == "success"
 
         if not is_success:
+            # Paystack's top-level message often says 'Verification successful' because the API request
+            # succeeded, even if the payment itself failed or was abandoned. 
+            # We should use the actual transaction status for a more accurate error message.
+            tx_status = ps_res.get("data", {}).get("status", "failed")
+            error_msg = f"Payment status: {tx_status}"
+            if ps_res.get("data", {}).get("gateway_response"):
+                error_msg += f" ({ps_res['data']['gateway_response']})"
+            elif not ps_res.get("status", False):
+                # If the API request itself failed, use its message
+                error_msg = ps_res.get("message", "Payment verification failed")
+
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=ps_res.get("message", "Payment verification failed")
+                detail=error_msg
             )
 
         return PaymentVerifyResponse(
@@ -87,6 +131,8 @@ async def verify_payment(
             message=ps_res.get("message", "Payment verified successfully"),
             data=ps_res.get("data", {})
         )
+    except HTTPException:
+        raise
     except Exception as e:
         payment_logger.error(f"Verification error: {str(e)}")
         raise HTTPException(status_code=500, detail="Verification failed")

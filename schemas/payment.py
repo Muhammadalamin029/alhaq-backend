@@ -19,6 +19,28 @@ class PaymentInitializeResponse(BaseModel):
     message: str
     data: Dict[str, Any]
 
+class BankTransferInitializeRequest(BaseModel):
+    order_id: Optional[UUID] = None
+    agreement_id: Optional[UUID] = None
+    category: str = Field("order", pattern="^(order|asset_deposit|asset_installment|full_pay)$")
+    amount: float = Field(..., gt=0, description="Amount in Naira (NGN)")
+    email: str = Field(..., description="Customer email")
+    metadata: Optional[Dict[str, Any]] = None
+
+class BankTransferDetails(BaseModel):
+    account_number: str
+    account_name: str
+    bank_name: str
+    amount: Decimal
+    reference: str
+    expires_at: Optional[str] = None
+    currency: str = "NGN"
+
+class BankTransferInitializeResponse(BaseModel):
+    success: bool
+    message: str
+    data: BankTransferDetails
+
 class PaymentVerifyRequest(BaseModel):
     reference: str = Field(..., description="Paystack transaction reference")
 
