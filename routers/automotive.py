@@ -30,8 +30,6 @@ def update_car_unit(
     if current_user["role"] not in ["seller", "admin"]:
         raise HTTPException(status_code=403, detail="Only sellers can update units")
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a car unit")
-    if current_user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "update a car unit")
     
     unit = automotive_service.update_car_unit(db, unit_id, UUID(current_user["id"]), body)
     return {
@@ -83,8 +81,6 @@ def create_car_listing(
     if current_user["role"] not in ["seller", "admin"]:
         raise HTTPException(status_code=403, detail="Only sellers can list cars")
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "create a car listing")
-    if current_user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "create a car listing")
     
     car = automotive_service.create_car(db, UUID(current_user["id"]), body)
     return {
@@ -147,8 +143,6 @@ def update_car_listing(
 ):
     """Update car listing (Seller only)"""
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a car listing")
-    if current_user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "update a car listing")
     car = automotive_service.update_car(db, car_id, UUID(current_user["id"]), body)
     return {
         "success": True,
@@ -168,8 +162,6 @@ def add_car_units(
     if current_user["role"] not in ["seller", "admin"]:
         raise HTTPException(status_code=403, detail="Only sellers can add units")
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "add car units")
-    if current_user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "add car units")
     new_units = automotive_service.add_units_to_listing(db, car_id, UUID(current_user["id"]), units)
     return {
         "success": True,

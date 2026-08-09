@@ -8,12 +8,11 @@ from fastapi import HTTPException
 
 from core.model import (
     Payment, Order, OrderItem, GeneralAgreement, SellerProfile,
-    GeneralInspection, CarUnit, Property, PropertyUnit,
-    RealEstateSessionRequest
+    GeneralInspection, Property, PropertyUnit
 )
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
-from core.seller_payout_service import seller_payout_service
+from core.commission_service import commission_service
 from core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
@@ -26,7 +25,7 @@ class PaymentService:
         self.paystack = paystack_service
 
     def _calculate_agreement_fee_amount(self, db: Session, amount: Decimal) -> Decimal:
-        fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        fee_rate = commission_service.get_platform_fee_rate(db)
         return (Decimal(str(amount)) * fee_rate).quantize(Decimal("0.01"))
 
     def _calculate_agreement_net_amount(self, db: Session, amount: Decimal) -> Decimal:
@@ -35,7 +34,7 @@ class PaymentService:
 
     def _build_agreement_payment_breakdown(self, db: Session, amount: Decimal) -> Dict[str, str]:
         gross_amount = Decimal(str(amount))
-        fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        fee_rate = commission_service.get_platform_fee_rate(db)
         fee_amount = self._calculate_agreement_fee_amount(db, gross_amount)
         seller_net_amount = gross_amount - fee_amount
         return {
@@ -428,7 +427,7 @@ class PaymentService:
                 )
                 seller_ids = {str(item.product.seller_id) for item in order_items if item.product and item.product.seller_id}
                 for sid in seller_ids:
-                    seller_payout_service.update_seller_balance(
+                    commission_service.update_seller_balance(
                         db, sid, str(payment.order_id), "paid", "processing"
                     )
 
@@ -509,38 +508,18 @@ class PaymentService:
                     "priority": "high"
                 })
 
-                # Ownership logic for acquisitions
-                if agreement.acquisition_session_id:
-                    session_req = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == agreement.acquisition_session_id).first()
-                    if session_req:
-                        if agreement.status == "completed":
-                            session_req.status = "acquired"
-                            # Also update the asset status to 'acquired'
-                            if agreement.asset_type == "property":
-                                prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
-                                if prop: 
-                                    prop.status = "acquired"
-                                    # Update all units to acquired
-                                    for unit in (prop.units or []):
-                                        unit.status = "acquired"
-                            elif agreement.asset_type == "automotive" and agreement.unit_id:
-                                unit = db.query(CarUnit).filter(CarUnit.id == agreement.unit_id).first()
-                                if unit: unit.status = "sold" # Or other appropriate status
-                        elif agreement.status == "active":
-                            session_req.status = "processing"
-                else:
-                    # Individual Customer Purchase (Not platform acquisition)
-                    if agreement.status == "completed" and agreement.asset_type == "property" and agreement.unit_id:
-                        unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
-                        if unit:
-                            # Set to sold or rented based on parent property listing_type
-                            parent = db.query(Property).filter(Property.id == agreement.asset_id).first()
-                            if parent and parent.listing_type == "rental":
-                                unit.status = "rented"
-                            else:
-                                unit.status = "sold"
-                            # If all units are sold, mark property as sold? 
-                            # (Optional logic but maybe good for UX)
+                # Ownership logic (individual customer purchase)
+                if agreement.status == "completed" and agreement.asset_type == "property" and agreement.unit_id:
+                    unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
+                    if unit:
+                        # Set to sold or rented based on parent property listing_type
+                        parent = db.query(Property).filter(Property.id == agreement.asset_id).first()
+                        if parent and parent.listing_type == "rental":
+                            unit.status = "rented"
+                        else:
+                            unit.status = "sold"
+                        # If all units are sold, mark property as sold? 
+                        # (Optional logic but maybe good for UX)
 
                 # Special "Ownership" notification if agreement is now fully paid
                 if agreement.status == "completed":

@@ -13,13 +13,6 @@ class UserActionType(str, Enum):
     RESET_LOGIN_ATTEMPTS = "reset_login_attempts"
 
 
-class SellerActionType(str, Enum):
-    APPROVE_KYC = "approve_kyc"
-    REJECT_KYC = "reject_kyc"
-    LOCK_ACCOUNT = "lock_account"
-    UNLOCK_ACCOUNT = "unlock_account"
-
-
 class ProductActionType(str, Enum):
     ACTIVATE = "activate"
     DEACTIVATE = "deactivate"
@@ -91,40 +84,6 @@ class AdminUserActionRequest(BaseModel):
     action: UserActionType
     reason: Optional[str] = Field(None, max_length=500)
     lock_duration_hours: Optional[int] = Field(None, ge=1, le=8760)  # Max 1 year
-
-
-# ---------------- SELLER MANAGEMENT ----------------
-class AdminSellerListResponse(BaseModel):
-    """Admin view of seller list - matches SellerProfile model"""
-    id: UUID
-    email: str  # From User
-    business_name: str
-    seller_type: Optional[str] = None
-    logo_url: Optional[str] = None
-    description: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    website_url: Optional[str] = None
-    kyc_status: str
-    approval_date: Optional[date] = None
-    total_products: int
-    total_orders: int
-    total_revenue: Decimal
-    available_balance: Decimal
-    pending_balance: Decimal
-    created_at: datetime
-    updated_at: datetime
-    user_locked: Optional[datetime] = None  # From User.locked_until
-    
-    class Config:
-        from_attributes = True
-
-
-class AdminSellerActionRequest(BaseModel):
-    """Request for admin seller actions"""
-    action: SellerActionType
-    reason: Optional[str] = Field(None, max_length=500)
-    lock_duration_hours: Optional[int] = Field(None, ge=1, le=8760)
 
 
 # ---------------- PRODUCT MANAGEMENT ----------------
@@ -267,15 +226,6 @@ class AdminRevenueByPeriod(BaseModel):
     orders: int
 
 
-class AdminTopSeller(BaseModel):
-    """Top seller analytics"""
-    seller_id: UUID
-    business_name: str
-    total_revenue: Decimal
-    total_orders: int
-    total_products: int
-
-
 class AdminTopProduct(BaseModel):
     """Top product analytics"""
     product_id: UUID
@@ -289,7 +239,6 @@ class AdminAnalyticsResponse(BaseModel):
     """Complete admin analytics"""
     dashboard_stats: AdminDashboardStats
     revenue_last_30_days: List[AdminRevenueByPeriod]
-    top_sellers: List[AdminTopSeller]
     top_products: List[AdminTopProduct]
 
 
@@ -302,17 +251,6 @@ class AdminUserListFilters(BaseModel):
     search: Optional[str] = Field(None, max_length=255)  # Search email or name
     created_after: Optional[date] = None
     created_before: Optional[date] = None
-    page: int = Field(1, ge=1)
-    limit: int = Field(20, ge=1, le=100)
-
-
-class AdminSellerListFilters(BaseModel):
-    """Filters for admin seller list"""
-    kyc_status: Optional[str] = Field(None, pattern="^(pending|approved|rejected)$")
-    is_locked: Optional[bool] = None
-    search: Optional[str] = Field(None, max_length=255)  # Search business name or email
-    approval_after: Optional[date] = None
-    approval_before: Optional[date] = None
     page: int = Field(1, ge=1)
     limit: int = Field(20, ge=1, le=100)
 

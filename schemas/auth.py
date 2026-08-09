@@ -1,6 +1,6 @@
 from enum import Enum
 from pydantic import BaseModel, Field, validator
-from typing import Optional, Union, Dict
+from typing import Optional, Dict
 from datetime import datetime, date
 from uuid import UUID
 
@@ -31,17 +31,6 @@ class RegisterRequest(BaseModel):
     full_name: str
     phone: str = Field(..., min_length=10, max_length=20)
     bio: str = None
-
-
-class SellerRegisterRequest(BaseModel):
-    email: str
-    password: str = Field(..., min_length=8)
-    business_name: str = Field(..., min_length=2, max_length=255)
-    contact_email: str
-    contact_phone: str = Field(..., min_length=10, max_length=20)
-    description: str = Field(..., max_length=1000)
-    website_url: Optional[str] = Field(None, max_length=500)
-    seller_type: Optional[str] = Field("retailer", pattern=r'^(retailer|car_dealer|real_agent)$')
 
 
 class ChangePasswordRequest(BaseModel):
@@ -109,30 +98,9 @@ class CustomerProfileResponse(BaseModel):
         from_attributes = True
 
 
-class SellerProfileResponse(BaseModel):
-    id: UUID
-    business_name: str
-    description: Optional[str] = None
-    logo_url: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    website_url: Optional[str] = None
-    seller_type: Optional[str] = None
-    kyc_status: str
-    approval_date: Optional[date] = None
-    total_products: int
-    total_orders: int
-    total_revenue: float
-    default_grace_period_days: int = 3
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-
 class FullUserProfileResponse(BaseModel):
     user: UserProfileResponse
-    profile: Union[CustomerProfileResponse, SellerProfileResponse, None] = None
+    profile: Optional[CustomerProfileResponse] = None
     
     class Config:
         from_attributes = True

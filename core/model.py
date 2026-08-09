@@ -15,7 +15,7 @@ class User(Base):
                 default=func.gen_random_uuid())
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
-    role = Column(Enum("customer", "seller", "admin",
+    role = Column(Enum("customer", "admin",
                   name="user_roles"), default="customer")
     
     # Email verification
@@ -40,14 +40,10 @@ class User(Base):
     def name(self):
         if self.profile and self.profile.name:
             return self.profile.name
-        if self.seller_profile and self.seller_profile.business_name:
-            return self.seller_profile.business_name
         if self.role == "admin":
             return "System Administrator"
         return self.email.split("@")[0]
 
-    seller_profile = relationship(
-        "SellerProfile", back_populates="user", uselist=False)
     notifications = relationship("Notification", back_populates="recipient", cascade="all, delete-orphan")
     notification_prefs = relationship("NotificationPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", back_populates="user")
@@ -82,17 +78,18 @@ class SystemSettings(Base):
 
     # Security settings
     require_email_verification = Column(Boolean, nullable=False, default=True)
-    require_seller_kyc = Column(Boolean, nullable=False, default=True)
     access_token_lifetime_minutes = Column(Integer, nullable=False, default=30)
     max_login_attempts = Column(Integer, nullable=False, default=5)
     lockout_duration_minutes = Column(Integer, nullable=False, default=15)
 
     # Notification settings
     new_user_notifications = Column(Boolean, nullable=False, default=True)
-    new_seller_notifications = Column(Boolean, nullable=False, default=True)
     dispute_notifications = Column(Boolean, nullable=False, default=True)
     system_alerts = Column(Boolean, nullable=False, default=True)
     weekly_reports = Column(Boolean, nullable=False, default=True)
+
+    # Store defaults (single-vendor)
+    default_grace_period_days = Column(Integer, nullable=True)
 
     updated_by_user_id = Column(UUID, ForeignKey("users.id"), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -124,6 +121,21 @@ class Profile(Base):
     reviews = relationship("Review", back_populates="user")
     wishlists = relationship("Wishlist", back_populates="user")
     stats = relationship("Stats", back_populates="user", uselist=False)
+
+
+# ---------------- STORE PROFILE (single-vendor) ----------------
+class StoreProfile(Base):
+    __tablename__ = "store_profiles"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    business_name = Column(String(255), nullable=False, default="LEL Marketplace")
+    description = Column(Text, nullable=True)
+    contact_email = Column(String(255), nullable=True)
+    contact_phone = Column(String(50), nullable=True)
+    website_url = Column(Text, nullable=True)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
 
 # ---------------- SELLER PROFILES ----------------
@@ -165,10 +177,9 @@ class SellerProfile(Base):
     payout_recipient_code = Column(String(100), nullable=True)  # Paystack recipient code
     
     # Relationships
-    user = relationship("User", back_populates="seller_profile")
+    user = relationship("User")
     products = relationship("Product", back_populates="seller")
     payments = relationship("Payment", back_populates="seller")
-    payouts = relationship("SellerPayout", back_populates="seller")
 
 
 # ---------------- CATEGORIES ----------------
@@ -224,7 +235,6 @@ class AssetImage(Base):
     product_id = Column(UUID, ForeignKey("products.id", ondelete="CASCADE"), nullable=True)
     car_id = Column(UUID, ForeignKey("cars.id", ondelete="CASCADE"), nullable=True)
     property_id = Column(UUID, ForeignKey("properties.id", ondelete="CASCADE"), nullable=True)
-    session_request_id = Column(UUID, ForeignKey("re_session_requests.id", ondelete="CASCADE"), nullable=True)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
@@ -232,7 +242,6 @@ class AssetImage(Base):
     product = relationship("Product", back_populates="images")
     car = relationship("Car", back_populates="images")
     property = relationship("Property", back_populates="images")
-    session_request = relationship("RealEstateSessionRequest", back_populates="images")
 
 
 # ---------------- ORDERS ----------------
@@ -325,41 +334,6 @@ class Payment(Base):
     agreement = relationship("GeneralAgreement", back_populates="payments")
     buyer = relationship("Profile", back_populates="payments")
     seller = relationship("SellerProfile", back_populates="payments")
-
-
-# ---------------- SELLER PAYOUTS ----------------
-class SellerPayout(Base):
-    __tablename__ = "seller_payouts"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False, index=True)
-    amount = Column(DECIMAL(12, 2), nullable=False)
-    platform_fee = Column(DECIMAL(12, 2), default=0)  # Platform commission
-    net_amount = Column(DECIMAL(12, 2), nullable=False)  # Amount after fees
-    
-    status = Column(Enum("pending", "processing", "completed", "failed", "cancelled",
-                        name="payout_status"), default="pending")
-    
-    # Paystack transfer details
-    transfer_reference = Column(String(100), nullable=True, unique=True)
-    paystack_transfer_id = Column(String(100), nullable=True)
-    recipient_code = Column(String(50), nullable=True)
-    
-    # Bank details used for payout
-    account_number = Column(String(20), nullable=True)
-    bank_code = Column(String(10), nullable=True)
-    bank_name = Column(String(100), nullable=True)
-    
-    # Processing details
-    processed_at = Column(TIMESTAMP, nullable=True)
-    failure_reason = Column(Text, nullable=True)
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
-                       onupdate=func.current_timestamp())
-    
-    # Relationships
-    seller = relationship("SellerProfile", back_populates="payouts")
 
 
 # ---------------- REVIEWS ----------------
@@ -621,7 +595,6 @@ class Property(Base):
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-    acquisition_session_id = Column(UUID, ForeignKey("re_session_requests.id"), nullable=True)
 
     # Relationships
     seller = relationship("SellerProfile")
@@ -649,28 +622,6 @@ class PropertyUnit(Base):
     property = relationship("Property", back_populates="units")
 
 
-class RealEstateSessionRequest(Base):
-    __tablename__ = "re_session_requests"
-
-    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
-    title = Column(String(255), nullable=True)
-    location = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
-    proposed_price = Column(Numeric(15, 2), nullable=True)
-    buildings_count = Column(Integer, default=1)
-    property_details = Column(Text, nullable=True)
-    status = Column(Enum("pending", "inspecting", "processing", "acquired", "declined", name="re_session_status"), default="pending")
-    units_data = Column(JSON, nullable=True) # List of units (name, number)
-    
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-
-    # Relationships
-    user = relationship("User")
-    images = relationship("AssetImage", back_populates="session_request")
-
-
 # ---------------- UNIFIED ASSET MODELS (NEW) ----------------
 
 class GeneralInspection(Base):
@@ -694,8 +645,6 @@ class GeneralInspection(Base):
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-    acquisition_session_id = Column(UUID, ForeignKey("re_session_requests.id"), nullable=True)
-    acquisition_session = relationship("RealEstateSessionRequest")
 
     # Relationships
     seller = relationship("SellerProfile")
@@ -730,7 +679,6 @@ class GeneralAgreement(Base):
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-    acquisition_session_id = Column(UUID, ForeignKey("re_session_requests.id"), nullable=True)
 
     # Relationships
     seller = relationship("SellerProfile")

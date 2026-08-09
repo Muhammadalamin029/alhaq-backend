@@ -86,46 +86,5 @@ class PropertyAgreementResponse(BaseModel):
     class Config:
         from_attributes = True
 
-class SessionRequestCreate(BaseModel):
-    title: str
-    location: str
-    proposed_price: Decimal
-    description: Optional[str] = None
-    property_details: Optional[str] = None
-    buildings_count: Optional[int] = 1
-    images: Optional[List[AssetImageCreate]] = None
-    units: Optional[List[PropertyUnitCreate]] = None
-
-class SessionRequestResponse(BaseModel):
-    id: UUID
-    user_id: UUID
-    title: Optional[str] = None
-    location: str
-    description: Optional[str] = None
-    proposed_price: Optional[Decimal] = None
-    property_details: Optional[str] = None
-    buildings_count: Optional[int] = 1
-    admin_notes: Optional[str] = None  # alias for property_details sent to frontend
-    status: str
-    images: List[AssetImageResponse] = []
-    units: List[PropertyUnitResponse] = []
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-    @classmethod
-    def model_validate(cls, obj, *args, **kwargs):
-        instance = super().model_validate(obj, *args, **kwargs)
-        # Expose property_details as admin_notes for frontend compatibility
-        if instance.admin_notes is None and hasattr(obj, 'property_details'):
-            instance.admin_notes = obj.property_details
-        
-        # Map units_data from DB to units field if present
-        if hasattr(obj, 'units_data') and obj.units_data:
-            instance.units = obj.units_data
-            
-        return instance
 class PropertyPublish(BaseModel):
     new_price: Decimal

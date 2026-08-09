@@ -9,20 +9,20 @@ from decimal import Decimal
 from db.session import get_db
 from core.auth import role_required
 from core.model import (
-    User, Profile, SellerProfile, Product, Order, OrderItem, Category, 
-    Payment, SellerPayout, GeneralInspection, GeneralAgreement,
-    Property, RealEstateSessionRequest, PropertyUnit
+    User, Profile, SellerProfile, Product, Order, OrderItem, Category,
+    Payment, GeneralInspection, GeneralAgreement,
+    Property, PropertyUnit
 )
 from fastapi.responses import StreamingResponse
 import csv
 from io import StringIO
 import os
 from core.redis_client import redis_client
-from schemas.property import SessionRequestResponse, PropertyPublish, PropertyResponse
+from schemas.property import PropertyPublish, PropertyResponse
 from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse,
-    AdminSellerListResponse, AdminProductListResponse, AdminOrderListResponse,
-    AdminUserActionRequest, AdminSellerActionRequest, AdminProductActionRequest,
+    AdminProductListResponse, AdminOrderListResponse,
+    AdminUserActionRequest, AdminProductActionRequest,
     AdminResponse, AdminListResponse, AdminProductListFilters
 )
 from core.property_service import property_service
@@ -30,8 +30,7 @@ from core.asset_service import asset_service
 from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
-from core.seller_payout_service import seller_payout_service
-from core.tasks import send_kyc_approved_email, send_kyc_rejected_email
+from core.commission_service import commission_service
 from core.admin_service import admin_service
 from core.status_constants import (
     AGREEMENT_STATUS_ACTIVE,
@@ -43,9 +42,6 @@ from core.status_constants import (
     ORDER_STATUS_SHIPPED,
     ORDER_STATUS_DELIVERED,
     ORDER_STATUS_CANCELLED,
-)
-from schemas.seller_payout import (
-    AdminPayoutListResponse, PayoutProcessRequest, PayoutProcessResponse
 )
 from pydantic import BaseModel, Field
 
@@ -148,7 +144,7 @@ async def get_admin_dashboard_stats(
 
         total_revenue = completed_payments_query.with_entities(func.sum(Payment.amount)).scalar() or 0
 
-        fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        fee_rate = commission_service.get_platform_fee_rate(db)
         platform_fee_amount = (Decimal(str(total_revenue)) * fee_rate) if total_revenue else Decimal("0.00")
         net_revenue = Decimal(str(total_revenue)) - platform_fee_amount
         
@@ -214,8 +210,6 @@ async def get_admin_dashboard_stats(
         active_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.status == AGREEMENT_STATUS_ACTIVE).count()
         
         # Real Estate stats
-        total_session_requests = db.query(RealEstateSessionRequest).count()
-        pending_session_requests = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.status == "pending").count()
         total_internal_properties = db.query(Property).filter(Property.title.ilike("[ACQUIRED]%")).count()
 
         # ---------------- Trend series (for selected range) ----------------
@@ -362,8 +356,6 @@ async def get_admin_dashboard_stats(
             active_agreements=active_agreements,
             
             # Real Estate stats
-            total_session_requests=total_session_requests,
-            pending_session_requests=pending_session_requests,
             total_internal_properties=total_internal_properties,
             revenue_series=revenue_series,
             orders_series=orders_series,
@@ -488,10 +480,8 @@ async def get_admin_users(
         user_list = []
         for user_obj in users:
             profile_name = None
-            if user_obj.role == "customer" and user_obj.profile:
+            if user_obj.profile:
                 profile_name = user_obj.profile.name
-            elif user_obj.role == "seller" and user_obj.seller_profile:
-                profile_name = user_obj.seller_profile.business_name
             
             user_data = AdminUserListResponse(
                 id=user_obj.id,
@@ -525,198 +515,6 @@ async def get_admin_users(
     except Exception as e:
         log_error(admin_logger, f"Failed to fetch users list", e)
         raise HTTPException(status_code=500, detail="Failed to fetch users")
-
-
-@router.get("/sellers", response_model=AdminListResponse)
-async def get_admin_sellers(
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db),
-    kyc_status: Optional[str] = Query(None),
-    is_locked: Optional[bool] = Query(None),
-    search: Optional[str] = Query(None),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100)
-):
-    """Get sellers list for admin management"""
-    try:
-        offset = (page - 1) * limit
-        
-        # Build query
-        query = (
-            db.query(SellerProfile)
-            .join(User)
-            .options(joinedload(SellerProfile.user))
-        )
-        
-        # Apply filters
-        if kyc_status:
-            query = query.filter(SellerProfile.kyc_status == kyc_status)
-        
-        if is_locked is not None:
-            if is_locked:
-                query = query.filter(User.locked_until > datetime.utcnow())
-            else:
-                query = query.filter(
-                    or_(User.locked_until.is_(None), User.locked_until <= datetime.utcnow())
-                )
-        
-        if search:
-            query = query.filter(
-                or_(
-                    SellerProfile.business_name.ilike(f"%{search}%"),
-                    User.email.ilike(f"%{search}%")
-                )
-            )
-        
-        # Get total count
-        total_sellers = query.count()
-        
-        # Get paginated results
-        sellers = (
-            query
-            .order_by(desc(SellerProfile.created_at))
-            .offset(offset)
-            .limit(limit)
-            .all()
-        )
-        
-        # Format response
-        seller_list = []
-        for seller in sellers:
-            seller_data = AdminSellerListResponse(
-                id=seller.id,
-                email=seller.user.email,
-                business_name=seller.business_name,
-                seller_type=seller.seller_type,
-                logo_url=seller.logo_url,
-                description=seller.description,
-                contact_email=seller.contact_email,
-                contact_phone=seller.contact_phone,
-                website_url=seller.website_url,
-                kyc_status=seller.kyc_status,
-                approval_date=seller.approval_date,
-                total_products=admin_service.get_seller_total_count(db, seller.id),
-                total_orders=seller.total_orders,
-                total_revenue=seller.total_revenue,
-                available_balance=seller.available_balance or Decimal('0.00'),
-                pending_balance=seller.pending_balance or Decimal('0.00'),
-                created_at=seller.created_at,
-                updated_at=seller.updated_at,
-                user_locked=seller.user.locked_until
-            )
-            seller_list.append(seller_data.dict())
-        
-        return AdminListResponse(
-            success=True,
-            message="Sellers retrieved successfully",
-            data=seller_list,
-            pagination={
-                "page": page,
-                "limit": limit,
-                "total_pages": (total_sellers + limit - 1) // limit,
-                "has_next": page * limit < total_sellers,
-                "has_prev": page > 1
-            },
-            total=total_sellers
-        )
-        
-    except Exception as e:
-        log_error(admin_logger, f"Failed to fetch sellers list", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch sellers")
-
-
-@router.patch("/sellers/{seller_id}/kyc", response_model=AdminResponse)
-async def update_seller_kyc_status(
-    seller_id: UUID,
-    action: AdminSellerActionRequest,
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Approve or reject seller KYC"""
-    try:
-        seller = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
-        if not seller:
-            raise HTTPException(status_code=404, detail="Seller not found")
-        
-        if action.action == "approve_kyc":
-            seller.kyc_status = "approved"
-            seller.approval_date = datetime.utcnow().date()
-            message = "Seller KYC approved successfully"
-            
-            # Create notification for KYC approval
-            try:
-                create_notification(db, {
-                    "user_id": str(seller.id),
-                    "type": "account_verified",
-                    "title": "KYC Approved!",
-                    "message": f"Congratulations! Your KYC verification has been approved. You can now start selling on our platform.",
-                    "priority": "high",
-                    "channels": ["in_app", "email"],
-                    "data": {
-                        "seller_id": str(seller.id),
-                        "kyc_status": "approved",
-                        "approval_date": seller.approval_date.isoformat()
-                    }
-                })
-            except Exception as e:
-                admin_logger.error(f"Failed to create KYC approval notification: {e}")
-            try:
-                send_kyc_approved_email.delay(
-                    seller.contact_email,
-                    seller.business_name,
-                    seller.approval_date.isoformat()
-                )
-            except Exception as e:
-                admin_logger.error(f"Failed to queue KYC approved email: {e}")
-
-        elif action.action == "reject_kyc":
-            seller.kyc_status = "rejected"
-            seller.approval_date = None
-            message = "Seller KYC rejected"
-            
-            # Create notification for KYC rejection
-            try:
-                create_notification(db, {
-                    "user_id": str(seller.id),
-                    "type": "account_verified",
-                    "title": "KYC Verification Required",
-                    "message": f"Your KYC verification was not approved. Please review your documents and resubmit for verification.",
-                    "priority": "high",
-                    "channels": ["in_app", "email"],
-                    "data": {
-                        "seller_id": str(seller.id),
-                        "kyc_status": "rejected",
-                        "action_required": True
-                    }
-                })
-            except Exception as e:
-                admin_logger.error(f"Failed to create KYC rejection notification: {e}")
-            try:
-                send_kyc_rejected_email.delay(
-                    seller.contact_email,
-                    seller.business_name,
-                    action.reason
-                )
-            except Exception as e:
-                admin_logger.error(f"Failed to queue KYC rejected email: {e}")
-        else:
-            raise HTTPException(status_code=400, detail="Invalid action")
-
-        db.commit()
-        
-        admin_logger.info(f"Admin {user['id']} {action.action} for seller {seller_id}")
-        
-        return AdminResponse(
-            success=True,
-            message=message,
-            data={"seller_id": str(seller_id), "new_status": seller.kyc_status}
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error(admin_logger, f"Failed to update seller KYC status", e)
-        raise HTTPException(status_code=500, detail="Failed to update KYC status")
 
 
 @router.get("/products", response_model=AdminListResponse)
@@ -1308,181 +1106,6 @@ async def update_user_action(
         raise HTTPException(status_code=500, detail="Failed to perform user action")
 
 
-# ---------------- ADMIN PAYOUT MANAGEMENT ----------------
-
-@router.get("/payouts", response_model=AdminPayoutListResponse)
-async def get_pending_payouts(
-    page: int = Query(1, ge=1, description="Page number"),
-    limit: int = Query(20, ge=1, le=100, description="Items per page"),
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Get all pending payouts for admin processing"""
-    try:
-        # Get all payouts with pagination and seller details
-        offset = (page - 1) * limit
-        payouts_query = db.query(SellerPayout).options(joinedload(SellerPayout.seller)).order_by(desc(SellerPayout.created_at))
-        total_count = payouts_query.count()
-        payouts = payouts_query.offset(offset).limit(limit).all()
-        
-        payout_responses = [
-            {
-                "id": str(payout.id),
-                "seller_id": str(payout.seller_id),
-                "amount": float(payout.amount),
-                "platform_fee": float(payout.platform_fee),
-                "net_amount": float(payout.net_amount),
-                "status": payout.status,
-                "transfer_reference": payout.transfer_reference,
-                "account_number": payout.account_number,
-                "bank_code": payout.bank_code,
-                "bank_name": payout.bank_name,
-                "created_at": payout.created_at.isoformat(),
-                "processed_at": payout.processed_at.isoformat() if payout.processed_at else None,
-                "failure_reason": payout.failure_reason,
-                "seller": {
-                    "business_name": payout.seller.business_name,
-                    "contact_email": payout.seller.contact_email,
-                    "contact_phone": payout.seller.contact_phone,
-                    "website_url": payout.seller.website_url,
-                    "kyc_status": payout.seller.kyc_status
-                } if payout.seller else None
-            }
-            for payout in payouts
-        ]
-        
-        total_pages = (total_count + limit - 1) // limit
-        
-        return AdminPayoutListResponse(
-            success=True,
-            message="Payouts retrieved successfully",
-            data=payout_responses,
-            pagination={
-                "page": page,
-                "limit": limit,
-                "total_count": total_count,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1
-            }
-        )
-        
-    except Exception as e:
-        log_error(admin_logger, f"Failed to get pending payouts", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve pending payouts"
-        )
-
-@router.post("/payouts/process", response_model=PayoutProcessResponse)
-async def process_payout(
-    request: PayoutProcessRequest,
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Process a pending payout"""
-    try:
-        success = seller_payout_service.process_payout(db=db, payout_id=request.payout_id)
-        
-        if success:
-            return PayoutProcessResponse(
-                success=True,
-                message="Payout processing initiated successfully",
-                data=None
-            )
-        else:
-            return PayoutProcessResponse(
-                success=False,
-                message="Failed to process payout",
-                data=None
-            )
-        
-    except Exception as e:
-        log_error(admin_logger, f"Failed to process payout {request.payout_id}", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process payout"
-        )
-
-@router.post("/payouts/cancel", response_model=PayoutProcessResponse)
-async def cancel_payout(
-    request: PayoutProcessRequest,
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Cancel a pending payout"""
-    try:
-        payout = db.query(SellerPayout).filter(SellerPayout.id == request.payout_id).first()
-        if not payout:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Payout not found"
-            )
-        
-        if payout.status != "pending":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only pending payouts can be cancelled"
-            )
-        
-        payout.status = "cancelled"
-        payout.failure_reason = "Cancelled by admin"
-        db.commit()
-        
-        return PayoutProcessResponse(
-            success=True,
-            message="Payout cancelled successfully",
-            data=None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error(admin_logger, f"Failed to cancel payout {request.payout_id}", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to cancel payout"
-        )
-
-@router.get("/payouts/stats", response_model=dict)
-async def get_payout_stats(
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Get payout statistics for admin dashboard"""
-    try:
-        total_payouts = db.query(SellerPayout).count()
-        pending_payouts = db.query(SellerPayout).filter(SellerPayout.status == "pending").count()
-        processing_payouts = db.query(SellerPayout).filter(SellerPayout.status == "processing").count()
-        completed_payouts = db.query(SellerPayout).filter(SellerPayout.status == "completed").count()
-        failed_payouts = db.query(SellerPayout).filter(SellerPayout.status == "failed").count()
-        
-        # Calculate total amounts
-        total_amount = db.query(func.sum(SellerPayout.amount)).scalar() or 0
-        pending_amount = db.query(func.sum(SellerPayout.amount)).filter(SellerPayout.status == "pending").scalar() or 0
-        completed_amount = db.query(func.sum(SellerPayout.amount)).filter(SellerPayout.status == "completed").scalar() or 0
-        
-        return {
-            "success": True,
-            "data": {
-                "total_payouts": total_payouts,
-                "pending_payouts": pending_payouts,
-                "processing_payouts": processing_payouts,
-                "completed_payouts": completed_payouts,
-                "failed_payouts": failed_payouts,
-                "total_amount": float(total_amount),
-                "pending_amount": float(pending_amount),
-                "completed_amount": float(completed_amount)
-            }
-        }
-        
-    except Exception as e:
-        log_error(admin_logger, "Failed to get payout stats", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve payout statistics"
-        )
-
 # ---------------- ASSET MANAGEMENT ----------------
 
 @router.get("/inspections", response_model=AdminListResponse)
@@ -1641,11 +1264,6 @@ async def get_admin_inspection(
                     "price": float(inspection.property.price if inspection.asset_type == 'property' and inspection.property else (inspection.car.price if inspection.asset_type == 'automotive' and inspection.car else 0)),
                     "image_url": inspection.property.images[0].image_url if inspection.asset_type == 'property' and hasattr(inspection.property, 'images') and inspection.property.images else inspection.car.images[0].image_url if inspection.asset_type == 'automotive' and hasattr(inspection.car, 'images') and inspection.car.images else None
                 },
-                "acquisition_session": {
-                    "id": str(inspection.acquisition_session.id),
-                    "proposed_price": float(inspection.acquisition_session.proposed_price) if inspection.acquisition_session.proposed_price else 0,
-                    "title": inspection.acquisition_session.title
-                } if inspection.acquisition_session else None
             }
         }
     except HTTPException: raise
@@ -1672,9 +1290,6 @@ async def update_admin_inspection_status(
         
         if agreed_price is not None:
             inspection.agreed_price = agreed_price
-            if inspection.acquisition_session_id:
-                sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
-                if sess: sess.proposed_price = agreed_price
         
         if unit_id:
             inspection.unit_id = unit_id
@@ -1684,14 +1299,6 @@ async def update_admin_inspection_status(
 
         if new_status: 
             inspection.status = new_status
-            
-            # Sync session status
-            if inspection.acquisition_session_id:
-                sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
-                if sess:
-                    if new_status == "confirmed": sess.status = "inspecting"
-                    elif new_status == "agreement_pending": sess.status = "processing"
-                    elif new_status == "cancelled": sess.status = "declined"
             
             # Update specific unit status if applicable using unified logic
             asset_service.update_unit_status(
@@ -1763,32 +1370,20 @@ async def update_admin_agreement_status(
         status_val = payload.get("status")
         if status_val: 
             agreement.status = status_val
-            # Sync session status
-            if agreement.acquisition_session_id:
-                sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == agreement.acquisition_session_id).first()
-                if sess:
-                    if status_val == "completed": sess.status = "acquired"
-                    elif status_val == "active": sess.status = "processing"
-                    elif status_val == "cancelled": sess.status = "declined"
-            
+
             # Update property unit statuses
             if agreement.asset_type == "property":
                 # Sync parent property status too
                 prop = db.query(Property).filter(Property.id == agreement.asset_id).first()
                 if prop:
                     if status_val == "completed":
-                        if agreement.acquisition_session_id: prop.status = "acquired"
-                        else: prop.status = "rented" if prop.listing_type == "rental" else "sold"
+                        prop.status = "rented" if prop.listing_type == "rental" else "sold"
                     elif status_val == "active":
                         prop.status = "under_financing"
                     elif status_val == "cancelled":
                         prop.status = "available"
 
-                if agreement.acquisition_session_id:
-                    # Entire property acquisition
-                    unit_status = "acquired" if status_val == "completed" else "under_financing" if status_val == "active" else "available"
-                    db.query(PropertyUnit).filter(PropertyUnit.property_id == agreement.asset_id).update({"status": unit_status})
-                elif agreement.unit_id:
+                if agreement.unit_id:
                     # Individual unit transaction
                     unit = db.query(PropertyUnit).filter(PropertyUnit.id == agreement.unit_id).first()
                     if unit:
@@ -1863,112 +1458,6 @@ async def list_admin_properties(
         log_error(admin_logger, "Failed to fetch all property listings", e)
         raise HTTPException(status_code=500, detail="Failed to fetch property listings")
 
-# ---------------- REAL ESTATE ACQUISITION ----------------
-
-@router.get("/real-estate/sessions", response_model=AdminListResponse)
-async def list_admin_real_estate_sessions(
-    db: Session = Depends(get_db),
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=100),
-    user=Depends(role_required(["admin"]))
-):
-    """List all real estate acquisition session requests"""
-    try:
-        
-        requests = property_service.list_session_requests(db)
-        total = len(requests)
-        
-        # Simple pagination
-        start = (page - 1) * limit
-        end = start + limit
-        paginated_requests = requests[start:end]
-        
-        return AdminListResponse(
-            success=True,
-            message="Real estate sessions fetched successfully",
-            data=[SessionRequestResponse.model_validate(r) for r in paginated_requests],
-            pagination={
-                "total": total,
-                "page": page,
-                "limit": limit,
-                "total_pages": (total + limit - 1) // limit
-            },
-            total=total
-        )
-    except Exception as e:
-        log_error(admin_logger, "Failed to fetch real estate sessions", e)
-        raise HTTPException(status_code=500, detail="Failed to fetch real estate sessions")
-
-
-@router.patch("/real-estate/sessions/{id}", response_model=AdminResponse)
-async def update_real_estate_session_status(
-    id: UUID,
-    payload: dict,
-    db: Session = Depends(get_db),
-    user=Depends(role_required(["admin"]))
-):
-    """Update status of a real estate session request"""
-    try:
-        status_val = payload.get("status")
-        notes = payload.get("notes")
-        
-        updated_request = property_service.update_session_status(db, id, status_val, notes)
-        
-        return AdminResponse(
-            success=True,
-            message=f"Session status updated to {status_val}",
-            data={
-                "id": str(updated_request.id),
-                "status": updated_request.status
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error(admin_logger, f"Failed to update session {id}", e)
-        raise HTTPException(status_code=500, detail="Failed to update session stats")
-
-@router.post("/real-estate/sessions/{id}/accept", response_model=AdminResponse)
-async def accept_real_estate_session(
-    id: UUID,
-    payload: dict,
-    db: Session = Depends(get_db),
-    user=Depends(role_required(["admin"]))
-):
-    """Accept a real estate session request and schedule inspection"""
-    try:
-        inspection_date_str = payload.get("inspection_date")
-        notes = payload.get("notes")
-        
-        if not inspection_date_str:
-            raise HTTPException(status_code=400, detail="inspection_date is required")
-            
-        inspection_date = datetime.fromisoformat(inspection_date_str.replace("Z", "+00:00"))
-        
-        updated_request = property_service.accept_session_request(
-            db=db, 
-            request_id=id, 
-            admin_id=UUID(user["id"]), 
-            inspection_date=inspection_date, 
-            notes=notes
-        )
-        
-        return AdminResponse(
-            success=True,
-            message=f"Session request accepted and inspection scheduled",
-            data={
-                "id": str(updated_request.id),
-                "status": updated_request.status
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error(admin_logger, f"Failed to accept session {id}", e)
-        raise HTTPException(status_code=500, detail="Failed to accept session request")
-        raise HTTPException(status_code=500, detail="Failed to update session status")
-
-
 @router.get("/real-estate/inventory", response_model=AdminListResponse)
 async def list_admin_internal_inventory(
     db: Session = Depends(get_db),
@@ -2026,12 +1515,6 @@ async def publish_acquired_property(
             for unit in prop.units:
                 unit.status = "available"
         
-        # Optionally update session request status to 'acquired' or 'published'
-        if prop.acquisition_session_id:
-            session_req = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == prop.acquisition_session_id).first()
-            if session_req:
-                session_req.status = "acquired" # Resetting to acquired just in case, or maybe specific state?
-        
         db.commit()
         
         return AdminResponse(
@@ -2071,7 +1554,7 @@ async def export_users_csv(
 ):
     """Export all users as CSV"""
     try:
-        users = db.query(User).options(joinedload(User.profile), joinedload(User.seller_profile)).all()
+        users = db.query(User).options(joinedload(User.profile)).all()
         
         output = StringIO()
         writer = csv.writer(output)
@@ -2085,12 +1568,9 @@ async def export_users_csv(
         for u in users:
             name = ""
             phone = ""
-            if u.role == "customer" and u.profile:
+            if u.profile:
                 name = u.profile.name
                 phone = u.profile.phone
-            elif u.role == "seller" and u.seller_profile:
-                name = u.seller_profile.business_name
-                phone = u.seller_profile.contact_phone
                 
             writer.writerow([
                 str(u.id), 

@@ -4,7 +4,7 @@ from sqlalchemy import UUID, func
 from typing import List, Optional, Tuple, Dict
 from schemas.order import OrderItemCreate
 from core.inventory import inventory_service
-from core.seller_payout_service import seller_payout_service
+from core.commission_service import commission_service
 from core.tasks import send_order_shipped_email, send_order_delivered_email
 from fastapi import HTTPException, status
 from decimal import Decimal
@@ -843,7 +843,7 @@ class OrderService:
                 order.updated_at = func.current_timestamp()
 
                 # Update seller balance for this status change
-                seller_payout_service.update_seller_balance(
+                commission_service.update_seller_balance(
                     db=db,
                     seller_id=str(seller_id),
                     order_id=str(order_id),
@@ -1353,7 +1353,7 @@ class OrderService:
             
             # Update balance for each seller
             for seller_id in sellers_involved:
-                seller_payout_service.update_seller_balance(
+                commission_service.update_seller_balance(
                     db=db,
                     seller_id=seller_id,
                     order_id=str(order_id),

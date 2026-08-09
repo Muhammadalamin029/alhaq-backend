@@ -28,7 +28,6 @@ class SystemSettingsInspection(BaseModel):
 
 class SystemSettingsSecurity(BaseModel):
     require_email_verification: bool
-    require_seller_kyc: bool
     access_token_lifetime_minutes: int
     max_login_attempts: int
     lockout_duration_minutes: int
@@ -36,7 +35,6 @@ class SystemSettingsSecurity(BaseModel):
 
 class SystemSettingsNotifications(BaseModel):
     new_user_notifications: bool
-    new_seller_notifications: bool
     dispute_notifications: bool
     system_alerts: bool
     weekly_reports: bool
@@ -80,7 +78,6 @@ class UpdateSystemSettingsInspectionRequest(BaseModel):
 
 class UpdateSystemSettingsSecurityRequest(BaseModel):
     require_email_verification: bool
-    require_seller_kyc: bool
     access_token_lifetime_minutes: int = Field(..., ge=5, le=1440)
     max_login_attempts: int = Field(..., ge=1, le=20)
     lockout_duration_minutes: int = Field(..., ge=1, le=1440)
@@ -88,7 +85,6 @@ class UpdateSystemSettingsSecurityRequest(BaseModel):
 
 class UpdateSystemSettingsNotificationsRequest(BaseModel):
     new_user_notifications: bool
-    new_seller_notifications: bool
     dispute_notifications: bool
     system_alerts: bool
     weekly_reports: bool

@@ -11,7 +11,7 @@ from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
 from core.system_settings_service import system_settings_service
 from db.session import get_db
 from schemas.auth import (
-    LoginRequest, RegisterRequest, SellerRegisterRequest, TokenResponse, RefreshRequest,
+    LoginRequest, RegisterRequest, TokenResponse, RefreshRequest,
     ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse,
     VerifyEmailRequest, ResendVerificationRequest, VerifyPasswordResetRequest,
     EmailVerificationResponse, PasswordResetResponse, LoginRequest, SendVerificationRequest, RequestPasswordResetRequest
@@ -189,72 +189,6 @@ def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         log_error(auth_logger, f"Customer registration failed for {body.email}", e, email=body.email)
-        raise HTTPException(status_code=500, detail="Registration failed")
-
-
-@router.post("/register/seller", response_model=TokenResponse, status_code=201)
-def register_seller(body: SellerRegisterRequest, db: Session = Depends(get_db)):
-    """Register a new seller and return authentication tokens"""
-
-    try:
-        auth_logger.info(f"Seller registration attempt: {body.email}")
-        
-        user_id = auth_service.create_seller(
-            db, 
-            email=body.email, 
-            password=body.password, 
-            business_name=body.business_name,
-            contact_email=body.contact_email,
-            contact_phone=body.contact_phone,
-            description=body.description,
-            website_url=body.website_url,
-            seller_type=body.seller_type
-        )
-        
-        # Send verification email
-        try:
-            auth_service.send_verification_email(db, body.email)
-            auth_logger.info(f"Verification email sent to seller: {body.email}")
-        except Exception as e:
-            auth_logger.warning(f"Failed to send verification email to {body.email}: {str(e)}")
-            # Don't fail registration if email sending fails
-        
-        # Log successful registration
-        log_auth_event(
-            auth_logger,
-            "seller_registration",
-            email=body.email,
-            user_id=user_id,
-            success=True,
-            user_role="seller"
-        )
-        
-        # Generate tokens for immediate login after registration
-        access_token, refresh_token = generate_tokens(db, user_id, "seller")
-        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
-        
-    except IntegrityError as e:
-        db.rollback()
-        log_auth_event(
-            auth_logger,
-            "seller_registration_failed",
-            email=body.email,
-            success=False,
-            reason="Email already registered"
-        )
-        raise HTTPException(status_code=400, detail="Email already registered")
-    except HTTPException as e:
-        log_auth_event(
-            auth_logger,
-            "seller_registration_failed", 
-            email=body.email,
-            success=False,
-            reason=str(e.detail)
-        )
-        raise
-    except Exception as e:
-        db.rollback()
-        log_error(auth_logger, f"Seller registration failed for {body.email}", e, email=body.email)
         raise HTTPException(status_code=500, detail="Registration failed")
 
 

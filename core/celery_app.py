@@ -61,13 +61,6 @@ config_updates = {
         # Notification / generic
         "core.tasks.send_notification_email":       {"queue": "emails"},
         "core.tasks.send_notification":             {"queue": "notifications"},
-        # Payout emails
-        "core.tasks.send_payout_requested_email":   {"queue": "emails"},
-        "core.tasks.send_payout_completed_email":   {"queue": "emails"},
-        "core.tasks.send_payout_failed_email":      {"queue": "emails"},
-        # KYC emails
-        "core.tasks.send_kyc_approved_email":       {"queue": "emails"},
-        "core.tasks.send_kyc_rejected_email":       {"queue": "emails"},
         # Inspection / agreement emails
         "core.tasks.send_inspection_confirmed_email": {"queue": "emails"},
         "core.tasks.send_agreement_created_email":  {"queue": "emails"},

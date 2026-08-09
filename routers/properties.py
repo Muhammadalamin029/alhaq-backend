@@ -8,8 +8,7 @@ from core.auth import get_current_user, role_required
 from core.property_service import property_service
 from core.system_settings_service import system_settings_service
 from schemas.property import (
-    PropertyResponse, PropertyCreate, PropertyUpdate, 
-    SessionRequestResponse, SessionRequestCreate
+    PropertyResponse, PropertyCreate, PropertyUpdate,
 )
 
 router = APIRouter(tags=["Properties"])
@@ -31,8 +30,6 @@ def create_property(
 ):
     """Create a new property listing (Seller/Admin only)"""
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "create a property listing")
-    if current_user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "create a property listing")
     prop = property_service.create_property(db, UUID(current_user["id"]), data)
     return {
         "success": True,
@@ -50,51 +47,6 @@ def list_seller_listings(
         "success": True,
         "message": "Seller listings fetched successfully",
         "data": [PropertyResponse.model_validate(p) for p in properties]
-    }
-
-@router.post("/session-request", response_model=dict)
-def create_session_request(
-    data: SessionRequestCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    request = property_service.create_session_request(db, UUID(current_user["id"]), data)
-    return {
-        "success": True,
-        "message": "Session request submitted successfully",
-        "data": SessionRequestResponse.model_validate(request)
-    }
-
-@router.get("/session-requests", response_model=dict)
-def get_my_session_requests(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    requests = property_service.list_session_requests(db, user_id=UUID(current_user["id"]))
-    return {
-        "success": True,
-        "message": "Session requests fetched successfully",
-        "data": [SessionRequestResponse.model_validate(r) for r in requests]
-    }
-
-@router.get("/session-requests/{id}", response_model=dict)
-def get_session_request(
-    id: UUID,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
-):
-    from core.model import RealEstateSessionRequest
-    req = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == id).first()
-    if not req:
-        raise HTTPException(status_code=404, detail="Session request not found")
-        
-    if str(req.user_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to view this request")
-        
-    return {
-        "success": True,
-        "message": "Session request detail fetched successfully",
-        "data": SessionRequestResponse.model_validate(req)
     }
 
 @router.get("/{id}", response_model=dict)
@@ -117,8 +69,6 @@ def update_property(
 ):
     """Update a property listing"""
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a property listing")
-    if current_user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, current_user["id"], "update a property listing")
     prop = property_service.update_property(db, id, UUID(current_user["id"]), data)
     return {
         "success": True,

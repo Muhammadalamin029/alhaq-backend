@@ -5,10 +5,10 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
 from fastapi import HTTPException, status
 
-from core.model import User, Profile, SellerProfile
+from core.model import User, Profile
 from core.auth import hashpassword, verify_password
 from core.password_policy import PasswordPolicy, validate_password_change
-from schemas.auth import UserRole, UserProfileResponse, CustomerProfileResponse, SellerProfileResponse
+from schemas.auth import UserRole, UserProfileResponse, CustomerProfileResponse
 from core.notifications_service import create_notification
 from core.system_settings_service import system_settings_service
 
@@ -40,18 +40,8 @@ class AuthService:
         db.add(user)
         db.flush()  # ensures user.id exists
 
-        # Assign correct profile - Admin uses seller profile structure
-        if role == UserRole.SELLER or role == UserRole.ADMIN:
-            profile = SellerProfile(
-                id=user.id, 
-                business_name=full_name, 
-                description=bio,
-                contact_email=email,  # Use user email as contact email
-                kyc_status="approved" if role == UserRole.ADMIN else "pending",
-                approval_date=func.current_date() if role == UserRole.ADMIN else None
-            )
-        else:  # customer
-            profile = Profile(id=user.id, name=full_name, phone=phone, bio=bio)
+        # Every user (customer or admin) gets a Profile row
+        profile = Profile(id=user.id, name=full_name, phone=phone, bio=bio)
 
         db.add(profile)
         db.commit()
@@ -91,60 +81,6 @@ class AuthService:
         except Exception as e:
             print(f"Failed to notify admins about new user: {e}")
         
-        return str(user.id)
-
-    def create_seller(self, db: Session, email: str, password: str, business_name: str, 
-                     contact_email: str, contact_phone: str, description: str, 
-                     website_url: str = None, seller_type: str = "retailer") -> str:
-        """
-        Create a new seller with seller-specific profile data
-        
-        Returns user ID
-        """
-        # Validate password policy
-        PasswordPolicy.validate_password(password)
-
-        hashed_password = hashpassword(password)
-        user = User(
-            email=email,
-            hashed_password=hashed_password,
-            role=UserRole.SELLER,
-            password_changed_at=func.current_timestamp()
-        )
-        db.add(user)
-        db.flush()  # ensures user.id exists
-
-        # Create seller profile with proper seller data
-        seller_profile = SellerProfile(
-            id=user.id,
-            business_name=business_name,
-            description=description,
-            contact_email=contact_email,
-            contact_phone=contact_phone,
-            website_url=website_url,
-            seller_type=seller_type,
-            kyc_status="pending"  # New sellers start with pending KYC
-        )
-
-        db.add(seller_profile)
-        db.commit()
-        db.refresh(user)
-
-        try:
-            system_settings_service.notify_admins(
-                db=db,
-                event_key="new_user",
-                title="New Seller Registration",
-                message=f"A new seller account was created for {email}.",
-                data={
-                    "user_id": str(user.id),
-                    "email": email,
-                    "role": UserRole.SELLER.value,
-                },
-            )
-        except Exception as e:
-            print(f"Failed to notify admins about new seller: {e}")
-
         return str(user.id)
 
     def authenticate_user(self, db: Session, email: str, password: str) -> Tuple[User, bool]:
@@ -223,19 +159,11 @@ class AuthService:
                 detail="User not found"
             )
 
-        # Get user profile based on role
+        # Get user profile - both customer and admin now use the same Profile table
         profile = None
-        if user.role == "customer":
-            profile_data = db.query(Profile).filter(
-                Profile.id == user.id).first()
-            if profile_data:
-                profile = CustomerProfileResponse.model_validate(profile_data)
-        # Both seller and admin use seller profile
-        elif user.role in ["seller", "admin"]:
-            profile_data = db.query(SellerProfile).filter(
-                SellerProfile.id == user.id).first()
-            if profile_data:
-                profile = SellerProfileResponse.model_validate(profile_data)
+        profile_data = db.query(Profile).filter(Profile.id == user.id).first()
+        if profile_data:
+            profile = CustomerProfileResponse.model_validate(profile_data)
 
         user_response = UserProfileResponse.model_validate(user)
 
@@ -276,42 +204,22 @@ class AuthService:
             user.email_verified = False
             user.email_verified_at = None
 
-        # Update profile based on role
-        if user.role == "customer":
-            profile = db.query(Profile).filter(Profile.id == user.id).first()
-            if profile:
-                if "name" in update_data and str(update_data.get("name", "")).strip():
-                    profile.name = str(update_data["name"]).strip()
-                # Full name = firstName + lastName (alternative to single name field)
-                elif "firstName" in update_data or "lastName" in update_data:
-                    first_name = update_data.get("firstName", "").strip()
-                    last_name = update_data.get("lastName", "").strip()
-                    profile.name = f"{first_name} {last_name}".strip()
-                if "phone" in update_data:
-                    profile.phone = update_data["phone"]
-                if "bio" in update_data:
-                    profile.bio = update_data["bio"]
-                if "avatar_url" in update_data:
-                    profile.avatar_url = update_data["avatar_url"]
-
-        elif user.role in ["seller", "admin"]:  # Seller/Admin share same structure
-            profile = db.query(SellerProfile).filter(
-                SellerProfile.id == user.id).first()
-            if profile:
-                if "business_name" in update_data:
-                    profile.business_name = update_data["business_name"]
-                if "description" in update_data:
-                    profile.description = update_data["description"]
-                if "contact_email" in update_data:
-                    profile.contact_email = update_data["contact_email"]
-                if "contact_phone" in update_data:
-                    profile.contact_phone = update_data["contact_phone"]
-                if "website_url" in update_data:
-                    profile.website_url = update_data["website_url"]
-                if "logo_url" in update_data:
-                    profile.logo_url = update_data["logo_url"]
-                if "default_grace_period_days" in update_data:
-                    profile.default_grace_period_days = update_data["default_grace_period_days"]
+        # Update profile - customer and admin both use Profile now
+        profile = db.query(Profile).filter(Profile.id == user.id).first()
+        if profile:
+            if "name" in update_data and str(update_data.get("name", "")).strip():
+                profile.name = str(update_data["name"]).strip()
+            # Full name = firstName + lastName (alternative to single name field)
+            elif "firstName" in update_data or "lastName" in update_data:
+                first_name = update_data.get("firstName", "").strip()
+                last_name = update_data.get("lastName", "").strip()
+                profile.name = f"{first_name} {last_name}".strip()
+            if "phone" in update_data:
+                profile.phone = update_data["phone"]
+            if "bio" in update_data:
+                profile.bio = update_data["bio"]
+            if "avatar_url" in update_data:
+                profile.avatar_url = update_data["avatar_url"]
 
         user.updated_at = datetime.utcnow()
         db.commit()
@@ -360,7 +268,7 @@ class AuthService:
     def create_admin_user(self, db: Session, email: str, password: str, business_name: str, description: str = None) -> str:
         """
         Create admin user - only callable internally or by existing admins
-        Admin users use seller profile structure
+        Admin users use the standard Profile table like customers do
         """
         # Validate password policy
         PasswordPolicy.validate_password(password)
@@ -375,16 +283,10 @@ class AuthService:
         db.add(user)
         db.flush()
 
-        # Admin uses seller profile structure
-        profile = SellerProfile(
+        profile = Profile(
             id=user.id,
-            business_name=business_name,
-            description=description or "System Administrator",
-            contact_email=email,  # Use admin email as contact email
-            contact_phone=None,   # Optional for admin
-            website_url=None,     # Optional for admin
-            kyc_status="approved", # Admins are auto-approved
-            approval_date=func.current_date()  # Set approval date to today
+            name=business_name,
+            bio=description or "System Administrator",
         )
 
         db.add(profile)
@@ -468,17 +370,11 @@ class AuthService:
                 detail=f"Too many verification requests. Please try again in {minutes} minutes."
             )
 
-        # Get user name based on profile type
+        # Get user name from Profile (shared by customer and admin)
         user_name = "User"  # Default fallback
-        if user.role == "customer":
-            profile = db.query(Profile).filter(Profile.id == user.id).first()
-            if profile:
-                user_name = profile.name
-        elif user.role in ["seller", "admin"]:
-            profile = db.query(SellerProfile).filter(
-                SellerProfile.id == user.id).first()
-            if profile:
-                user_name = profile.business_name
+        profile = db.query(Profile).filter(Profile.id == user.id).first()
+        if profile:
+            user_name = profile.name
 
         # Increment rate limit counter
         verification_manager.increment_rate_limit(email)
@@ -534,17 +430,11 @@ class AuthService:
         user.email_verified_at = datetime.utcnow()
         db.commit()
 
-        # Get user name for welcome email
+        # Get user name for welcome email (shared Profile table)
         user_name = "User"  # Default fallback
-        if user.role == "customer":
-            profile = db.query(Profile).filter(Profile.id == user.id).first()
-            if profile:
-                user_name = profile.name
-        elif user.role in ["seller", "admin"]:
-            profile = db.query(SellerProfile).filter(
-                SellerProfile.id == user.id).first()
-            if profile:
-                user_name = profile.business_name
+        profile = db.query(Profile).filter(Profile.id == user.id).first()
+        if profile:
+            user_name = profile.name
 
         # Send welcome email (async, non-blocking)
         send_welcome_email.delay(email, user_name)
@@ -587,18 +477,12 @@ class AuthService:
         # Always return success to prevent email enumeration attacks
         # But only send email if user actually exists
         if user:
-            # Get user name based on profile type
+            # Get user name from Profile (shared by customer and admin)
             user_name = "User"  # Default fallback
-            if user.role == "customer":
-                profile = db.query(Profile).filter(
-                    Profile.id == user.id).first()
-                if profile:
-                    user_name = profile.name
-            elif user.role in ["seller", "admin"]:
-                profile = db.query(SellerProfile).filter(
-                    SellerProfile.id == user.id).first()
-                if profile:
-                    user_name = profile.business_name
+            profile = db.query(Profile).filter(
+                Profile.id == user.id).first()
+            if profile:
+                user_name = profile.name
 
             # Send password reset email asynchronously
             send_password_reset_email.delay(email, user_name)

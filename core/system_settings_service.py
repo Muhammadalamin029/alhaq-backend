@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from core.config import settings as app_settings
-from core.model import SellerProfile, SystemSettings, User
+from core.model import SystemSettings, User
 from core.notifications_service import create_notification
 from schemas.system_settings import SystemSettingsResponse
 
@@ -37,12 +37,10 @@ class SystemSettingsService:
             "inspection_cancellation_cutoff_hours": 12,
             "missed_inspection_expiry_hours": 24,
             "require_email_verification": True,
-            "require_seller_kyc": True,
             "access_token_lifetime_minutes": 30,
             "max_login_attempts": 5,
             "lockout_duration_minutes": 15,
             "new_user_notifications": True,
-            "new_seller_notifications": True,
             "dispute_notifications": True,
             "system_alerts": True,
             "weekly_reports": True,
@@ -88,14 +86,12 @@ class SystemSettingsService:
             },
             "security": {
                 "require_email_verification": bool(settings_row.require_email_verification),
-                "require_seller_kyc": bool(settings_row.require_seller_kyc),
                 "access_token_lifetime_minutes": int(settings_row.access_token_lifetime_minutes),
                 "max_login_attempts": int(settings_row.max_login_attempts),
                 "lockout_duration_minutes": int(settings_row.lockout_duration_minutes),
             },
             "notifications": {
                 "new_user_notifications": bool(settings_row.new_user_notifications),
-                "new_seller_notifications": bool(settings_row.new_seller_notifications),
                 "dispute_notifications": bool(settings_row.dispute_notifications),
                 "system_alerts": bool(settings_row.system_alerts),
                 "weekly_reports": bool(settings_row.weekly_reports),
@@ -160,7 +156,6 @@ class SystemSettingsService:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "require_email_verification",
-            "require_seller_kyc",
             "access_token_lifetime_minutes",
             "max_login_attempts",
             "lockout_duration_minutes",
@@ -176,7 +171,6 @@ class SystemSettingsService:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "new_user_notifications",
-            "new_seller_notifications",
             "dispute_notifications",
             "system_alerts",
             "weekly_reports",
@@ -224,9 +218,6 @@ class SystemSettingsService:
     def is_email_verification_required(self, db: Session) -> bool:
         return bool(self.get_or_create_settings(db).require_email_verification)
 
-    def is_seller_kyc_required(self, db: Session) -> bool:
-        return bool(self.get_or_create_settings(db).require_seller_kyc)
-
     def require_verified_email_for_user(self, db: Session, user_id: str, action: str) -> None:
         if not self.is_email_verification_required(db):
             return
@@ -242,26 +233,10 @@ class SystemSettingsService:
             detail=f"Email verification is required to {action}",
         )
 
-    def require_approved_seller_kyc(self, db: Session, seller_id: str, action: str) -> None:
-        if not self.is_seller_kyc_required(db):
-            return
-
-        seller_profile = db.query(SellerProfile).filter(SellerProfile.id == seller_id).first()
-        if not seller_profile:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Seller profile not found")
-        if seller_profile.kyc_status == "approved":
-            return
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Approved seller KYC is required to {action}",
-        )
-
     def should_notify_admins(self, db: Session, event_key: str) -> bool:
         settings_row = self.get_or_create_settings(db)
         mapping = {
             "new_user": settings_row.new_user_notifications,
-            "new_seller": settings_row.new_seller_notifications,
             "dispute": settings_row.dispute_notifications,
             "system_alert": settings_row.system_alerts,
             "weekly_report": settings_row.weekly_reports,

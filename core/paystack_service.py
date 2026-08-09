@@ -223,74 +223,6 @@ class PaystackService:
             logger.error(f"Paystack bank transfer charge error: {str(e)}")
             raise Exception(f"Failed to initiate bank transfer charge: {str(e)}")
 
-    def create_transfer_recipient(self, name: str, account_number: str, bank_code: str, email: str) -> Dict[str, Any]:
-        """
-        Create a transfer recipient for seller payouts
-        
-        Args:
-            name: Recipient name
-            account_number: Bank account number
-            bank_code: Bank code from Paystack
-            email: Recipient email
-            
-        Returns:
-            Dict containing recipient details
-        """
-        try:
-            url = f"{self.base_url}/transferrecipient"
-            payload = {
-                "type": "nuban",
-                "name": name,
-                "account_number": account_number,
-                "bank_code": bank_code,
-                "email": email
-            }
-            
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.info(f"Paystack transfer recipient created: {email}")
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Paystack recipient creation error: {str(e)}")
-            raise Exception(f"Failed to create transfer recipient: {str(e)}")
-
-    def initiate_transfer(self, amount: int, recipient_code: str, reference: str, reason: str = "Seller payout") -> Dict[str, Any]:
-        """
-        Initiate a transfer to a seller
-        
-        Args:
-            amount: Amount in kobo (NGN)
-            recipient_code: Paystack recipient code
-            reference: Transfer reference
-            reason: Transfer reason
-            
-        Returns:
-            Dict containing transfer details
-        """
-        try:
-            url = f"{self.base_url}/transfer"
-            payload = {
-                "source": "balance",
-                "amount": amount,
-                "recipient": recipient_code,
-                "reference": reference,
-                "reason": reason
-            }
-            
-            response = requests.post(url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.info(f"Paystack transfer initiated: {reference}")
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Paystack transfer error: {str(e)}")
-            raise Exception(f"Failed to initiate transfer: {str(e)}")
-
     def get_banks(self) -> Dict[str, Any]:
         """
         Get list of supported banks
@@ -390,51 +322,6 @@ class PaystackService:
         except requests.exceptions.RequestException as e:
             logger.error(f"Paystack refund error: {str(e)}")
             raise Exception(f"Failed to initiate refund: {str(e)}")
-
-    def resolve_account_number(self, account_number: str, bank_code: str) -> Dict[str, Any]:
-        """
-        Resolve account number to get account name and verify account
-        
-        Args:
-            account_number: Bank account number
-            bank_code: Bank code from Paystack
-            
-        Returns:
-            Dict containing account verification details
-        """
-        # Check if keys are configured
-        if not self.secret_key or not self.public_key:
-            logger.warning("Paystack keys not configured. Using mock account verification for development.")
-            # Return mock successful verification for development
-            return {
-                "status": True,
-                "message": "Account resolved successfully",
-                "data": {
-                    "account_number": account_number,
-                    "account_name": f"Test Account Holder {account_number[-4:]}",
-                    "bank_id": int(bank_code),
-                    "bank_code": bank_code,
-                    "bank_name": f"Test Bank {bank_code}"
-                }
-            }
-        
-        try:
-            url = f"{self.base_url}/bank/resolve"
-            params = {
-                "account_number": account_number,
-                "bank_code": bank_code
-            }
-            
-            response = requests.get(url, params=params, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.info(f"Paystack account resolved: {account_number}")
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Paystack account resolution error: {str(e)}")
-            raise Exception(f"Failed to resolve account: {str(e)}")
 
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """

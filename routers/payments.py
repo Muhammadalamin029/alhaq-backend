@@ -15,11 +15,6 @@ from schemas.payment import (
     PaymentVerifyRequest,
     PaymentVerifyResponse,
     PaymentWebhookData,
-    TransferRecipientRequest,
-    TransferRecipientResponse,
-    TransferRequest,
-    TransferResponse,
-    BankResponse,
     PaymentResponse,
     PaymentListResponse,
     BankTransferInitializeRequest,
@@ -192,12 +187,6 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
             payment_service.verify_transaction(db, reference)
             payment_logger.info(f"Webhook: Payment verified for {reference}")
             
-        elif event in ["transfer.success", "transfer.failed"]:
-            # Handle payout transfers
-            from core.seller_payout_service import seller_payout_service
-            seller_payout_service.handle_payout_webhook(db, data)
-            payment_logger.info(f"Webhook: Transfer {event} processed for {reference}")
-            
         else:
             payment_logger.info(f"Unhandled webhook event: {event} for reference: {reference}")
         
@@ -230,81 +219,6 @@ async def test_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Test webhook failed"
-        )
-
-@router.get("/banks", response_model=BankResponse)
-async def get_banks():
-    """Get list of supported banks"""
-    try:
-        banks_data = paystack_service.get_banks()
-        
-        return BankResponse(
-            success=True,
-            message="Banks retrieved successfully",
-            data=banks_data.get("data", [])
-        )
-        
-    except Exception as e:
-        log_error(payment_logger, "Failed to get banks", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get banks"
-        )
-
-@router.post("/transfer-recipient", response_model=TransferRecipientResponse)
-async def create_transfer_recipient(
-    request: TransferRecipientRequest,
-    user=Depends(role_required(["seller", "admin"])),
-    db: Session = Depends(get_db)
-):
-    """Create a transfer recipient for seller payouts"""
-    try:
-        recipient_data = paystack_service.create_transfer_recipient(
-            name=request.name,
-            account_number=request.account_number,
-            bank_code=request.bank_code,
-            email=request.email
-        )
-        
-        return TransferRecipientResponse(
-            success=True,
-            message="Transfer recipient created successfully",
-            data=recipient_data["data"]
-        )
-        
-    except Exception as e:
-        log_error(payment_logger, f"Failed to create transfer recipient for {request.email}", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create transfer recipient"
-        )
-
-@router.post("/transfer", response_model=TransferResponse)
-async def initiate_transfer(
-    request: TransferRequest,
-    user=Depends(role_required(["admin"])),
-    db: Session = Depends(get_db)
-):
-    """Initiate a transfer to a seller"""
-    try:
-        transfer_data = paystack_service.initiate_transfer(
-            amount=request.amount,
-            recipient_code=request.recipient_code,
-            reference=request.reference,
-            reason=request.reason
-        )
-        
-        return TransferResponse(
-            success=True,
-            message="Transfer initiated successfully",
-            data=transfer_data["data"]
-        )
-        
-    except Exception as e:
-        log_error(payment_logger, f"Failed to initiate transfer {request.reference}", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initiate transfer"
         )
 
 @router.get("/", response_model=PaymentListResponse)

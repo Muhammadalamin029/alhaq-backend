@@ -6,42 +6,6 @@ from schemas.products import ProductResponse
 from schemas.order import OrderResponse
 
 
-class SellerProfileResponse(BaseModel):
-    success: bool
-    message: str
-    data: "SellerProfileData"
-
-
-class SellerProfileData(BaseModel):
-    id: str
-    business_name: str
-    description: Optional[str] = None
-    logo_url: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    website_url: Optional[str] = None
-    kyc_status: str
-    approval_date: Optional[datetime] = None
-    total_products: int = 0
-    total_orders: int = 0
-    total_revenue: Decimal = Decimal('0.00')
-    default_grace_period_days: int = 3
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class SellerProfileUpdate(BaseModel):
-    business_name: Optional[str] = Field(None, min_length=2, max_length=255)
-    description: Optional[str] = Field(None, max_length=1000)
-    logo_url: Optional[str] = Field(None, max_length=500)
-    contact_email: Optional[str] = Field(None, max_length=255)
-    contact_phone: Optional[str] = Field(None, max_length=50)
-    website_url: Optional[str] = Field(None, max_length=500)
-    default_grace_period_days: Optional[int] = Field(None, ge=1, le=30)
-
 class SellerStatsResponse(BaseModel):
     success: bool
     message: str
@@ -184,7 +148,6 @@ class PaginationMeta(BaseModel):
 
 
 # Update forward references
-SellerProfileResponse.model_rebuild()
 SellerStatsResponse.model_rebuild()
 SellerProductsResponse.model_rebuild()
 SellerOrdersResponse.model_rebuild()

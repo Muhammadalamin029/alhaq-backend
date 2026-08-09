@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from db.session import get_db
 from core.model import SellerProfile, Product, Order, OrderItem
-from schemas.seller import SellerProfileResponse
 from core.automotive_service import automotive_service
 from core.property_service import property_service
 from core.admin_service import admin_service

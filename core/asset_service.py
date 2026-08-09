@@ -14,7 +14,7 @@ from core.model import (
 from core.notifications_service import create_notification
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
-from core.seller_payout_service import seller_payout_service
+from core.commission_service import commission_service
 from core.system_settings_service import system_settings_service
 from core.tasks import (
     send_inspection_confirmed_email,
@@ -94,10 +94,6 @@ class AssetService():
             if asset_id:
                 prop = db.query(Property).filter(Property.id == asset_id).first()
                 if prop:
-                    # Acquisitions propagate to all units
-                    if prop.acquisition_session_id and new_status in ["pending_inspection", "property_inspected"]:
-                        db.query(PropertyUnit).filter(PropertyUnit.property_id == asset_id).update({"status": new_status})
-                    
                     # If sold/awaiting_payment, check if main listing should update status
                     if new_status in ["sold", "awaiting_payment", "under_financing"]:
                         available_count = db.query(PropertyUnit).filter(
@@ -293,7 +289,7 @@ class AssetService():
     def _attach_agreement_financials(self, db: Session, agreement: GeneralAgreement) -> None:
         total_price = Decimal(str(agreement.total_price or 0))
         remaining_balance = Decimal(str(agreement.remaining_balance if agreement.remaining_balance is not None else agreement.total_price or 0))
-        platform_fee_rate = seller_payout_service.get_platform_fee_rate(db)
+        platform_fee_rate = commission_service.get_platform_fee_rate(db)
         completed_payments = db.query(Payment).filter(
             Payment.agreement_id == agreement.id,
             Payment.status == "completed",
@@ -416,7 +412,6 @@ class AssetService():
                 duration_months=data.duration_months,
                 monthly_installment=data.monthly_installment,
                 status="pending_review",
-                acquisition_session_id=inspection.acquisition_session_id
             )
             db.add(new_agreement)
         else:
@@ -430,14 +425,6 @@ class AssetService():
 
         db.commit()
         db.refresh(inspection)
-
-        # 4. Update session status if linked
-        if inspection.acquisition_session_id:
-            from core.model import RealEstateSessionRequest
-            sess = db.query(RealEstateSessionRequest).filter(RealEstateSessionRequest.id == inspection.acquisition_session_id).first()
-            if sess:
-                sess.status = "processing"
-                db.commit()
 
         # Notify Seller
         create_notification(db, {
@@ -497,7 +484,6 @@ class AssetService():
             duration_months=data.duration_months,
             monthly_installment=data.monthly_installment,
             status="pending_review",  # Start in review
-            acquisition_session_id=data.acquisition_session_id if hasattr(data, 'acquisition_session_id') else (inspection.acquisition_session_id if data.inspection_id and inspection else None)
         )
         
         db.add(new_agreement)

@@ -54,8 +54,6 @@ async def list_products(
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "seller"])), db: Session = Depends(get_db)):
     system_settings_service.require_verified_email_for_user(db, user["id"], "create a product")
-    if user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, user["id"], "create a product")
 
     # Validate price is positive
     if payload.price <= 0:
@@ -155,8 +153,6 @@ async def update_product(
 ):
     """Update a product"""
     system_settings_service.require_verified_email_for_user(db, user["id"], "update a product")
-    if user["role"] == "seller":
-        system_settings_service.require_approved_seller_kyc(db, user["id"], "update a product")
 
     # First check if product exists
     product = product_service.get_product_by_id(db, product_id)
