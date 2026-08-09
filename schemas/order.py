@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic.types import UUID4
 from enum import Enum
-from schemas.products import ProductResponse, SellerResponse
+from schemas.products import ProductResponse
 
 
 # ----------------- ENUMS -----------------
@@ -67,28 +67,16 @@ class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
 
 
-class SellerGroupResponse(BaseModel):
-    seller: Optional[SellerResponse] = None  # Seller profile information
-    items: List[OrderItemResponse]
-    total_amount: float
-    item_count: int
-
-    class Config:
-        from_attributes = True
-
-
 class OrderResponse(BaseModel):
     id: UUID4
     total_amount: float
     status: str
-    seller_item_status: Optional[str] = None  # Status of this seller's items in the order
     created_at: datetime
     updated_at: datetime
 
     buyer: UserResponse
     delivery_addr: Optional[AddressResponse] = None
     order_items: List[OrderItemResponse]
-    seller_groups: Optional[List[dict]] = None  # For customer orders - use dict for now
     formatted_payments: Optional[List[dict]] = None  # Payment information
 
     class Config:

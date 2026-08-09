@@ -185,38 +185,6 @@ async def create_review(
     )
 
 
-@router.get("/seller", response_model=ProductReviewsResponse)
-async def get_seller_reviews(
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=50),
-    user=Depends(role_required(["seller", "admin"])),
-    db: Session = Depends(get_db),
-):
-    """Reviews left on this seller's products (retail listings)."""
-    seller_id = UUID(user["id"])
-    offset = (page - 1) * limit
-    reviews_query = (
-        db.query(Review)
-        .join(Product, Review.product_id == Product.id)
-        .options(joinedload(Review.user), joinedload(Review.product))
-        .filter(Product.seller_id == seller_id)
-        .order_by(desc(Review.created_at))
-    )
-    total_reviews = reviews_query.count()
-    reviews = reviews_query.offset(offset).limit(limit).all()
-    return ProductReviewsResponse(
-        success=True,
-        message="Seller reviews retrieved successfully",
-        data=[_review_to_response(r) for r in reviews],
-        meta={
-            "page": page,
-            "limit": limit,
-            "total": total_reviews,
-            "total_pages": (total_reviews + limit - 1) // limit if limit else 0,
-        },
-    )
-
-
 @router.put("/{review_id}", response_model=ReviewSingleResponse)
 async def update_review(
     review_id: UUID,

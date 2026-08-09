@@ -4,9 +4,10 @@ from typing import List, Optional
 from uuid import UUID
 
 from db.session import get_db
-from core.auth import get_current_user, role_required
+from core.auth import role_required
 from core.property_service import property_service
 from core.system_settings_service import system_settings_service
+from core.store_service import get_store_id
 from schemas.property import (
     PropertyResponse, PropertyCreate, PropertyUpdate,
 )
@@ -24,13 +25,13 @@ def list_available_properties(db: Session = Depends(get_db)):
 
 @router.post("/")
 def create_property(
-    data: PropertyCreate, 
-    db: Session = Depends(get_db), 
-    current_user: dict = Depends(role_required(["seller", "admin"]))
+    data: PropertyCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    """Create a new property listing (Seller/Admin only)"""
+    """Create a new property listing (Admin only)"""
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "create a property listing")
-    prop = property_service.create_property(db, UUID(current_user["id"]), data)
+    prop = property_service.create_property(db, get_store_id(db), data)
     return {
         "success": True,
         "message": "Property created successfully",
@@ -40,12 +41,12 @@ def create_property(
 @router.get("/seller/listings", response_model=dict)
 def list_seller_listings(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(role_required(["seller", "admin"]))
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    properties = property_service.list_properties(db, seller_id=UUID(current_user["id"]), status=None)
+    properties = property_service.list_properties(db, seller_id=get_store_id(db), status=None)
     return {
         "success": True,
-        "message": "Seller listings fetched successfully",
+        "message": "Store listings fetched successfully",
         "data": [PropertyResponse.model_validate(p) for p in properties]
     }
 
@@ -65,11 +66,11 @@ def update_property(
     id: UUID,
     data: PropertyUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(role_required(["seller", "admin"]))
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    """Update a property listing"""
+    """Update a property listing (Admin only)"""
     system_settings_service.require_verified_email_for_user(db, current_user["id"], "update a property listing")
-    prop = property_service.update_property(db, id, UUID(current_user["id"]), data)
+    prop = property_service.update_property(db, id, get_store_id(db), data)
     return {
         "success": True,
         "message": "Property updated successfully",
@@ -80,23 +81,19 @@ def update_property(
 def delete_property(
     id: UUID,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(role_required(["seller", "admin"]))
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    """Delete a property listing"""
+    """Delete a property listing (Admin only)"""
     from core.model import Property, AssetImage
-    
-    # Check ownership
+
     prop = db.query(Property).filter(Property.id == id).first()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-        
-    if str(prop.seller_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to delete this property")
-        
+
     db.query(AssetImage).filter(AssetImage.property_id == id).delete()
     db.delete(prop)
     db.commit()
-    
+
     return {
         "success": True,
         "message": "Property deleted successfully",

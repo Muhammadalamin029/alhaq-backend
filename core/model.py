@@ -137,47 +137,7 @@ class StoreProfile(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
-
-# ---------------- SELLER PROFILES ----------------
-class SellerProfile(Base):
-    __tablename__ = "seller_profiles"
-
-    id = Column(UUID, ForeignKey("users.id"), primary_key=True, index=True)
-    business_name = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
-    logo_url = Column(Text, nullable=True)
-    contact_email = Column(String(255), nullable=True)
-    contact_phone = Column(String(50), nullable=True)
-    website_url = Column(Text, nullable=True)
-
-    seller_type = Column(Enum("retailer", "car_dealer", "real_agent",
-                             name="seller_type"), nullable=True)
-    
-    kyc_status = Column(Enum("pending", "approved", "rejected",
-                        name="seller_kyc_status"), default="pending")
-    approval_date = Column(Date, nullable=True)
-    
-    default_grace_period_days = Column(Integer, default=3)
-
-    total_products = Column(Integer, default=0)
-    total_orders = Column(Integer, default=0)
-    total_revenue = Column(DECIMAL(12, 2), default=0)
-
-    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
-    ), onupdate=func.current_timestamp())
-
-    # Payout and earnings tracking
-    available_balance = Column(DECIMAL(12, 2), default=0)  # Available for payout
-    pending_balance = Column(DECIMAL(12, 2), default=0)    # Pending from recent orders
-    total_paid = Column(DECIMAL(12, 2), default=0)         # Total amount paid out
-    payout_account_number = Column(String(20), nullable=True)
-    payout_bank_code = Column(String(10), nullable=True)
-    payout_bank_name = Column(String(100), nullable=True)  # Bank name for payouts
-    payout_recipient_code = Column(String(100), nullable=True)  # Paystack recipient code
-    
     # Relationships
-    user = relationship("User")
     products = relationship("Product", back_populates="seller")
     payments = relationship("Payment", back_populates="seller")
 
@@ -202,7 +162,7 @@ class Product(Base):
 
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    seller_id = Column(UUID, ForeignKey("store_profiles.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Numeric(15, 2), nullable=False)
@@ -215,7 +175,7 @@ class Product(Base):
     ), onupdate=func.current_timestamp())
 
     # Relationships
-    seller = relationship("SellerProfile", back_populates="products")
+    seller = relationship("StoreProfile", back_populates="products")
     category = relationship("Category", back_populates="products")
     # Order items should NOT be cascade deleted - they're part of financial records
     order_items = relationship("OrderItem", back_populates="product")
@@ -306,7 +266,7 @@ class Payment(Base):
     order_id = Column(UUID, ForeignKey("orders.id"), nullable=True)
     agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=True)
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=True)
+    seller_id = Column(UUID, ForeignKey("store_profiles.id"), nullable=True)
     amount = Column(Numeric(15, 2), nullable=False)
 
     status = Column(Enum("pending", "completed", "failed",
@@ -333,7 +293,7 @@ class Payment(Base):
     order = relationship("Order", back_populates="payments")
     agreement = relationship("GeneralAgreement", back_populates="payments")
     buyer = relationship("Profile", back_populates="payments")
-    seller = relationship("SellerProfile", back_populates="payments")
+    seller = relationship("StoreProfile", back_populates="payments")
 
 
 # ---------------- REVIEWS ----------------
@@ -535,7 +495,7 @@ class Car(Base):
     __tablename__ = "cars"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    seller_id = Column(UUID, ForeignKey("store_profiles.id"), nullable=False)
     brand = Column(String(100), nullable=False)
     model = Column(String(100), nullable=False)
     year = Column(Integer, nullable=False)
@@ -548,7 +508,7 @@ class Car(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
-    seller = relationship("SellerProfile")
+    seller = relationship("StoreProfile")
     units = relationship("CarUnit", back_populates="car_listing", cascade="all, delete-orphan")
     images = relationship("AssetImage", back_populates="car", cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", primaryjoin="and_(Car.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='automotive')", back_populates="car", cascade="all, delete-orphan")
@@ -581,7 +541,7 @@ class Property(Base):
     __tablename__ = "properties"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    seller_id = Column(UUID, ForeignKey("store_profiles.id"), nullable=False)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Numeric(15, 2), nullable=False)
@@ -597,7 +557,7 @@ class Property(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
-    seller = relationship("SellerProfile")
+    seller = relationship("StoreProfile")
     images = relationship("AssetImage", back_populates="property", cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", primaryjoin="and_(Property.id==foreign(GeneralInspection.asset_id), GeneralInspection.asset_type=='property')", back_populates="property", cascade="all, delete-orphan")
     agreements = relationship("GeneralAgreement", primaryjoin="and_(Property.id==foreign(GeneralAgreement.asset_id), GeneralAgreement.asset_type=='property')", back_populates="property", cascade="all, delete-orphan")
@@ -628,13 +588,13 @@ class GeneralInspection(Base):
     __tablename__ = "general_inspections"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    seller_id = Column(UUID, ForeignKey("store_profiles.id"), nullable=False)
     user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
-    
+
     asset_type = Column(Enum("automotive", "property", name="asset_category"), nullable=False)
-    asset_id = Column(UUID, nullable=False) 
+    asset_id = Column(UUID, nullable=False)
     unit_id = Column(UUID, nullable=True)
-    
+
     inspection_date = Column(TIMESTAMP, nullable=False)
     notes = Column(Text, nullable=True)
     agreed_price = Column(Numeric(15, 2), nullable=True)
@@ -647,7 +607,7 @@ class GeneralInspection(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
-    seller = relationship("SellerProfile")
+    seller = relationship("StoreProfile")
     user = relationship("User", back_populates="inspections")
     car = relationship("Car", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Car.id, GeneralInspection.asset_type=='automotive')", back_populates="inspections", overlaps="inspections")
     property = relationship("Property", primaryjoin="and_(foreign(GeneralInspection.asset_id)==Property.id, GeneralInspection.asset_type=='property')", back_populates="inspections", overlaps="inspections")
@@ -657,7 +617,7 @@ class GeneralAgreement(Base):
     __tablename__ = "general_agreements"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    seller_id = Column(UUID, ForeignKey("seller_profiles.id"), nullable=False)
+    seller_id = Column(UUID, ForeignKey("store_profiles.id"), nullable=False)
     user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     inspection_id = Column(UUID, ForeignKey("general_inspections.id"), nullable=True)
     
@@ -681,7 +641,7 @@ class GeneralAgreement(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     # Relationships
-    seller = relationship("SellerProfile")
+    seller = relationship("StoreProfile")
     user = relationship("User", back_populates="agreements")
     inspection = relationship("GeneralInspection")
     payments = relationship("Payment", back_populates="agreement")

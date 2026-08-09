@@ -9,7 +9,7 @@ from decimal import Decimal
 from db.session import get_db
 from core.auth import role_required
 from core.model import (
-    User, Profile, SellerProfile, Product, Order, OrderItem, Category,
+    User, Profile, StoreProfile, Product, Order, OrderItem, Category,
     Payment, GeneralInspection, GeneralAgreement,
     Property, PropertyUnit
 )
@@ -30,7 +30,6 @@ from core.asset_service import asset_service
 from core.logging_config import get_logger, log_error
 from core.auth_service import auth_service
 from core.notifications_service import create_notification
-from core.commission_service import commission_service
 from core.admin_service import admin_service
 from core.status_constants import (
     AGREEMENT_STATUS_ACTIVE,
@@ -144,10 +143,6 @@ async def get_admin_dashboard_stats(
 
         total_revenue = completed_payments_query.with_entities(func.sum(Payment.amount)).scalar() or 0
 
-        fee_rate = commission_service.get_platform_fee_rate(db)
-        platform_fee_amount = (Decimal(str(total_revenue)) * fee_rate) if total_revenue else Decimal("0.00")
-        net_revenue = Decimal(str(total_revenue)) - platform_fee_amount
-        
         # Today's stats
         today = datetime.utcnow().date()
         new_users_today = (
@@ -167,16 +162,8 @@ async def get_admin_dashboard_stats(
             .filter(func.date(Payment.created_at) == today, Payment.status == "completed")
             .scalar() or 0
         )
-        platform_fee_today = (Decimal(str(revenue_today)) * fee_rate) if revenue_today else Decimal("0.00")
-        net_revenue_today = Decimal(str(revenue_today)) - platform_fee_today
-        
+
         # Status counts
-        pending_seller_approvals = (
-            db.query(SellerProfile)
-            .filter(SellerProfile.kyc_status == "pending")
-            .count()
-        )
-        
         locked_users = (
             db.query(User)
             .filter(User.locked_until > datetime.utcnow())
@@ -232,8 +219,6 @@ async def get_admin_dashboard_stats(
                 {
                     "date": str(r.date),
                     "gross": float(r.gross or 0),
-                    "net": float((Decimal(str(r.gross or 0)) * (Decimal("1.00") - fee_rate))),
-                    "platform_fee": float((Decimal(str(r.gross or 0)) * fee_rate)),
                 }
                 for r in revenue_rows
             ]
@@ -256,31 +241,7 @@ async def get_admin_dashboard_stats(
             )
             agreements_series = [{"date": str(r.date), "count": int(r.count)} for r in agreement_rows]
 
-        # ---------------- Top lists ----------------
-        top_sellers: List[dict] = []
-        top_seller_rows = (
-            db.query(
-                SellerProfile.id.label("seller_id"),
-                SellerProfile.business_name.label("business_name"),
-                func.sum(Payment.amount).label("gross"),
-            )
-            .join(Payment, Payment.seller_id == SellerProfile.id)
-            .filter(Payment.status == "completed")
-            .group_by(SellerProfile.id, SellerProfile.business_name)
-            .order_by(desc(func.sum(Payment.amount)))
-            .limit(5)
-            .all()
-        )
-        top_sellers = [
-            {
-                "seller_id": str(r.seller_id),
-                "business_name": r.business_name,
-                "gross": float(r.gross or 0),
-                "net": float((Decimal(str(r.gross or 0)) * (Decimal("1.00") - fee_rate))),
-            }
-            for r in top_seller_rows
-        ]
-
+        # ---------------- Recent payments ----------------
         recent_payment_rows = (
             db.query(Payment)
             .options(joinedload(Payment.seller))
@@ -305,22 +266,15 @@ async def get_admin_dashboard_stats(
         ]
 
         # ---------------- Alerts ----------------
-        sellers_missing_payout = (
-            db.query(SellerProfile)
-            .filter(or_(SellerProfile.payout_account_number.is_(None), SellerProfile.payout_bank_code.is_(None)))
-            .count()
-        )
         overdue_agreements = (
             db.query(GeneralAgreement)
             .filter(GeneralAgreement.status == AGREEMENT_STATUS_ACTIVE, GeneralAgreement.next_due_date.isnot(None), GeneralAgreement.next_due_date < now)
             .count()
         )
         alerts = {
-            "sellers_missing_payout_account": sellers_missing_payout,
-            "pending_seller_kyc": pending_seller_approvals,
             "overdue_agreements": overdue_agreements,
         }
-        
+
         stats = AdminDashboardStats(
             total_users=total_users,
             total_assets=total_assets,
@@ -328,17 +282,12 @@ async def get_admin_dashboard_stats(
             total_orders=total_orders,
             total_payments=total_payments,  # Actual payment count
             total_revenue=Decimal(str(total_revenue)),
-            net_revenue=net_revenue,
-            platform_fee_amount=platform_fee_amount,
             range=range,
             range_start=range_start,
             range_end=range_end,
             new_users_today=new_users_today,
             new_orders_today=new_orders_today,
             revenue_today=Decimal(str(revenue_today)),
-            net_revenue_today=net_revenue_today,
-            platform_fee_today=platform_fee_today,
-            pending_seller_approvals=pending_seller_approvals,
             locked_users=locked_users,
             out_of_stock_products=out_of_stock_products,
             pending_orders=pending_orders,
@@ -347,20 +296,19 @@ async def get_admin_dashboard_stats(
             shipped_orders=shipped_orders,
             delivered_orders=delivered_orders,
             cancelled_orders=cancelled_orders,
-            
+
             # New asset stats
             total_inspections=total_inspections,
             total_agreements=total_agreements,
             pending_inspections=pending_inspections,
             pending_agreements=pending_agreements,
             active_agreements=active_agreements,
-            
+
             # Real Estate stats
             total_internal_properties=total_internal_properties,
             revenue_series=revenue_series,
             orders_series=orders_series,
             agreements_series=agreements_series,
-            top_sellers=top_sellers,
             recent_payments=recent_payments,
             alerts=alerts,
         )
@@ -437,13 +385,12 @@ async def get_admin_users(
         query = (
             db.query(User)
             .outerjoin(Profile)
-            .outerjoin(SellerProfile)
         )
-        
+
         # Apply filters
         if role:
             query = query.filter(User.role == role)
-        
+
         if email_verified is not None:
             query = query.filter(User.email_verified == email_verified)
         
@@ -460,7 +407,6 @@ async def get_admin_users(
                 or_(
                     User.email.ilike(f"%{search}%"),
                     Profile.name.ilike(f"%{search}%"),
-                    SellerProfile.business_name.ilike(f"%{search}%")
                 )
             )
         
@@ -536,7 +482,7 @@ async def get_admin_products(
         # Build query
         query = (
             db.query(Product)
-            .join(SellerProfile, Product.seller_id == SellerProfile.id)
+            .join(StoreProfile, Product.seller_id == StoreProfile.id)
             .join(Category, Product.category_id == Category.id)
             .options(
                 joinedload(Product.seller),
@@ -1426,13 +1372,13 @@ async def list_admin_properties(
             
         if search:
             search_pattern = f"%{search}%"
-            # We join SellerProfile to enable search by business_name
-            query = query.join(SellerProfile, Property.seller_id == SellerProfile.id).filter(
+            # We join StoreProfile to enable search by business_name
+            query = query.join(StoreProfile, Property.seller_id == StoreProfile.id).filter(
                 or_(
                     Property.title.ilike(search_pattern),
                     Property.location.ilike(search_pattern),
                     Property.description.ilike(search_pattern),
-                    SellerProfile.business_name.ilike(search_pattern)
+                    StoreProfile.business_name.ilike(search_pattern)
                 )
             )
             

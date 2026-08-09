@@ -8,7 +8,7 @@ from core.auth import role_required, get_current_user
 from db.session import get_db
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
-from core.model import Payment, Order, SellerProfile
+from core.model import Payment, Order, StoreProfile
 from schemas.payment import (
     PaymentInitializeRequest,
     PaymentInitializeResponse,
@@ -96,7 +96,7 @@ async def initialize_bank_transfer(
 @router.post("/verify", response_model=PaymentVerifyResponse)
 async def verify_payment(
     request: PaymentVerifyRequest,
-    user=Depends(role_required(["customer", "seller"])),
+    user=Depends(role_required(["customer"])),
     db: Session = Depends(get_db)
 ):
     """Unified payment verification hub"""
@@ -223,7 +223,7 @@ async def test_webhook(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=PaymentListResponse)
 async def list_payments(
-    user=Depends(role_required(["customer", "seller", "admin"])),
+    user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db),
     page: int = 1,
     limit: int = 20
@@ -231,28 +231,25 @@ async def list_payments(
     """List payments for the current user"""
     try:
         query = db.query(Payment)
-        
+
         if user["role"] == "customer":
             query = query.filter(Payment.buyer_id == user["id"])
-        elif user["role"] == "seller":
-            query = query.filter(Payment.seller_id == user["id"])
         # Admin can see all payments
-        
+
         total = query.count()
         payments = query.order_by(Payment.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
-        
-        # Populate seller info manually if not using relationship (or use relationship if defined)
-        # Note: Payment model has seller_id. We can use it to fetch seller info.
+
+        # Populate the store name manually (Payment model has seller_id, which
+        # now points at the single store_profiles row).
         data = []
         for p in payments:
             res = PaymentResponse.model_validate(p)
             if p.seller_id:
-                seller = db.query(SellerProfile).filter(SellerProfile.id == p.seller_id).first()
+                seller = db.query(StoreProfile).filter(StoreProfile.id == p.seller_id).first()
                 if seller:
                     res.seller_name = seller.business_name
-                    res.seller_type = seller.seller_type
             data.append(res)
-            
+
         return PaymentListResponse(
             success=True,
             message="Payments retrieved successfully",

@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from uuid import UUID
-from typing import List, Dict, Any
+from typing import List
 
 from db.session import get_db, SessionLocal
-from core.auth import get_current_user
+from core.auth import get_current_user, role_required
 from core.asset_service import asset_service
 from core.notifications_service import create_notification
+from core.system_settings_service import system_settings_service
+from core.store_service import get_store_id
 from schemas.assets import (
     AssetInspectionResponse,
     AssetInspectionSchedule,
@@ -15,8 +17,6 @@ from schemas.assets import (
     AssetPaymentResponse,
     AssetInspectionComplete,
     AssetAgreementBase,
-    AgreementPaymentInitialize,
-    AgreementPaymentVerify,
     AssetAgreementApprove,
 )
 
@@ -24,7 +24,7 @@ from schemas.assets import (
 router = APIRouter(prefix="", tags=["Assets"])
 
 def notify_agreement_update(target_id: str, agreement_type: str, action: str):
-    """Background task to create notifications with its own session"""
+    """Background task to notify a buyer with its own session"""
     db = SessionLocal()
     try:
         title = "New Purchase Agreement" if action == "created" else "Agreement Approved"
@@ -33,7 +33,7 @@ def notify_agreement_update(target_id: str, agreement_type: str, action: str):
             if action == "created" else
             f"Your purchase agreement has been approved! You can now proceed with the deposit."
         )
-        
+
         create_notification(db, {
             "user_id": target_id,
             "type": "agreement_update",
@@ -44,14 +44,35 @@ def notify_agreement_update(target_id: str, agreement_type: str, action: str):
     finally:
         db.close()
 
+
+def notify_admins_of_agreement_event(agreement_type: str, action: str):
+    """Background task to notify admins (there's no more per-listing seller user to notify)"""
+    db = SessionLocal()
+    try:
+        messages = {
+            "created": ("New Purchase Agreement", f"A new {agreement_type} agreement has been submitted and is pending review."),
+            "cancelled": ("Agreement Cancelled By Buyer", f"A buyer has cancelled their {agreement_type} agreement."),
+        }
+        title, message = messages.get(action, ("Agreement Update", f"An agreement update occurred for a {agreement_type} listing: {action}."))
+        system_settings_service.notify_admins(
+            db=db,
+            event_key="system_alert",
+            title=title,
+            message=message,
+            priority="medium",
+        )
+    finally:
+        db.close()
+
+
 @router.get("/inspections", response_model=List[AssetInspectionResponse])
 def list_my_inspections(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """List all inspections for the current user (Customer or Seller)"""
-    if current_user["role"] == "seller":
-        return asset_service.list_seller_inspections(db, UUID(current_user["id"]))
+    """List all inspections for the current user (Customer or Admin)"""
+    if current_user["role"] == "admin":
+        return asset_service.list_seller_inspections(db, get_store_id(db))
     else:
         return asset_service.list_user_inspections(db, UUID(current_user["id"]))
 
@@ -62,7 +83,8 @@ def get_inspection_details(
     current_user: dict = Depends(get_current_user)
 ):
     """Get details for a specific inspection"""
-    inspection = asset_service.get_inspection(db, UUID(current_user["id"]), id)
+    lookup_id = get_store_id(db) if current_user["role"] == "admin" else UUID(current_user["id"])
+    inspection = asset_service.get_inspection(db, lookup_id, id)
     if not inspection:
         raise HTTPException(status_code=404, detail="Inspection not found or unauthorized")
     return inspection
@@ -81,13 +103,10 @@ def review_asset_inspection(
     id: UUID,
     body: AssetInspectionReview,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    """Review an inspection request (Seller)"""
-    if current_user["role"] not in ["seller", "admin"]:
-        raise HTTPException(status_code=403, detail="Only sellers can review inspections")
-    
-    return asset_service.review_inspection(db, UUID(current_user["id"]), id, body)
+    """Review an inspection request (Admin)"""
+    return asset_service.review_inspection(db, get_store_id(db), id, body)
 
 @router.post("/inspections/{inspection_id}/complete", response_model=AssetInspectionResponse)
 async def complete_inspection(
@@ -99,11 +118,10 @@ async def complete_inspection(
 ):
     user_id = UUID(current_user["id"])
     inspection = asset_service.complete_inspection(db, user_id, inspection_id, data)
-    
-    # Notify the other party
-    target_id = str(inspection.seller_id) if current_user["role"] != "seller" else str(inspection.user_id)
-    background_tasks.add_task(notify_agreement_update, target_id, inspection.asset_type, "created")
-    
+
+    # Notify admins that an agreement is now pending review
+    background_tasks.add_task(notify_admins_of_agreement_event, inspection.asset_type, "created")
+
     return inspection
 
 @router.post("/agreements", response_model=AssetAgreementResponse)
@@ -114,13 +132,11 @@ async def create_agreement(
     current_user: dict = Depends(get_current_user)
 ):
     user_id = UUID(current_user["id"])
-    is_seller = current_user["role"] == "seller"
-    agreement = asset_service.create_agreement(db, user_id, data, is_seller=is_seller)
-    
-    # Notify the other party in background
-    target_id = str(agreement.seller_id) if not is_seller else str(agreement.user_id)
-    background_tasks.add_task(notify_agreement_update, target_id, data.asset_type, "created")
-    
+    agreement = asset_service.create_agreement(db, user_id, data, is_seller=False)
+
+    # Notify admins in background
+    background_tasks.add_task(notify_admins_of_agreement_event, data.asset_type, "created")
+
     return agreement
 
 @router.post("/agreements/{id}/approve", response_model=AssetAgreementResponse)
@@ -129,17 +145,14 @@ async def approve_agreement(
     body: AssetAgreementApprove,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    if current_user["role"] != "seller":
-        raise HTTPException(status_code=403, detail="Only sellers can approve agreements")
-    
-    seller_id = UUID(current_user["id"])
-    agreement = asset_service.approve_agreement(db, seller_id, id, body.unit_id)
-    
+    """Approve a pending agreement (Admin)"""
+    agreement = asset_service.approve_agreement(db, get_store_id(db), id, body.unit_id)
+
     # Notify the buyer in background
     background_tasks.add_task(notify_agreement_update, str(agreement.user_id), agreement.asset_type, "approved")
-    
+
     return agreement
 
 @router.post("/agreements/{id}/reject", response_model=AssetAgreementResponse)
@@ -147,17 +160,14 @@ async def reject_agreement(
     id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(role_required(["admin"]))
 ):
-    if current_user["role"] != "seller":
-        raise HTTPException(status_code=403, detail="Only sellers can reject agreements")
-    
-    seller_id = UUID(current_user["id"])
-    agreement = asset_service.reject_agreement(db, seller_id, id)
-    
+    """Reject a pending agreement (Admin)"""
+    agreement = asset_service.reject_agreement(db, get_store_id(db), id)
+
     # Notify the buyer in background
     background_tasks.add_task(notify_agreement_update, str(agreement.user_id), agreement.asset_type, "rejected")
-    
+
     return agreement
 
 @router.get("/agreements", response_model=List[AssetAgreementResponse])
@@ -166,8 +176,8 @@ def list_my_agreements(
     current_user: dict = Depends(get_current_user)
 ):
     """List all agreements for the current user"""
-    if current_user["role"] == "seller":
-        return asset_service.list_seller_agreements(db, UUID(current_user["id"]))
+    if current_user["role"] == "admin":
+        return asset_service.list_seller_agreements(db, get_store_id(db))
     else:
         return asset_service.list_user_agreements(db, UUID(current_user["id"]))
 
@@ -176,9 +186,9 @@ def get_asset_payments(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Get list of payments for the current user/seller"""
-    if current_user["role"] == "seller":
-        return asset_service.list_seller_payments(db, UUID(current_user["id"]))
+    """Get list of payments for the current user (or all store payments for admin)"""
+    if current_user["role"] == "admin":
+        return asset_service.list_seller_payments(db, get_store_id(db))
     else:
         return asset_service.list_user_payments(db, UUID(current_user["id"]))
 
@@ -189,7 +199,8 @@ def get_payment_details(
     current_user: dict = Depends(get_current_user)
 ):
     """Get details for a specific payment"""
-    payment = asset_service.get_payment(db, UUID(current_user["id"]), id)
+    lookup_id = get_store_id(db) if current_user["role"] == "admin" else UUID(current_user["id"])
+    payment = asset_service.get_payment(db, lookup_id, id)
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found or unauthorized")
     return payment
@@ -201,7 +212,8 @@ def get_agreement_details(
     current_user: dict = Depends(get_current_user)
 ):
     """Get details for a specific agreement"""
-    agreement = asset_service.get_agreement(db, UUID(current_user["id"]), id)
+    lookup_id = get_store_id(db) if current_user["role"] == "admin" else UUID(current_user["id"])
+    agreement = asset_service.get_agreement(db, lookup_id, id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
     return agreement
@@ -213,23 +225,21 @@ def delete_inspection(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Delete an inspection record (Customer or Seller)"""
-    return asset_service.delete_inspection(db, UUID(current_user["id"]), id)
+    """Delete an inspection record (Customer or Admin)"""
+    lookup_id = get_store_id(db) if current_user["role"] == "admin" else UUID(current_user["id"])
+    return asset_service.delete_inspection(db, lookup_id, id)
 
 @router.post("/agreements/{id}/cancel", response_model=AssetAgreementResponse)
 def cancel_agreement(
     id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(role_required(["customer"]))
 ):
     """Cancel an agreement before deposit (Customer only)"""
-    if current_user["role"] != "customer":
-        raise HTTPException(status_code=403, detail="Only customers can cancel their agreements")
-        
     agreement = asset_service.cancel_agreement(db, UUID(current_user["id"]), id)
-    
-    # Notify the seller in background
-    background_tasks.add_task(notify_agreement_update, str(agreement.seller_id), agreement.asset_type, "cancelled")
-    
+
+    # Notify admins in background
+    background_tasks.add_task(notify_admins_of_agreement_event, agreement.asset_type, "cancelled")
+
     return agreement

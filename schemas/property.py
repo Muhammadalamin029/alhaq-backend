@@ -5,15 +5,6 @@ from datetime import datetime
 from decimal import Decimal
 from schemas.media import AssetImageResponse, AssetImageCreate
 
-class SellerSummary(BaseModel):
-    id: UUID
-    business_name: str
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
 class PropertyUnitResponse(BaseModel):
     id: UUID
     property_id: UUID
@@ -41,7 +32,6 @@ class PropertyResponse(PropertyBase):
     status: str
     images: List[AssetImageResponse] = []
     units: List[PropertyUnitResponse] = []
-    seller: Optional[SellerSummary] = None
     created_at: datetime
     updated_at: datetime
 

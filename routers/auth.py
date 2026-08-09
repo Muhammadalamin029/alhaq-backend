@@ -83,13 +83,9 @@ def login(request: Request, form_data: LoginRequest, db: Session = Depends(get_d
         try:
             from core.tasks import send_login_email
             from datetime import datetime, timezone
-            from core.model import Profile, SellerProfile
-            if user.role == "seller":
-                sp = db.query(SellerProfile).filter(SellerProfile.id == user.id).first()
-                display_name = sp.business_name if sp else user.email
-            else:
-                profile = db.query(Profile).filter(Profile.id == user.id).first()
-                display_name = profile.name if profile else user.email
+            from core.model import Profile
+            profile = db.query(Profile).filter(Profile.id == user.id).first()
+            display_name = profile.name if profile else user.email
             login_time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
             # Extract real IP (respects X-Forwarded-For from reverse proxies)
             forwarded_for = request.headers.get("x-forwarded-for")

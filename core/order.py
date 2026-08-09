@@ -1,16 +1,14 @@
-from core.model import Order, OrderItem, Product
+from core.model import Order, OrderItem
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import UUID, func
+from sqlalchemy import UUID
 from typing import List, Optional, Tuple, Dict
 from schemas.order import OrderItemCreate
 from core.inventory import inventory_service
-from core.commission_service import commission_service
 from core.tasks import send_order_shipped_email, send_order_delivered_email
 from fastapi import HTTPException, status
 from decimal import Decimal
 import logging
 from contextlib import contextmanager
-from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 
@@ -39,89 +37,36 @@ class OrderService:
             joinedload(Order.delivery_addr),
             joinedload(Order.payments),
         )
-    
-    def _with_relationships_and_sellers(self, query):
-        """Helper to eager-load related entities including seller profiles for customer orders"""
-        return query.options(
-            joinedload(Order.buyer),
-            joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.seller),
-            joinedload(Order.delivery_addr),
-            joinedload(Order.payments),
-        )
-    
-    def _group_items_by_seller(self, order_items):
-        """Group order items by seller and calculate totals"""
-        from collections import defaultdict
-        from schemas.products import SellerResponse
-        from schemas.order import OrderItemResponse
-        
-        seller_groups = defaultdict(lambda: {
-            'seller': None,
-            'items': [],
-            'total_amount': 0,
-            'item_count': 0,
-            'status': 'pending'  # Default status for seller group
-        })
-        
-        for item in order_items:
-            if item.product and item.product.seller:
-                seller_id = item.product.seller.id
-                seller_groups[seller_id]['seller'] = item.product.seller
-                seller_groups[seller_id]['items'].append(item)
-                seller_groups[seller_id]['total_amount'] += item.quantity * item.price
-                seller_groups[seller_id]['item_count'] += item.quantity
-                # TODO: Implement seller-specific status tracking
-                # seller_groups[seller_id]['status'] = self._get_seller_status(order_id, seller_id)
-        
-        # Convert to properly serialized dictionaries
-        result = []
-        for group_data in seller_groups.values():
-            # Serialize seller using SellerResponse schema
-            seller_dict = None
-            if group_data['seller']:
-                seller_dict = SellerResponse.model_validate(group_data['seller']).model_dump()
-            
-            # Serialize items using OrderItemResponse schema
-            items_dict = [OrderItemResponse.model_validate(item).model_dump() for item in group_data['items']]
-            
-            result.append({
-                'seller': seller_dict,
-                'items': items_dict,
-                'total_amount': group_data['total_amount'],
-                'item_count': group_data['item_count']
-            })
-        
-        return result
-    
-    def calculate_overall_order_status(self, seller_statuses):
-        """Calculate overall order status based on seller statuses"""
-        if not seller_statuses:
+
+    def calculate_overall_order_status(self, item_statuses):
+        """Reduce a list of item statuses to a single overall order status."""
+        if not item_statuses:
             return 'pending'
-            
+
         status_counts = {}
-        for status in seller_statuses:
-            status_counts[status] = status_counts.get(status, 0) + 1
-        
-        total_sellers = len(seller_statuses)
-        
+        for s in item_statuses:
+            status_counts[s] = status_counts.get(s, 0) + 1
+
+        total_items = len(item_statuses)
+
         # All delivered
-        if status_counts.get('delivered', 0) == total_sellers:
+        if status_counts.get('delivered', 0) == total_items:
             return 'delivered'
-        
+
         # All cancelled
-        if status_counts.get('cancelled', 0) == total_sellers:
+        if status_counts.get('cancelled', 0) == total_items:
             return 'cancelled'
-        
+
         # Partial cancellation
         if status_counts.get('cancelled', 0) > 0:
             return 'partially_cancelled'
-        
+
         # Partial delivery
         if status_counts.get('delivered', 0) > 0:
             return 'partially_delivered'
-        
+
         # All shipped
-        if status_counts.get('shipped', 0) == total_sellers:
+        if status_counts.get('shipped', 0) == total_items:
             return 'shipped'
 
         # Partial shipping
@@ -129,7 +74,7 @@ class OrderService:
             return 'partially_shipped'
 
         # All paid
-        if status_counts.get('paid', 0) == total_sellers:
+        if status_counts.get('paid', 0) == total_items:
             return 'paid'
 
         # Any processing
@@ -175,62 +120,14 @@ class OrderService:
         orders = query.offset(offset).limit(limit).all()
         return orders, count
 
-    def get_order_by_id(self, db: Session, order_id: UUID, include_seller_groups: bool = False):
-        if include_seller_groups:
-            order = (
-                self._with_relationships_and_sellers(db.query(Order))
-                .filter(Order.id == order_id)
-                .first()
-            )
-            if order:
-                order.seller_groups = self._group_items_by_seller(order.order_items)
-                # Format payments for customer orders (create a new attribute to avoid SQLAlchemy conflicts)
-                order.formatted_payments = [
-                    {
-                        "id": str(payment.id),
-                        "amount": float(payment.amount),
-                        "status": payment.status,
-                        "payment_method": payment.payment_method,
-                        "transaction_id": payment.transaction_id,
-                        "transaction_metadata": payment.transaction_metadata,
-                        "created_at": payment.created_at.isoformat()
-                    } for payment in order.payments
-                ] if order.payments else []
-            return order
-        else:
-            order = (
-                self._with_relationships(db.query(Order))
-                .filter(Order.id == order_id)
-                .first()
-            )
-            if order:
-                # Format payments for admin/seller orders (create a new attribute to avoid SQLAlchemy conflicts)
-                order.formatted_payments = [
-                    {
-                        "id": str(payment.id),
-                        "amount": float(payment.amount),
-                        "status": payment.status,
-                        "payment_method": payment.payment_method,
-                        "transaction_id": payment.transaction_id,
-                        "transaction_metadata": payment.transaction_metadata,
-                        "created_at": payment.created_at.isoformat()
-                    } for payment in order.payments
-                ] if order.payments else []
-            return order
-
-    def get_orders_by_buyer(self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
-        query = self._with_relationships_and_sellers(
-            db.query(Order)).filter(Order.buyer_id == buyer_id)
-        if status:
-            query = query.filter(Order.status == status)
-        count = query.count()
-        offset = (page - 1) * limit
-        orders = query.offset(offset).limit(limit).all()
-        
-        # Group order items by seller for each order and format payments
-        for order in orders:
-            order.seller_groups = self._group_items_by_seller(order.order_items)
-            # Format payments for customer orders (create a new attribute to avoid SQLAlchemy conflicts)
+    def get_order_by_id(self, db: Session, order_id: UUID):
+        order = (
+            self._with_relationships(db.query(Order))
+            .filter(Order.id == order_id)
+            .first()
+        )
+        if order:
+            # Format payments (create a new attribute to avoid SQLAlchemy conflicts)
             order.formatted_payments = [
                 {
                     "id": str(payment.id),
@@ -242,192 +139,32 @@ class OrderService:
                     "created_at": payment.created_at.isoformat()
                 } for payment in order.payments
             ] if order.payments else []
-        
-        return orders, count
-
-    def get_orders_by_seller(self, db: Session, seller_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
-        # Get ALL orders for this seller first
-        query = (
-            db.query(Order)
-            .join(Order.order_items)
-            .join(OrderItem.product)
-            .filter(Product.seller_id == seller_id)
-            .options(
-                joinedload(Order.buyer),
-                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.images),
-                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.seller),
-                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.category),
-                joinedload(Order.delivery_addr),
-                joinedload(Order.payments),
-            )
-        )
-
-        # Get all orders first
-        all_orders = query.distinct(Order.id).all()
-
-        # Filter items and calculate seller's portion for each order
-        filtered_orders = []
-        for order in all_orders:
-            # Create a copy of the order to avoid modifying the original
-            filtered_order = deepcopy(order)
-            
-            # Keep only items from this seller in the copy
-            seller_items = [
-                item for item in filtered_order.order_items 
-                if item.product and str(item.product.seller_id) == str(seller_id)
-            ]
-            filtered_order.order_items = seller_items
-            
-            # Calculate seller's portion of the order total
-            filtered_order.total_amount = sum(item.quantity * item.price for item in seller_items)
-            
-            # Calculate seller item status based on actual OrderItem statuses
-            seller_items_for_status = [
-                item for item in order.order_items 
-                if item.product and str(item.product.seller_id) == str(seller_id)
-            ]
-            
-            if not seller_items_for_status:
-                # If no seller items found, check if order is cancelled
-                if order.status == "cancelled":
-                    filtered_order.seller_item_status = "cancelled"
-                else:
-                    filtered_order.seller_item_status = "pending"
-            else:
-                # Check if order is cancelled first - this takes priority
-                if order.status == "cancelled":
-                    filtered_order.seller_item_status = "cancelled"
-                else:
-                    # Use seller item statuses for non-cancelled orders
-                    item_statuses = [item.status for item in seller_items_for_status]
-                    
-                    # If all items are cancelled, seller status is cancelled
-                    if all(status == "cancelled" for status in item_statuses):
-                        filtered_order.seller_item_status = "cancelled"
-                    # If all items are delivered, seller status is delivered
-                    elif all(status == "delivered" for status in item_statuses):
-                        filtered_order.seller_item_status = "delivered"
-                    # If all items are shipped, seller status is shipped
-                    elif all(status == "shipped" for status in item_statuses):
-                        filtered_order.seller_item_status = "shipped"
-                    # If all items are processing, seller status is processing
-                    elif all(status == "processing" for status in item_statuses):
-                        filtered_order.seller_item_status = "processing"
-                    # If all items are paid, seller status is paid
-                    elif all(status == "paid" for status in item_statuses):
-                        filtered_order.seller_item_status = "paid"
-                    # If all items are pending, seller status is pending
-                    elif all(status == "pending" for status in item_statuses):
-                        filtered_order.seller_item_status = "pending"
-                    # Mixed statuses - determine the most advanced status
-                    elif "delivered" in item_statuses:
-                        filtered_order.seller_item_status = "delivered"
-                    elif "shipped" in item_statuses:
-                        filtered_order.seller_item_status = "shipped"
-                    elif "paid" in item_statuses:
-                        filtered_order.seller_item_status = "paid"
-                    elif "processing" in item_statuses:
-                        filtered_order.seller_item_status = "processing"
-                    else:
-                        filtered_order.seller_item_status = "pending"
-            
-            # Apply status filter based on seller_item_status
-            if status and filtered_order.seller_item_status != status:
-                continue
-                
-            filtered_orders.append(filtered_order)
-        
-        # Apply pagination AFTER filtering
-        total_count = len(filtered_orders)
-        offset = (page - 1) * limit
-        paginated_orders = filtered_orders[offset:offset + limit]
-            
-        return paginated_orders, total_count
-
-    def get_seller_order_by_id(self, db: Session, order_id: UUID, seller_id: UUID):
-        """Get a specific order with only the seller's items"""
-        order = (
-            db.query(Order)
-            .join(Order.order_items)
-            .join(OrderItem.product)
-            .filter(Order.id == order_id, Product.seller_id == seller_id)
-            .options(
-                joinedload(Order.buyer),
-                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.images),
-                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.seller),
-                joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.category),
-                joinedload(Order.delivery_addr),
-                joinedload(Order.payments),
-            )
-            .first()
-        )
-        
-        if order:
-            # Create a copy of the order to avoid modifying the original
-            filtered_order = deepcopy(order)
-            
-            # Keep only items from this seller in the copy
-            seller_items = [
-                item for item in filtered_order.order_items 
-                if item.product and str(item.product.seller_id) == str(seller_id)
-            ]
-            filtered_order.order_items = seller_items
-            
-            # Calculate seller's portion of the order total
-            filtered_order.total_amount = sum(item.quantity * item.price for item in seller_items)
-            
-            # Determine seller's item status based on actual OrderItem statuses
-            if seller_items:
-                # Calculate seller item status based on actual OrderItem statuses
-                seller_items = [
-                    item for item in order.order_items
-                    if item.product and str(item.product.seller_id) == str(seller_id)
-                ]
-                
-                if not seller_items:
-                    # If no seller items found, check if order is cancelled
-                    if order.status == "cancelled":
-                        filtered_order.seller_item_status = "cancelled"
-                    else:
-                        filtered_order.seller_item_status = "pending"
-                else:
-                    # Check if order is cancelled first - this takes priority
-                    if order.status == "cancelled":
-                        filtered_order.seller_item_status = "cancelled"
-                    else:
-                        # Use seller item statuses for non-cancelled orders
-                        item_statuses = [item.status for item in seller_items]
-                        
-                        # If all items are cancelled, seller status is cancelled
-                        if all(status == "cancelled" for status in item_statuses):
-                            filtered_order.seller_item_status = "cancelled"
-                        # If all items are delivered, seller status is delivered
-                        elif all(status == "delivered" for status in item_statuses):
-                            filtered_order.seller_item_status = "delivered"
-                        # If all items are shipped, seller status is shipped
-                        elif all(status == "shipped" for status in item_statuses):
-                            filtered_order.seller_item_status = "shipped"
-                        # If all items are processing, seller status is processing
-                        elif all(status == "processing" for status in item_statuses):
-                            filtered_order.seller_item_status = "processing"
-                        # If all items are pending, seller status is pending
-                        elif all(status == "pending" for status in item_statuses):
-                            filtered_order.seller_item_status = "pending"
-                        # Mixed statuses - determine the most advanced status
-                        elif "delivered" in item_statuses:
-                            filtered_order.seller_item_status = "delivered"
-                        elif "shipped" in item_statuses:
-                            filtered_order.seller_item_status = "shipped"
-                        elif "processing" in item_statuses:
-                            filtered_order.seller_item_status = "processing"
-                        else:
-                            filtered_order.seller_item_status = "pending"
-            else:
-                filtered_order.seller_item_status = "pending"
-            
-            return filtered_order
-            
         return order
+
+    def get_orders_by_buyer(self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
+        query = self._with_relationships(
+            db.query(Order)).filter(Order.buyer_id == buyer_id)
+        if status:
+            query = query.filter(Order.status == status)
+        count = query.count()
+        offset = (page - 1) * limit
+        orders = query.offset(offset).limit(limit).all()
+
+        # Format payments for each order
+        for order in orders:
+            order.formatted_payments = [
+                {
+                    "id": str(payment.id),
+                    "amount": float(payment.amount),
+                    "status": payment.status,
+                    "payment_method": payment.payment_method,
+                    "transaction_id": payment.transaction_id,
+                    "transaction_metadata": payment.transaction_metadata,
+                    "created_at": payment.created_at.isoformat()
+                } for payment in order.payments
+            ] if order.payments else []
+
+        return orders, count
 
     def get_orders_by_status(self, db: Session, user_id: str, status: str):
         """Get order by status for a specific user"""
@@ -703,7 +440,12 @@ class OrderService:
     # ---------------- ORDER STATUS MANAGEMENT ----------------
 
     def get_valid_status_transitions(self, current_status: str, user_role: str = None) -> List[str]:
-        """Get valid status transitions from current status"""
+        """Get valid status transitions from current status.
+
+        Admin can change any status (including processing -> paid); this is
+        also the base ruleset customers are further restricted against in
+        update_order_status.
+        """
         transitions = {
             "pending": ["processing", "cancelled"],
             "processing": ["paid", "cancelled"],
@@ -712,25 +454,6 @@ class OrderService:
             "delivered": [],  # Final state
             "cancelled": []  # Final state
         }
-        
-        if user_role == "seller":
-            seller_transitions = {
-                "pending": ["cancelled"],
-                "processing": ["paid", "cancelled"],
-                "paid": ["shipped", "cancelled"],
-                "shipped": ["delivered"],
-                "delivered": [],
-                "cancelled": [],
-                # Partial order states — seller can still advance or cancel their own items
-                "partially_shipped": ["shipped", "delivered", "cancelled"],
-                "partially_delivered": ["delivered"],
-                "partially_cancelled": ["shipped", "cancelled"],
-            }
-            return seller_transitions.get(current_status, [])
-        elif user_role == "admin":
-            # Admin can change any status, including processing to paid
-            return transitions.get(current_status, [])
-        
         return transitions.get(current_status, [])
 
     def validate_status_transition(self, current_status: str, new_status: str, user_role: str = None) -> bool:
@@ -739,234 +462,18 @@ class OrderService:
         return new_status in valid_transitions
 
     def calculate_overall_order_status_from_items(self, order_items):
-        """Calculate overall order status based on individual item statuses"""
+        """Calculate overall order status directly from item statuses.
+
+        Single-vendor model: there's exactly one implicit seller/store, so
+        the old two-level reduction (group items by seller, reduce each
+        seller's items to a status, then combine across sellers) collapses
+        into a single reduction over all item statuses.
+        """
         if not order_items:
             return 'pending'
-        
-        # Group items by seller and get their statuses
-        seller_statuses = {}
-        for item in order_items:
-            if item.product and item.product.seller_id:
-                seller_id = item.product.seller_id
-                if seller_id not in seller_statuses:
-                    seller_statuses[seller_id] = []
-                seller_statuses[seller_id].append(item.status)
-        
-        # Determine each seller's overall status
-        seller_overall_statuses = []
-        for seller_id, item_statuses in seller_statuses.items():
-            if all(status == 'delivered' for status in item_statuses):
-                seller_overall_statuses.append('delivered')
-            elif all(status == 'cancelled' for status in item_statuses):
-                seller_overall_statuses.append('cancelled')
-            elif any(status == 'shipped' for status in item_statuses):
-                seller_overall_statuses.append('shipped')
-            elif any(status == 'paid' for status in item_statuses):
-                seller_overall_statuses.append('paid')
-            elif any(status == 'processing' for status in item_statuses):
-                seller_overall_statuses.append('processing')
-            else:
-                seller_overall_statuses.append('pending')
-        
-        # Calculate overall order status from seller statuses
-        return self.calculate_overall_order_status(seller_overall_statuses)
+        return self.calculate_overall_order_status([item.status for item in order_items])
 
-    def update_seller_items_status(
-        self,
-        db: Session,
-        order_id: UUID,
-        seller_id: UUID,
-        new_status: str,
-        notes: str = None
-    ) -> Dict:
-        """Update status for all items from a specific seller in an order"""
-        try:
-            with self.transaction_context(db):
-                # Get order with relationships - use fresh query to ensure we have complete data
-                order = (
-                    db.query(Order)
-                    .options(
-                        joinedload(Order.buyer),
-                        joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.seller),
-                        joinedload(Order.order_items).joinedload(OrderItem.product).joinedload(Product.category),
-                        joinedload(Order.delivery_addr),
-                        joinedload(Order.payments),
-                    )
-                    .filter(Order.id == order_id)
-                    .first()
-                )
-                if not order:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Order not found"
-                    )
-
-                # Get seller's items in this order
-                seller_items = [
-                    item for item in order.order_items 
-                    if item.product and str(item.product.seller_id) == str(seller_id)
-                ]
-                
-                if not seller_items:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="You can only update orders containing your products"
-                    )
-
-                # Validate that the transition is allowed from every item's current status
-                for item in seller_items:
-                    if not self.validate_status_transition(item.status, new_status, "seller"):
-                        valid_transitions = self.get_valid_status_transitions(item.status, "seller")
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Cannot move item {item.id} from '{item.status}' to '{new_status}'. "
-                            f"Valid transitions: {valid_transitions}"
-                        )
-
-                # Representative status for balance update (most advanced among seller's items)
-                status_rank = self._STATUS_RANK
-                current_item_status = max(
-                    (item.status for item in seller_items),
-                    key=lambda s: status_rank.get(s, -1)
-                )
-
-                # Update all seller's items to new status
-                for item in seller_items:
-                    item.status = new_status
-                    item.updated_at = func.current_timestamp()
-
-                # Calculate new overall order status using ALL items (not just seller's items)
-                # This ensures proper partial status calculation (partially_shipped, partially_delivered, etc.)
-                new_order_status = self.calculate_overall_order_status_from_items(order.order_items)
-                old_order_status = order.status
-                order.status = new_order_status
-                order.updated_at = func.current_timestamp()
-
-                # Update seller balance for this status change
-                commission_service.update_seller_balance(
-                    db=db,
-                    seller_id=str(seller_id),
-                    order_id=str(order_id),
-                    order_status=new_status,
-                    old_status=current_item_status
-                )
-
-                # Prepare notification data for background tasks
-                notification_data = {
-                    "order_id": str(order.id),
-                    "seller_id": str(seller_id),
-                    "old_status": current_item_status,
-                    "new_status": new_status,
-                    "updated_by": str(seller_id),
-                    "notes": notes,
-                    "is_seller_update": True
-                }
-                
-                # Map status to notification type
-                status_to_notification = {
-                    "processing": "order_processing",
-                    "paid": "payment_successful",
-                    "shipped": "order_shipped", 
-                    "delivered": "order_delivered",
-                    "cancelled": "order_cancelled"
-                }
-                
-                # Send notifications as Celery tasks to prevent transaction rollbacks
-                if new_status in status_to_notification:
-                    # Customer notification
-                    customer_messages = {
-                        "processing": f"Your order #{str(order.id)[:8]} items are being prepared by the seller.",
-                        "paid": f"Your order #{str(order.id)[:8]} items payment has been confirmed by the seller.",
-                        "shipped": f"Your order #{str(order.id)[:8]} items have been shipped by the seller and are on their way.",
-                        "delivered": f"🎉 Your order #{str(order.id)[:8]} items have been delivered by the seller!",
-                        "cancelled": f"Some items in your order #{str(order.id)[:8]} have been cancelled by the seller."
-                    }
-                    
-                    # Queue customer notification
-                    customer_task_id = send_order_notification(
-                        user_id=str(order.buyer_id),
-                        order_id=str(order.id),
-                        status=new_status,
-                        message=customer_messages.get(new_status, f"Your order #{str(order.id)[:8]} items status has been updated to {new_status}."),
-                        is_seller=False,
-                        order_data=notification_data
-                    )
-                    
-                    # Seller self-notification
-                    seller_total = sum(item.quantity * item.price for item in seller_items)
-                    seller_self_messages = {
-                        "processing": f"You've updated your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}) to processing status.",
-                        "paid": f"You've confirmed payment for your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}).",
-                        "shipped": f"You've shipped your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}) to the customer.",
-                        "delivered": f"🎉 You've marked your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f}) as delivered!",
-                        "cancelled": f"You've cancelled your items in order #{str(order.id)[:8]} (₦{seller_total:,.2f})."
-                    }
-                    
-                    # Queue seller notification
-                    seller_task_id = send_order_notification(
-                        user_id=str(seller_id),
-                        order_id=str(order.id),
-                        status=new_status,
-                        message=seller_self_messages.get(new_status, f"Your items in order #{str(order.id)[:8]} status updated to {new_status}."),
-                        is_seller=True,
-                        order_data=notification_data
-                    )
-                    
-                    logger.info(f"Queued Celery notification tasks for seller item status change in order {order_id}: customer={customer_task_id}, seller={seller_task_id}")
-
-                    if new_status in ("shipped", "delivered"):
-                        try:
-                            buyer_profile = order.buyer
-                            buyer_user = buyer_profile.user if buyer_profile else None
-                            if buyer_user:
-                                items_summary = ", ".join(
-                                    f"{item.product.name} x{item.quantity}"
-                                    for item in seller_items
-                                    if item.product
-                                )
-                                order_total = f"₦{sum(item.quantity * item.price for item in seller_items):,.2f}"
-                                if new_status == "shipped":
-                                    send_order_shipped_email.delay(
-                                        buyer_user.email,
-                                        buyer_profile.name or buyer_user.email,
-                                        str(order.id),
-                                        items_summary,
-                                        order_total,
-                                    )
-                                else:
-                                    send_order_delivered_email.delay(
-                                        buyer_user.email,
-                                        buyer_profile.name or buyer_user.email,
-                                        str(order.id),
-                                        items_summary,
-                                        order_total,
-                                    )
-                        except Exception as e:
-                            logger.error(f"Failed to queue order {new_status} email: {e}")
-                else:
-                    logger.warning(f"No notification type mapping for status {new_status} in order {order_id}")
-
-                # Note: commit is handled by transaction_context
-
-                return {
-                    "order_id": str(order.id),
-                    "seller_items_updated": len(seller_items),
-                    "seller_items_status": new_status,
-                    "previous_order_status": old_order_status,
-                    "new_order_status": new_order_status,
-                    "notes": notes
-                }
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to update seller items status: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update seller items status"
-            )
-
-    # Linear progression used to prevent admin from regressing items a seller has already advanced
+    # Linear progression used to prevent admin from regressing items that have already advanced
     _STATUS_RANK: Dict[str, int] = {
         "pending": 0,
         "processing": 1,
@@ -989,8 +496,8 @@ class OrderService:
         """Update status for all items in an order to match the order status.
 
         Items that are already at a more-advanced status are skipped so that
-        seller progress (e.g., already shipped) is never overwritten by a
-        later admin-level status push.
+        progress already recorded (e.g., already shipped) is never overwritten
+        by a later status push.
         """
         try:
             order_items = db.query(OrderItem).filter(OrderItem.order_id == order_id).all()
@@ -1044,9 +551,9 @@ class OrderService:
         """Update order status with proper validation and workflow"""
         try:
             with self.transaction_context(db):
-                # Get order with relationships including seller info (needed for authorization)
+                # Get order with relationships
                 order = (
-                    self._with_relationships_and_sellers(db.query(Order))
+                    self._with_relationships(db.query(Order))
                     .filter(Order.id == order_id)
                     .first()
                 )
@@ -1069,43 +576,7 @@ class OrderService:
                     )
 
                 # Authorization check
-                if user_role == "seller":
-                    # Check if seller has items in this order
-                    seller_has_items = any(
-                        str(item.product.seller_id) == str(user_id)
-                        for item in order.order_items
-                        if item.product and item.product.seller_id
-                    )
-                    
-                    if not seller_has_items:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="You can only update orders containing your products"
-                        )
-
-                    # Check if order_items table has status column (for backward compatibility)
-                    try:
-                        # Try to use the new seller-specific method if status column exists
-                        if hasattr(order.order_items[0], 'status'):
-                            return self.update_seller_items_status(
-                                db=db,
-                                order_id=order_id,
-                                seller_id=UUID(user_id),
-                                new_status=new_status,
-                                notes=notes
-                            )
-                    except (AttributeError, IndexError):
-                        pass
-                    
-                    # Fallback: Update entire order status (temporary until DB is updated)
-                    # Sellers can mark orders as paid, shipped, or delivered
-                    if new_status not in ["paid", "shipped", "delivered"]:
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Sellers can only mark orders as paid, shipped, or delivered. Processing status is managed by the payment system."
-                        )
-
-                elif user_role == "customer":
+                if user_role == "customer":
                     # Customers can only cancel pending or processing orders
                     if new_status != "cancelled" or current_status not in ["pending", "processing"]:
                         raise HTTPException(
@@ -1147,13 +618,6 @@ class OrderService:
                 # This ensures consistency between order and item statuses
                 self.update_all_order_items_status(db, order_id, new_status)
 
-                # Update seller balances for this order
-                self.update_seller_balances_for_order(db, order_id, new_status, old_status)
-
-                # Note: Notifications are now handled by Celery tasks in update_seller_items_status
-                # This prevents duplicate notifications
-                logger.info(f"Order {order_id} status updated to {new_status} - notifications handled by Celery")
-                
                 logger.info(
                     f"Order {order_id} status updated from {old_status} to {new_status} by user {user_id}")
 
@@ -1165,14 +629,14 @@ class OrderService:
                     "updated_at": order.updated_at.isoformat() if order.updated_at else None,
                     "notes": notes
                 }
-                
-                # Send notifications to sellers in a separate transaction (non-blocking)
+
+                # Send buyer notifications in a separate step (non-blocking)
                 try:
-                    self._send_seller_notifications_async(order_id, order, old_status, new_status, user_id, notes)
+                    self._send_order_status_notification(order_id, order, old_status, new_status, user_id, notes)
                 except Exception as e:
-                    logger.error(f"Failed to send seller notifications for order {order_id}: {e}")
+                    logger.error(f"Failed to send notifications for order {order_id}: {e}")
                     # Don't fail the main operation if notifications fail
-                
+
                 return result
 
         except HTTPException:
@@ -1184,8 +648,8 @@ class OrderService:
                 detail="Failed to update order status"
             )
 
-    def _send_seller_notifications_async(self, order_id: UUID, order: Order, old_status: str, new_status: str, user_id: str, notes: str):
-        """Send buyer + seller notifications when an admin changes order status."""
+    def _send_order_status_notification(self, order_id: UUID, order: Order, old_status: str, new_status: str, user_id: str, notes: str):
+        """Notify the buyer when their order status changes."""
         notification_data = {
             "order_id": str(order_id),
             "old_status": old_status,
@@ -1202,7 +666,6 @@ class OrderService:
             "cancelled": f"Your order #{str(order_id)[:8]} has been cancelled.",
         }
 
-        # Notify buyer
         try:
             send_order_notification(
                 user_id=str(order.buyer_id),
@@ -1214,32 +677,6 @@ class OrderService:
             )
         except Exception as e:
             logger.error(f"Failed to send buyer notification for order {order_id}: {e}")
-
-        # Notify each affected seller
-        seller_ids = {
-            str(item.product.seller_id)
-            for item in order.order_items
-            if item.product and item.product.seller_id
-        }
-        seller_messages = {
-            "processing": f"Order #{str(order_id)[:8]} has been moved to processing by admin.",
-            "paid": f"Payment confirmed for order #{str(order_id)[:8]} by admin.",
-            "shipped": f"Order #{str(order_id)[:8]} has been marked as shipped by admin.",
-            "delivered": f"Order #{str(order_id)[:8]} has been marked as delivered by admin.",
-            "cancelled": f"Order #{str(order_id)[:8]} has been cancelled by admin.",
-        }
-        for sid in seller_ids:
-            try:
-                send_order_notification(
-                    user_id=sid,
-                    order_id=str(order_id),
-                    status=new_status,
-                    message=seller_messages.get(new_status, f"Order #{str(order_id)[:8]} status changed to {new_status} by admin."),
-                    is_seller=True,
-                    order_data=notification_data,
-                )
-            except Exception as e:
-                logger.error(f"Failed to send seller {sid} notification for order {order_id}: {e}")
 
         # Queue shipped/delivered emails to buyer
         if new_status in ("shipped", "delivered"):
@@ -1272,7 +709,7 @@ class OrderService:
             except Exception as e:
                 logger.error(f"Failed to queue order {new_status} email for order {order_id}: {e}")
 
-        logger.info(f"Admin notifications queued for order {order_id}: {old_status} → {new_status}")
+        logger.info(f"Order status notifications sent for order {order_id}: {old_status} -> {new_status}")
 
     def bulk_update_order_status(
         self,
@@ -1325,46 +762,6 @@ class OrderService:
             "updated_at": order.updated_at.isoformat() if order.updated_at else None,
             "valid_transitions": self.get_valid_status_transitions(order.status)
         }
-    
-    def update_seller_balances_for_order(self, db: Session, order_id: UUID, new_status: str, old_status: str = None):
-        """
-        Update seller balances when order status changes
-        
-        Args:
-            db: Database session
-            order_id: Order ID
-            new_status: New order status
-            old_status: Previous order status
-        """
-        try:
-            # Get all sellers involved in this order
-            order_items = (
-                db.query(OrderItem)
-                .join(Product)
-                .filter(OrderItem.order_id == order_id)
-                .all()
-            )
-            
-            # Group by seller
-            sellers_involved = set()
-            for item in order_items:
-                if item.product and item.product.seller_id:
-                    sellers_involved.add(str(item.product.seller_id))
-            
-            # Update balance for each seller
-            for seller_id in sellers_involved:
-                commission_service.update_seller_balance(
-                    db=db,
-                    seller_id=seller_id,
-                    order_id=str(order_id),
-                    order_status=new_status,
-                    old_status=old_status
-                )
-                
-            logger.info(f"Updated seller balances for order {order_id} from {old_status} to {new_status}")
-            
-        except Exception as e:
-            logger.error(f"Failed to update seller balances for order {order_id}: {e}")
 
 
 order_service = OrderService()

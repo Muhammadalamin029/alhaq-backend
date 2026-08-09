@@ -4,6 +4,7 @@ from core.products import product_service
 from core.model import Product, AssetImage
 from db.session import get_db
 from core.auth import role_required
+from core.store_service import get_store_id
 from schemas.products import ProductCreate, ProductResponse, ProductUpdate
 from typing import Optional
 from core.logging_config import get_logger, log_error
@@ -52,7 +53,7 @@ async def list_products(
 
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def add_product(payload: ProductCreate, user=Depends(role_required(["admin", "seller"])), db: Session = Depends(get_db)):
+async def add_product(payload: ProductCreate, user=Depends(role_required(["admin"])), db: Session = Depends(get_db)):
     system_settings_service.require_verified_email_for_user(db, user["id"], "create a product")
 
     # Validate price is positive
@@ -61,14 +62,14 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Product price must be greater than 0"
         )
-    
+
     # Validate stock quantity is non-negative
     if payload.stock_quantity < 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Stock quantity cannot be negative"
         )
-    
+
     # Validate category exists
     from core.categories import category_service
     category = category_service.get_category_by_id(db, payload.category_id)
@@ -77,26 +78,28 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Category not found"
         )
-    
-    # Validate product name is unique for this seller (optional business rule)
+
+    store_id = get_store_id(db)
+
+    # Validate product name is unique (optional business rule)
     existing_product = db.query(Product).filter(
-        Product.seller_id == user["id"],
+        Product.seller_id == store_id,
         Product.name == payload.name
     ).first()
     if existing_product:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="You already have a product with this name"
+            detail="A product with this name already exists"
         )
-    
+
     try:
         products_logger.info(f"Creating new product: {payload.name} by user {user['id']}")
-        
+
         new_product = product_service.add_product(
             db=db,
             name=payload.name,
             price=payload.price,
-            user_id=user["id"],
+            user_id=store_id,
             category_id=payload.category_id,
             description=payload.description,
             stock_quantity=payload.stock_quantity,
@@ -148,7 +151,7 @@ async def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
 async def update_product(
     product_id: str,
     payload: ProductUpdate,
-    user=Depends(role_required(["admin", "seller"])),
+    user=Depends(role_required(["admin"])),
     db: Session = Depends(get_db)
 ):
     """Update a product"""
@@ -161,14 +164,7 @@ async def update_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
-    
-    # Check if user owns the product (unless admin)
-    if user["role"] == "seller" and str(product.seller_id) != user["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only update your own products"
-        )
-    
+
     # Get update data and validate
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
@@ -271,7 +267,7 @@ async def update_product(
 async def update_product_stock(
     product_id: str,
     stock_quantity: int = Query(..., ge=0, description="New stock quantity"),
-    user=Depends(role_required(["admin", "seller"])),
+    user=Depends(role_required(["admin"])),
     db: Session = Depends(get_db)
 ):
     """Update product stock quantity only"""
@@ -282,14 +278,7 @@ async def update_product_stock(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
-    
-    # Check if user owns the product (unless admin)
-    if user["role"] == "seller" and str(product.seller_id) != user["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only update your own products"
-        )
-    
+
     try:
         # Update stock using the service method
         updated_product = product_service.update_product_stock(
@@ -320,33 +309,10 @@ async def update_product_stock(
         )
 
 
-@router.get("/seller/{seller_id}")
-async def get_products_by_seller(
-        seller_id: str,
-        page: int = Query(1, ge=1, description="Page number"),
-        limit: int = Query(10, ge=1, le=100, description="Items per page"),
-        db: Session = Depends(get_db)):
-
-    products, count = product_service.get_products_by_seller(
-        db=db, seller_id=seller_id, limit=limit, page=page)
-
-    return {
-        "success": True,
-        "message": "Products fetched successfully",
-        "data": [ProductResponse.model_validate(p) for p in products] if products else [],
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": count,
-            "total_pages": (count + limit - 1) // limit
-        }
-    }
-
-
 @router.delete("/{product_id}")
 async def delete_product(
     product_id: str,
-    user=Depends(role_required(["admin", "seller"])),
+    user=Depends(role_required(["admin"])),
     db: Session = Depends(get_db),
 ):
     """Delete a product"""
@@ -357,14 +323,7 @@ async def delete_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
-    
-    # Check if user owns the product (unless admin)
-    if user["role"] == "seller" and str(product.seller_id) != user["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own products"
-        )
-    
+
     # Check if product has pending orders (prevent deletion)
     from core.model import Order, OrderItem
     pending_orders = db.query(Order).join(OrderItem).filter(

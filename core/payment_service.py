@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
 from decimal import Decimal
 import uuid
@@ -7,12 +7,11 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from core.model import (
-    Payment, Order, OrderItem, GeneralAgreement, SellerProfile,
+    Payment, Order, OrderItem, GeneralAgreement,
     GeneralInspection, Property, PropertyUnit
 )
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
-from core.commission_service import commission_service
 from core.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
@@ -23,63 +22,6 @@ BANK_TRANSFER_EXPIRY_PREFIX = "bank_transfer_expiry:"
 class PaymentService:
     def __init__(self):
         self.paystack = paystack_service
-
-    def _calculate_agreement_fee_amount(self, db: Session, amount: Decimal) -> Decimal:
-        fee_rate = commission_service.get_platform_fee_rate(db)
-        return (Decimal(str(amount)) * fee_rate).quantize(Decimal("0.01"))
-
-    def _calculate_agreement_net_amount(self, db: Session, amount: Decimal) -> Decimal:
-        gross_amount = Decimal(str(amount))
-        return gross_amount - self._calculate_agreement_fee_amount(db, gross_amount)
-
-    def _build_agreement_payment_breakdown(self, db: Session, amount: Decimal) -> Dict[str, str]:
-        gross_amount = Decimal(str(amount))
-        fee_rate = commission_service.get_platform_fee_rate(db)
-        fee_amount = self._calculate_agreement_fee_amount(db, gross_amount)
-        seller_net_amount = gross_amount - fee_amount
-        return {
-            "agreement_fee_rate_percent": str((fee_rate * Decimal("100")).quantize(Decimal("0.01"))),
-            "agreement_fee_amount": str(fee_amount),
-            "seller_net_amount": str(seller_net_amount),
-        }
-
-    def _get_completed_agreement_totals(self, db: Session, agreement_id: str) -> Dict[str, Decimal]:
-        totals = {
-            "total_paid": Decimal("0.00"),
-            "platform_fee_amount": Decimal("0.00"),
-            "seller_net_amount": Decimal("0.00"),
-        }
-        completed_payments = (
-            db.query(Payment)
-            .filter(
-                Payment.agreement_id == agreement_id,
-                Payment.status == "completed",
-            )
-            .all()
-        )
-
-        for completed_payment in completed_payments:
-            gross_amount = Decimal(str(completed_payment.amount or 0))
-            payment_metadata = completed_payment.transaction_metadata or {}
-            fee_amount = payment_metadata.get("agreement_fee_amount")
-            seller_net_amount = payment_metadata.get("seller_net_amount")
-
-            totals["total_paid"] += gross_amount
-            totals["platform_fee_amount"] += (
-                Decimal(str(fee_amount))
-                if fee_amount is not None
-                else self._calculate_agreement_fee_amount(db, gross_amount)
-            )
-            totals["seller_net_amount"] += (
-                Decimal(str(seller_net_amount))
-                if seller_net_amount is not None
-                else self._calculate_agreement_net_amount(db, gross_amount)
-            )
-
-        return totals
-
-    def _get_total_agreement_net_paid(self, db: Session, agreement_id: str) -> Decimal:
-        return self._get_completed_agreement_totals(db, agreement_id)["seller_net_amount"]
 
     def initialize_payment(
         self, 
@@ -418,19 +360,6 @@ class PaymentService:
                     {"status": "paid"}, synchronize_session=False
                 )
 
-                # Update seller balances for every seller in this order
-                order_items = (
-                    db.query(OrderItem)
-                    .options(joinedload(OrderItem.product))
-                    .filter(OrderItem.order_id == payment.order_id)
-                    .all()
-                )
-                seller_ids = {str(item.product.seller_id) for item in order_items if item.product and item.product.seller_id}
-                for sid in seller_ids:
-                    commission_service.update_seller_balance(
-                        db, sid, str(payment.order_id), "paid", "processing"
-                    )
-
                 create_notification(db, {
                     "user_id": str(payment.buyer_id),
                     "type": "payment_successful",
@@ -446,11 +375,6 @@ class PaymentService:
             if agreement:
                 logger.info(f"Loaded agreement status: {agreement.status}, Asset Type: {agreement.asset_type}")
                 gross_amount = Decimal(str(payment.amount or 0))
-                payment_metadata = dict(payment.transaction_metadata or {})
-                if "seller_net_amount" not in payment_metadata or "agreement_fee_amount" not in payment_metadata:
-                    payment_metadata.update(self._build_agreement_payment_breakdown(db, gross_amount))
-                    payment.transaction_metadata = payment_metadata
-                seller_net_amount = Decimal(str(payment_metadata.get("seller_net_amount", "0")))
                 if (payment.payment_type or payment.payment_category) in ["deposit", "asset_deposit"]:
                     agreement.deposit_paid = Decimal(str(agreement.deposit_paid or 0)) + gross_amount
                     agreement.remaining_balance = Decimal(str(agreement.remaining_balance or agreement.total_price)) - gross_amount
@@ -482,22 +406,12 @@ class PaymentService:
                         agreement.status = "completed"
                         agreement.remaining_balance = Decimal("0.00")
 
-                # Update Seller Balance for Assets
-                seller = db.query(SellerProfile).filter(SellerProfile.id == agreement.seller_id).first()
-                if seller:
-                    seller.total_revenue = Decimal(str(seller.total_revenue or 0)) + gross_amount
-                    seller.pending_balance = Decimal(str(seller.pending_balance or 0)) + seller_net_amount
-
-                    if agreement.status == "completed":
-                        total_net_paid = self._get_total_agreement_net_paid(db, str(agreement.id))
-                        seller.pending_balance = Decimal(str(seller.pending_balance or 0)) - total_net_paid
-                        if seller.pending_balance < 0:
-                            seller.pending_balance = Decimal("0.00")
-                        seller.available_balance = Decimal(str(seller.available_balance or 0)) + total_net_paid
-                    else:
-                        # Update next_due_date to 1 month from now for installments
-                        from datetime import timedelta
-                        agreement.next_due_date = datetime.utcnow() + timedelta(days=30)
+                # There is no seller balance/payout concept in the single-vendor model —
+                # the full payment amount is simply the business's revenue.
+                if agreement.status != "completed":
+                    # Update next_due_date to 1 month from now for installments
+                    from datetime import timedelta
+                    agreement.next_due_date = datetime.utcnow() + timedelta(days=30)
 
                 # Send primary payment confirmation
                 create_notification(db, {

@@ -9,12 +9,11 @@ from sqlalchemy import or_
 from core.model import (
     Car, CarUnit, Property, PropertyUnit,
     GeneralInspection, GeneralAgreement, Payment, AssetImage,
-    Profile, User, SellerProfile
+    Profile, User, StoreProfile
 )
 from core.notifications_service import create_notification
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
-from core.commission_service import commission_service
 from core.system_settings_service import system_settings_service
 from core.tasks import (
     send_inspection_confirmed_email,
@@ -181,15 +180,15 @@ class AssetService():
         db.commit()
         db.refresh(new_inspection)
 
-        # Notify Seller
-        create_notification(db, {
-            "user_id": str(seller_id),
-            "type": "inspection_scheduled",
-            "title": "New Inspection Request",
-            "message": f"A customer wants to inspect your {data.asset_type} listing.",
-            "priority": "low",
-            "channel": ["in_app", "email"]
-        })
+        # Notify admins - someone needs to review and confirm this inspection request
+        system_settings_service.notify_admins(
+            db=db,
+            event_key="system_alert",
+            title="New Inspection Request",
+            message=f"A customer wants to inspect the {data.asset_type} listing.",
+            data={"inspection_id": str(new_inspection.id), "asset_type": data.asset_type, "asset_id": str(data.asset_id)},
+            priority="medium",
+        )
 
         return new_inspection
 
@@ -248,7 +247,7 @@ class AssetService():
         if data.action == "approve":
             try:
                 user = db.query(User).filter(User.id == inspection.user_id).first()
-                seller = db.query(SellerProfile).filter(SellerProfile.id == inspection.seller_id).first()
+                seller = db.query(StoreProfile).filter(StoreProfile.id == inspection.seller_id).first()
                 asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
                 if user and seller and asset:
                     send_inspection_confirmed_email.delay(
@@ -287,45 +286,22 @@ class AssetService():
         return inspection
 
     def _attach_agreement_financials(self, db: Session, agreement: GeneralAgreement) -> None:
+        """Attach the running total paid so far. There is no platform-fee/seller-net
+        split in the single-vendor model — the full payment amount is the business's
+        revenue, so no fee breakdown is computed or shown."""
         total_price = Decimal(str(agreement.total_price or 0))
         remaining_balance = Decimal(str(agreement.remaining_balance if agreement.remaining_balance is not None else agreement.total_price or 0))
-        platform_fee_rate = commission_service.get_platform_fee_rate(db)
         completed_payments = db.query(Payment).filter(
             Payment.agreement_id == agreement.id,
             Payment.status == "completed",
         ).all()
 
-        total_paid = Decimal("0.00")
-        platform_fee_amount = Decimal("0.00")
-        seller_net_amount = Decimal("0.00")
-
-        for payment in completed_payments:
-            gross_amount = Decimal(str(payment.amount or 0))
-            payment_metadata = getattr(payment, 'transaction_metadata', {}) or {}
-            if not isinstance(payment_metadata, dict):
-                payment_metadata = {}
-            total_paid += gross_amount
-            platform_fee_amount += Decimal(
-                str(
-                    payment_metadata.get(
-                        "agreement_fee_amount",
-                        (gross_amount * platform_fee_rate).quantize(Decimal("0.01")),
-                    )
-                )
-            )
-            seller_net_amount += Decimal(
-                str(
-                    payment_metadata.get(
-                        "seller_net_amount",
-                        gross_amount - (gross_amount * platform_fee_rate).quantize(Decimal("0.01")),
-                    )
-                )
-            )
+        total_paid = sum(
+            (Decimal(str(payment.amount or 0)) for payment in completed_payments),
+            Decimal("0.00"),
+        )
 
         agreement.total_paid = max(total_paid, max(total_price - remaining_balance, Decimal("0.00")))
-        agreement.platform_fee_rate_percent = (platform_fee_rate * Decimal("100")).quantize(Decimal("0.01"))
-        agreement.platform_fee_amount = platform_fee_amount
-        agreement.seller_net_amount = seller_net_amount
 
     def list_seller_agreements(self, db: Session, seller_id: UUID) -> List[GeneralAgreement]:
         agreements = db.query(GeneralAgreement).filter(GeneralAgreement.seller_id == seller_id).order_by(GeneralAgreement.created_at.desc()).all()
@@ -426,15 +402,15 @@ class AssetService():
         db.commit()
         db.refresh(inspection)
 
-        # Notify Seller
-        create_notification(db, {
-            "user_id": str(inspection.seller_id),
-            "type": "inspection_complete",
-            "title": "Inspection Completed",
-            "message": f"A customer has completed the inspection for your {inspection.asset_type}. An agreement is now pending your review.",
-            "priority": "medium",
-            "channels": ["in_app", "email"]
-        })
+        # Notify admins - a new agreement is now pending review
+        system_settings_service.notify_admins(
+            db=db,
+            event_key="system_alert",
+            title="Inspection Completed",
+            message=f"A customer has completed the inspection for a {inspection.asset_type} listing. An agreement is now pending review.",
+            data={"inspection_id": str(inspection.id), "asset_type": inspection.asset_type},
+            priority="medium",
+        )
 
         return inspection
 
@@ -508,7 +484,7 @@ class AssetService():
         })
 
         try:
-            seller = db.query(SellerProfile).filter(SellerProfile.id == new_agreement.seller_id).first()
+            seller = db.query(StoreProfile).filter(StoreProfile.id == new_agreement.seller_id).first()
             buyer = db.query(User).filter(User.id == new_agreement.user_id).first()
             asset = self._get_asset_details(db, new_agreement.asset_type, new_agreement.asset_id)
             if seller and buyer and asset:
@@ -714,16 +690,17 @@ class AssetService():
         
         db.commit()
         db.refresh(agreement)
-        
-        # Notify Seller
-        create_notification(db, {
-            "user_id": str(agreement.seller_id),
-            "type": "agreement_cancelled",
-            "title": "Agreement Cancelled By Buyer",
-            "message": f"A buyer has cancelled their agreement for your {agreement.asset_type}.",
-            "channels": ["in_app", "email"]
-        })
-        
+
+        # Notify admins
+        system_settings_service.notify_admins(
+            db=db,
+            event_key="system_alert",
+            title="Agreement Cancelled By Buyer",
+            message=f"A buyer has cancelled their agreement for a {agreement.asset_type} listing.",
+            data={"agreement_id": str(agreement.id), "asset_type": agreement.asset_type},
+            priority="medium",
+        )
+
         return agreement
 
 asset_service = AssetService()

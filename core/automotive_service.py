@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
 
-from core.model import Car, CarUnit, User, SellerProfile, AssetImage
+from core.model import Car, CarUnit, User, AssetImage
 from schemas.automotive import CarCreate, CarUpdate, CarUnitCreate, CarUnitUpdate
 from core.notifications_service import create_notification
 from decimal import Decimal

@@ -46,20 +46,6 @@ class CategoryResponse(BaseModel):
         from_attributes = True
 
 
-class SellerResponse(BaseModel):
-    id: UUID
-    business_name: str
-    description: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    total_products: Optional[int] = None
-    logo_url: Optional[str] = None
-    website_url: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
 class ProductResponse(BaseModel):
     id: UUID
     name: str
@@ -69,7 +55,6 @@ class ProductResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
-    seller: SellerResponse
     category: CategoryResponse
     images: Optional[List[AssetImageResponse]] = []
 

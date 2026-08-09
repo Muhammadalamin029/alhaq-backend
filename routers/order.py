@@ -21,7 +21,7 @@ router = APIRouter()
 
 @router.get("/", status_code=status.HTTP_200_OK)
 async def list_orders(
-    user=Depends(role_required(["customer", "admin", "seller"])),
+    user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
@@ -29,15 +29,11 @@ async def list_orders(
 ):
     try:
         orders_logger.info(f"Fetching orders for {user['role']} user {user['id']} - page: {page}, limit: {limit}, status: {status_filter}")
-        
+
         status_value = status_filter.value if status_filter else None
 
         if user["role"] == "admin":
             orders, count = order_service.fetch_orders(db, limit=limit, page=page, status=status_value)
-        elif user["role"] == "seller":
-            orders, count = order_service.get_orders_by_seller(
-                db, seller_id=user["id"], limit=limit, page=page, status=status_value
-            )
         else:  # customer
             orders, count = order_service.get_orders_by_buyer(
                 db, buyer_id=user["id"], limit=limit, page=page, status=status_value
@@ -162,38 +158,24 @@ async def create_order_item(
 @router.get("/{order_id}", status_code=status.HTTP_200_OK)
 async def fetch_order_by_id(
     order_id: UUID,
-    user=Depends(role_required(["customer", "admin", "seller"])),
+    user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db)
 ):
-    # For customers, include seller grouping; for others, use standard format
-    include_seller_groups = user["role"] == "customer"
-    order = order_service.get_order_by_id(db, order_id, include_seller_groups=include_seller_groups)
-    
+    order = order_service.get_order_by_id(db, order_id)
+
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Order not found"
         )
-    
+
     # Check if user has permission to view this order
     if user["role"] == "customer" and str(order.buyer_id) != user["id"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only view your own orders"
         )
-    elif user["role"] == "seller":
-        # Check if seller has any products in this order
-        seller_has_products = any(
-            item.product.seller_id == user["id"] 
-            for item in order.order_items 
-            if item.product
-        )
-        if not seller_has_products:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only view orders containing your products"
-            )
-    
+
     return {
         "success": True,
         "message": "Order fetched successfully",
@@ -410,10 +392,10 @@ async def delete_order_item(
 @router.patch("/bulk/status", response_model=OrderStatusResponse)
 async def bulk_update_order_status(
     payload: BulkOrderStatusUpdate,
-    user=Depends(role_required(["admin", "seller"])),
+    user=Depends(role_required(["admin"])),
     db: Session = Depends(get_db)
 ):
-    """Update status for multiple orders (admin and sellers only)"""
+    """Update status for multiple orders (admin only)"""
     try:
         results = order_service.bulk_update_order_status(
             db=db,
@@ -444,7 +426,7 @@ async def bulk_update_order_status(
 async def update_order_status(
     order_id: str,
     payload: OrderStatusUpdate,
-    user=Depends(role_required(["admin", "seller"])),
+    user=Depends(role_required(["admin"])),
     db: Session = Depends(get_db)
 ):
     """Update order status with proper workflow validation"""
@@ -476,7 +458,7 @@ async def update_order_status(
 @router.get("/status-transitions/{order_id}", response_model=OrderStatusResponse)
 async def get_order_status_info(
     order_id: str,
-    user=Depends(role_required(["admin", "seller", "customer"])),
+    user=Depends(role_required(["admin", "customer"])),
     db: Session = Depends(get_db)
 ):
     """Get order status information and valid transitions"""
@@ -488,23 +470,14 @@ async def get_order_status_info(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         # Authorization check
         if user["role"] == "customer" and order.buyer_id != UUID(str(user["id"])):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You can only view your own orders"
             )
-        elif user["role"] == "seller":
-            seller_has_items = any(
-                item.product.seller_id == user["id"] for item in order.order_items
-            )
-            if not seller_has_items:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only view orders containing your products"
-                )
-        
+
         status_info = order_service.get_order_status_history(db, order_id)
         
         return OrderStatusResponse(
@@ -557,7 +530,7 @@ async def cancel_order(
 @router.get("/{order_id}/timeline")
 async def get_order_timeline(
     order_id: str,
-    user=Depends(role_required(["customer", "admin", "seller"])),
+    user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db)
 ):
     """Get order timeline/history"""
@@ -569,23 +542,14 @@ async def get_order_timeline(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Order not found"
             )
-        
+
         # Authorization check
         if user["role"] == "customer" and order.buyer_id != UUID(str(user["id"])):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You can only view your own orders"
             )
-        elif user["role"] == "seller":
-            seller_has_items = any(
-                item.product.seller_id == user["id"] for item in order.order_items
-            )
-            if not seller_has_items:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only view orders containing your products"
-                )
-        
+
         # Create timeline based on order status and dates
         timeline = []
         

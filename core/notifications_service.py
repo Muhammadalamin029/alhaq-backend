@@ -15,21 +15,16 @@ logger = logging.getLogger(__name__)
 def _get_user_contact_info(db: Session, user_id: str) -> tuple[Optional[str], str]:
     """Get user email address and name by user ID"""
     try:
-        from core.model import User, Profile, SellerProfile
+        from core.model import User, Profile
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return None, "User"
-            
+
         name = "User"
-        if user.role == "seller":
-            seller = db.query(SellerProfile).filter(SellerProfile.id == user_id).first()
-            if seller:
-                name = seller.business_name
-        else:
-            profile = db.query(Profile).filter(Profile.id == user_id).first()
-            if profile:
-                name = profile.name
-                
+        profile = db.query(Profile).filter(Profile.id == user_id).first()
+        if profile:
+            name = profile.name
+
         return user.email, name
     except Exception as e:
         logger.error(f"Failed to get user info for user_id {user_id}: {e}")

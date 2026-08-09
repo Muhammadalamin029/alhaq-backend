@@ -4,7 +4,7 @@ from celery import current_task
 from core.celery_app import celery_app
 from core.email_service import email_service
 from core.redis_client import verification_manager
-from core.model import User, Profile, SellerProfile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, Order, Dispute
+from core.model import User, Profile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, Order, Dispute
 from core.system_settings_service import system_settings_service
 from datetime import datetime, timedelta
 import logging
@@ -633,14 +633,15 @@ def check_missed_inspections():
                     "message": f"Your scheduled inspection has expired and was rejected.",
                     "channels": ["in_app", "email"]
                 })
-                # Notify Seller
-                create_notification(db, {
-                    "user_id": str(inspection.seller_id),
-                    "type": "order_processing",
-                    "title": "Inspection Missed",
-                    "message": f"A scheduled inspection was missed and has automatically expired.",
-                    "channels": ["in_app", "email"]
-                })
+                # Notify admins
+                system_settings_service.notify_admins(
+                    db=db,
+                    event_key="system_alert",
+                    title="Inspection Missed",
+                    message="A scheduled inspection was missed and has automatically expired.",
+                    data={"inspection_id": str(inspection.id), "asset_type": inspection.asset_type},
+                    priority="medium",
+                )
 
             if expired_inspections:
                 db.commit()
@@ -719,22 +720,23 @@ def send_installment_reminders():
 @celery_app.task(name='core.tasks.process_installment_defaults')
 def process_installment_defaults():
     """
-    Periodic task to mark agreements as defaulted where the next due date 
-    plus the seller's configured grace period has elapsed without payment.
+    Periodic task to mark agreements as defaulted where the next due date
+    plus the store's configured grace period has elapsed without payment.
     """
     try:
         db = next(get_db())
         try:
             now = datetime.utcnow()
-            
-            agreements = db.query(GeneralAgreement).join(SellerProfile).filter(
+
+            grace_period = system_settings_service.get_or_create_settings(db).default_grace_period_days or 3
+
+            agreements = db.query(GeneralAgreement).filter(
                 GeneralAgreement.status == "active",
                 GeneralAgreement.next_due_date < now
             ).all()
 
             default_count = 0
             for agreement in agreements:
-                grace_period = agreement.seller.default_grace_period_days or 3
                 if now > agreement.next_due_date + timedelta(days=grace_period):
                     agreement.status = "defaulted"
                     default_count += 1
@@ -747,14 +749,15 @@ def process_installment_defaults():
                         "message": f"Your agreement has been defaulted due to missed payments.",
                         "channels": ["in_app", "email"]
                     })
-                    # Notify Seller
-                    create_notification(db, {
-                        "user_id": str(agreement.seller_id),
-                        "type": "installment_defaulted",
-                        "title": "Agreement Defaulted",
-                        "message": f"An agreement has been defaulted due to buyer missing payments past your grace period.",
-                        "channels": ["in_app", "email"]
-                    })
+                    # Notify admins
+                    system_settings_service.notify_admins(
+                        db=db,
+                        event_key="system_alert",
+                        title="Agreement Defaulted",
+                        message="An agreement has been defaulted due to the buyer missing payments past the grace period.",
+                        data={"agreement_id": str(agreement.id), "asset_type": agreement.asset_type},
+                        priority="high",
+                    )
 
                     # Free up the unit/asset
                     if agreement.unit_id:
@@ -791,7 +794,6 @@ def send_weekly_admin_report():
             total_users = db.query(User).count()
             total_orders = db.query(Order).count()
             open_disputes = db.query(Dispute).filter(Dispute.status.in_(["open", "under_review"])).count()
-            pending_sellers = db.query(SellerProfile).filter(SellerProfile.kyc_status == "pending").count()
 
             system_settings_service.notify_admins(
                 db=db,
@@ -799,12 +801,11 @@ def send_weekly_admin_report():
                 title="Weekly Admin Report",
                 message=(
                     f"Weekly summary: {total_users} users, {total_orders} orders, "
-                    f"{pending_sellers} pending seller reviews, {open_disputes} open disputes."
+                    f"{open_disputes} open disputes."
                 ),
                 data={
                     "total_users": total_users,
                     "total_orders": total_orders,
-                    "pending_seller_reviews": pending_sellers,
                     "open_disputes": open_disputes,
                     "generated_at": datetime.utcnow().isoformat(),
                 },

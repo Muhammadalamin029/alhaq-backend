@@ -8,7 +8,6 @@ from routers import (
     reviews as reviews_router,
     checkout as checkout_router,
     notifications as notifications_router,
-    seller as seller_router,
     admin as admin_router,
     payments, automotive, assets, properties, disputes, system_settings,
     public as public_router,
@@ -114,7 +113,6 @@ app.include_router(addresses_router.router, prefix="/addresses", tags=["Addresse
 app.include_router(reviews_router.router, prefix="/reviews", tags=["Reviews"])
 app.include_router(checkout_router.router, prefix="/checkout", tags=["Checkout"])
 app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
-app.include_router(seller_router.router, prefix="/seller", tags=["Seller"])
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])

@@ -17,7 +17,6 @@ class RefreshRequest(BaseModel):
 
 class UserRole(str, Enum):
     CUSTOMER = "customer"
-    SELLER = "seller"
     ADMIN = "admin"
 
 class LoginRequest(BaseModel):

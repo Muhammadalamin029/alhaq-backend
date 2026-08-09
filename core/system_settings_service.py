@@ -32,7 +32,6 @@ class SystemSettingsService:
             "timezone": "Africa/Lagos",
             "commission_rate_percent": Decimal("5.00"),
             "minimum_payout_amount": Decimal("10000.00"),
-            "payout_schedule": "weekly",
             "minimum_inspection_notice_hours": 24,
             "inspection_cancellation_cutoff_hours": 12,
             "missed_inspection_expiry_hours": 24,
@@ -126,7 +125,6 @@ class SystemSettingsService:
         for field in (
             "commission_rate_percent",
             "minimum_payout_amount",
-            "payout_schedule",
         ):
             if field in payload:
                 value = payload[field]

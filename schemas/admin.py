@@ -33,7 +33,7 @@ class AdminUserListResponse(BaseModel):
     last_login: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    profile_name: Optional[str] = None  # From Profile.name or SellerProfile.business_name
+    profile_name: Optional[str] = None  # From Profile.name
     
     class Config:
         from_attributes = True
@@ -98,7 +98,7 @@ class AdminProductListResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     seller_id: UUID
-    seller_name: str  # From SellerProfile.business_name
+    seller_name: str  # From StoreProfile.business_name
     category_id: UUID
     category_name: str  # From Category.name
     
@@ -159,27 +159,21 @@ class AdminDashboardStats(BaseModel):
     total_products: int = 0
     total_orders: int
     total_payments: int
-    # Revenue (gross GMV)
+    # Revenue (gross GMV). There is no platform-fee/seller-net split in the
+    # single-vendor model — the full amount is the business's own revenue.
     total_revenue: Decimal
-    # Revenue after platform fee (seller net)
-    net_revenue: Decimal = Decimal("0.00")
-    # Platform fees (gross - net)
-    platform_fee_amount: Decimal = Decimal("0.00")
 
     # Range context for dashboards
     range: Optional[str] = None
     range_start: Optional[datetime] = None
     range_end: Optional[datetime] = None
-    
+
     # Today's stats
     new_users_today: int
     new_orders_today: int
     revenue_today: Decimal
-    net_revenue_today: Decimal = Decimal("0.00")
-    platform_fee_today: Decimal = Decimal("0.00")
-    
+
     # Status counts
-    pending_seller_approvals: int
     locked_users: int
     out_of_stock_products: int
     pending_orders: int
@@ -199,8 +193,8 @@ class AdminDashboardStats(BaseModel):
     active_agreements: int
     
     # Real Estate stats
-    total_session_requests: int
-    pending_session_requests: int
+    total_session_requests: int = 0
+    pending_session_requests: int = 0
     total_internal_properties: int
 
     # Trend series for charts (date buckets)
@@ -209,7 +203,6 @@ class AdminDashboardStats(BaseModel):
     agreements_series: List[Dict[str, Any]] = []
 
     # Top lists
-    top_sellers: List[Dict[str, Any]] = []
     recent_payments: List[Dict[str, Any]] = []
 
     # Alerts

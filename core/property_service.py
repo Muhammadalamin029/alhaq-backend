@@ -3,7 +3,7 @@ from uuid import UUID
 from datetime import datetime
 from typing import List, Optional
 from fastapi import HTTPException
-from core.model import Property, AssetImage, SellerProfile, PropertyUnit, GeneralInspection
+from core.model import Property, AssetImage, PropertyUnit, GeneralInspection
 from schemas.property import PropertyCreate, PropertyUpdate
 
 class PropertyService:

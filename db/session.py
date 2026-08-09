@@ -8,7 +8,7 @@ Base = declarative_base()
 def _preload_models():
     """Preload all models to avoid first-query overhead"""
     try:
-        from core.model import User, Profile, SellerProfile, Product, Category, Order, OrderItem, Payment, Review, Wishlist, Address, Stats, Notification, StoreProfile
+        from core.model import User, Profile, Product, Category, Order, OrderItem, Payment, Review, Wishlist, Address, Stats, Notification, StoreProfile
         # This forces SQLAlchemy to load all model metadata
         Base.metadata.tables
     except ImportError:
