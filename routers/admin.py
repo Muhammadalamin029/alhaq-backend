@@ -679,7 +679,19 @@ async def get_admin_order_details(
             "buyer_email": order.buyer.user.email if order.buyer and order.buyer.user else "Unknown",
             "total_amount": float(order.total_amount),
             "status": order.status,
-            "delivery_address": order.delivery_address,
+            # order.delivery_address is just the FK (UUID) to addresses.id.
+            # Use the joinedloaded order.delivery_addr relationship to send the
+            # actual address fields the frontend renders (title, street_address,
+            # city, state_province, postal_code, country) instead of a raw UUID.
+            "delivery_address": {
+                "id": str(order.delivery_addr.id),
+                "title": order.delivery_addr.title,
+                "street_address": order.delivery_addr.street_address,
+                "city": order.delivery_addr.city,
+                "state_province": order.delivery_addr.state_province,
+                "postal_code": order.delivery_addr.postal_code,
+                "country": order.delivery_addr.country,
+            } if order.delivery_addr else None,
             "created_at": order.created_at.isoformat(),
             "updated_at": order.updated_at.isoformat(),
             "order_items": [
