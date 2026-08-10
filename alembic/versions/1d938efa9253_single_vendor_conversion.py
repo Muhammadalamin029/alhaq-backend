@@ -94,8 +94,8 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     op.execute(
         """
-        INSERT INTO profiles (id, name, bio)
-        SELECT sp.id, sp.business_name, sp.description
+        INSERT INTO profiles (id, name, bio, kyc_status)
+        SELECT sp.id, sp.business_name, sp.description, 'pending'
         FROM seller_profiles sp
         JOIN users u ON u.id = sp.id
         WHERE u.role = 'admin'
