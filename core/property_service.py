@@ -16,6 +16,9 @@ class PropertyService:
             location=property_data.location,
             listing_type=property_data.listing_type,
             buildings_count=property_data.buildings_count or 1,
+            bedrooms=property_data.bedrooms,
+            bathrooms=property_data.bathrooms,
+            square_feet=property_data.square_feet,
             status="available"
         )
         db.add(new_property)

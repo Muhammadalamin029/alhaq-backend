@@ -548,7 +548,10 @@ class Property(Base):
     min_deposit_percentage = Column(Numeric(5, 2), default=10)
     location = Column(String(255), nullable=False)
     buildings_count = Column(Integer, default=1)
-    
+    bedrooms = Column(Integer, nullable=True)
+    bathrooms = Column(Numeric(3, 1), nullable=True)
+    square_feet = Column(Integer, nullable=True)
+
     listing_type = Column(Enum("sale", "rental", "professional", name="listing_type"), default="sale")
     status = Column(Enum("available", "pending_inspection", "property_inspected", "awaiting_payment", 
                         "reserved", "sold", "rented", "under_financing", "acquired", name="property_status"), default="available")

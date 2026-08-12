@@ -24,6 +24,9 @@ class PropertyBase(BaseModel):
     location: str
     listing_type: str = "sale"
     buildings_count: Optional[int] = 1
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[Decimal] = None
+    square_feet: Optional[int] = None
 
 
 class PropertyResponse(PropertyBase):
@@ -53,6 +56,9 @@ class PropertyUpdate(BaseModel):
     location: Optional[str] = None
     listing_type: Optional[str] = None
     status: Optional[str] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[Decimal] = None
+    square_feet: Optional[int] = None
     images: Optional[List[AssetImageCreate]] = None
 
 class PropertyAgreementResponse(BaseModel):
