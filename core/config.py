@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "Demight Tech"
+    PROJECT_NAME: str = "LEL Store"
     API_V1_STR: str = "/api/v1"
 
     # Database
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = True
     SMTP_USE_SSL: bool = False
     FROM_EMAIL: str = ""
-    FROM_NAME: str = "Demight Tech"
+    FROM_NAME: str = "LEL Store"
     
     # Email verification settings
     EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 15

@@ -83,8 +83,8 @@ class PaymentService:
             existing_payment.amount = Decimal(amount_kobo) / 100
             
         # 3. Generate unique reference
-        reference = f"DEMIGHT_{uuid.uuid4().hex[:10].upper()}"
-        
+        reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
+
         # 4. Prepare metadata for Paystack
         ps_metadata = {
             "user_id": str(user_id),
@@ -235,7 +235,7 @@ class PaymentService:
             existing_payment.amount = amount_naira
 
         # 4. Generate unique reference
-        reference = f"DEMIGHT_{uuid.uuid4().hex[:10].upper()}"
+        reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
 
         # 5. Prepare metadata for Paystack
         ps_metadata = {
@@ -442,7 +442,7 @@ class PaymentService:
                         "user_id": str(payment.buyer_id),
                         "type": "agreement_completed",
                         "title": f"🎉 Congratulations! You now own this {asset_noun}!",
-                        "message": f"Your {agreement.asset_type} agreement has been fully paid. You are now the full owner of this asset. Thank you for choosing Demight Tech!",
+                        "message": f"Your {agreement.asset_type} agreement has been fully paid. You are now the full owner of this asset. Thank you for choosing LEL Store!",
                         "priority": "urgent",
                         "channels": ["in_app", "email"]
                     })

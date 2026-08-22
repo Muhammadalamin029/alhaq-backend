@@ -1072,6 +1072,7 @@ async def get_admin_inspections(
     db: Session = Depends(get_db),
     status: Optional[str] = Query(None),
     asset_type: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100)
 ):
@@ -1084,12 +1085,20 @@ async def get_admin_inspections(
             joinedload(GeneralInspection.property),
             joinedload(GeneralInspection.car)
         )
-        
+
         if status:
             query = query.filter(GeneralInspection.status == status)
         if asset_type:
             query = query.filter(GeneralInspection.asset_type == asset_type)
-            
+        if search:
+            search_term = f"%{search}%"
+            query = query.join(GeneralInspection.user).join(GeneralInspection.seller).filter(
+                or_(
+                    User.email.ilike(search_term),
+                    StoreProfile.business_name.ilike(search_term),
+                )
+            )
+
         total = query.count()
         inspections = query.order_by(desc(GeneralInspection.created_at)).offset(offset).limit(limit).all()
         

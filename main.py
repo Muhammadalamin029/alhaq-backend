@@ -34,7 +34,7 @@ setup_logging(
     log_level=settings.LOG_LEVEL,
     log_to_console=settings.LOG_TO_CONSOLE,
 )
-logger = get_logger("demight_tech_backend")
+logger = get_logger("lel_store_backend")
 
 # ------------------------------------------------------
 # FastAPI app

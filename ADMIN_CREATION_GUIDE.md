@@ -1,6 +1,6 @@
 # 🔧 Admin User Creation Guide
 
-This guide explains how to create admin users for the Demight Tech platform.
+This guide explains how to create admin users for the LEL Store platform.
 
 ## 🚀 Methods to Create Admin Users
 
@@ -33,9 +33,9 @@ python create_admin_direct.py
 
 ```python
 # 🔧 MODIFY THESE CREDENTIALS
-ADMIN_EMAIL = "admin@demighttech.com"
+ADMIN_EMAIL = "admin@lelstore.com"
 ADMIN_PASSWORD = "AdminPass123!"
-ADMIN_BUSINESS_NAME = "Demight Administration"
+ADMIN_BUSINESS_NAME = "LEL Store Administration"
 ADMIN_DESCRIPTION = "Platform Administrator"
 ```
 
@@ -49,7 +49,7 @@ Authorization: Bearer <admin_jwt_token>
 Content-Type: application/json
 
 {
-  "email": "newadmin@demighttech.com",
+  "email": "newadmin@lelstore.com",
   "password": "SecurePass123!",
   "business_name": "New Administrator",
   "description": "Additional System Administrator"
@@ -144,8 +144,8 @@ If you encounter issues:
 python create_admin.py
 
 # Follow the prompts:
-# Enter admin email: admin@demighttech.com
-# Enter admin/business name: Demight Administration
+# Enter admin email: admin@lelstore.com
+# Enter admin/business name: LEL Store Administration
 # Enter description: Platform Administrator
 # Enter admin password: [hidden input]
 # Confirm admin password: [hidden input]
@@ -156,14 +156,14 @@ python create_admin.py
 # First, get admin JWT token by logging in
 curl -X POST "http://localhost:8000/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"email": "admin@demighttech.com", "password": "AdminPass123!"}'
+  -d '{"email": "admin@lelstore.com", "password": "AdminPass123!"}'
 
 # Use the token to create new admin
 curl -X POST "http://localhost:8000/admin/create-admin" \
   -H "Authorization: Bearer <jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "admin2@demighttech.com",
+    "email": "admin2@lelstore.com",
     "password": "SecurePass456!",
     "business_name": "Secondary Administrator",
     "description": "Additional Platform Administrator"
@@ -172,4 +172,4 @@ curl -X POST "http://localhost:8000/admin/create-admin" \
 
 ---
 
-**🎉 You're all set!** Your admin user should now be created and ready to manage the Demight Tech platform.
+**🎉 You're all set!** Your admin user should now be created and ready to manage the LEL Store platform.
