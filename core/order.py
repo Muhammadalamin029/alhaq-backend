@@ -1,4 +1,4 @@
-from core.model import Order, OrderItem
+from core.model import Order, OrderItem, Profile
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import UUID
 from typing import List, Optional, Tuple, Dict
@@ -185,6 +185,12 @@ class OrderService:
     ):
         try:
             with self.transaction_context(db):
+                if not db.query(Profile.id).filter(Profile.id == buyer_id).first():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Your account profile is incomplete. Please contact support."
+                    )
+
                 # Validate and get product info
                 self._validate_and_reserve_stock(
                     db, item.product_id, item.quantity
