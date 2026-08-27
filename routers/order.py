@@ -569,7 +569,16 @@ async def get_order_timeline(
                 "completed": order.status in ["processing", "shipped", "delivered"],
                 "description": "Your order is being prepared"
             })
-        
+
+        # Paid
+        if order.status in ["paid", "shipped", "delivered"]:
+            timeline.append({
+                "status": "Paid",
+                "date": order.updated_at.isoformat(),
+                "completed": True,
+                "description": "Your payment has been confirmed"
+            })
+
         # Shipped
         if order.status in ["shipped", "delivered"]:
             timeline.append({

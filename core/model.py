@@ -105,7 +105,7 @@ class Profile(Base):
     name = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=True)
     kyc_status = Column(Enum("pending", "approved", "rejected",
-                        name="kyc_status"), default="pending")
+                        name="kyc_status"), nullable=False, server_default="pending")
     approval_date = Column(Date, nullable=True)
     avatar_url = Column(Text, nullable=True)
     bio = Column(Text, nullable=True)
