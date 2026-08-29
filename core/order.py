@@ -1,12 +1,13 @@
-from core.model import Order, OrderItem, Profile
+from core.model import Order, OrderItem, Profile, User
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import UUID
+from sqlalchemy import UUID, func
 from typing import List, Optional, Tuple, Dict
 from schemas.order import OrderItemCreate
 from core.inventory import inventory_service
 from core.tasks import send_order_shipped_email, send_order_delivered_email
 from fastapi import HTTPException, status
 from decimal import Decimal
+from datetime import date, timedelta
 import logging
 from contextlib import contextmanager
 
@@ -111,10 +112,20 @@ class OrderService:
             )
 
     # ---------------- FETCH ORDERS ----------------
-    def fetch_orders(self, db: Session, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
+    def fetch_orders(
+        self, db: Session, limit: int = 10, page: int = 1, status: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        start_date: Optional[date] = None, end_date: Optional[date] = None,
+    ) -> Tuple[List[Order], int]:
         query = self._with_relationships(db.query(Order))
-        if status:
+        if statuses:
+            query = query.filter(Order.status.in_(statuses))
+        elif status:
             query = query.filter(Order.status == status)
+        if start_date:
+            query = query.filter(Order.created_at >= start_date)
+        if end_date:
+            query = query.filter(Order.created_at < end_date + timedelta(days=1))
         count = query.count()
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()
@@ -141,11 +152,33 @@ class OrderService:
             ] if order.payments else []
         return order
 
-    def get_orders_by_buyer(self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None) -> Tuple[List[Order], int]:
+    def track_order(self, db: Session, order_id: UUID, email: str) -> Optional[Order]:
+        """Public lookup: only returns an order when the given email matches
+        the order's buyer. Intentionally does not eager-load items/payments/
+        address — callers should only expose minimal fields (id, status)."""
+        return (
+            db.query(Order)
+            .join(Profile, Order.buyer_id == Profile.id)
+            .join(User, Profile.id == User.id)
+            .filter(Order.id == order_id, func.lower(User.email) == email.strip().lower())
+            .first()
+        )
+
+    def get_orders_by_buyer(
+        self, db: Session, buyer_id: UUID, limit: int = 10, page: int = 1, status: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        start_date: Optional[date] = None, end_date: Optional[date] = None,
+    ) -> Tuple[List[Order], int]:
         query = self._with_relationships(
             db.query(Order)).filter(Order.buyer_id == buyer_id)
-        if status:
+        if statuses:
+            query = query.filter(Order.status.in_(statuses))
+        elif status:
             query = query.filter(Order.status == status)
+        if start_date:
+            query = query.filter(Order.created_at >= start_date)
+        if end_date:
+            query = query.filter(Order.created_at < end_date + timedelta(days=1))
         count = query.count()
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()

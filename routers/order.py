@@ -9,6 +9,7 @@ from schemas.order import (
     OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate, OrderStatus
 )
 from decimal import Decimal
+from datetime import date
 from uuid import UUID,  uuid4
 from core.logging_config import get_logger, log_error
 from core.system_settings_service import system_settings_service
@@ -26,17 +27,36 @@ async def list_orders(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
     status_filter: OrderStatus | None = Query(None, alias="status", description="Filter by order status"),
+    statuses: str | None = Query(None, description="Comma-separated list of statuses; overrides status"),
+    start_date: date | None = Query(None, description="Filter orders placed on/after this date"),
+    end_date: date | None = Query(None, description="Filter orders placed on/before this date"),
 ):
     try:
         orders_logger.info(f"Fetching orders for {user['role']} user {user['id']} - page: {page}, limit: {limit}, status: {status_filter}")
 
         status_value = status_filter.value if status_filter else None
 
+        statuses_value = None
+        if statuses:
+            requested = [s.strip() for s in statuses.split(",") if s.strip()]
+            valid_values = {s.value for s in OrderStatus}
+            invalid = [s for s in requested if s not in valid_values]
+            if invalid:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status value(s): {', '.join(invalid)}"
+                )
+            statuses_value = requested
+
         if user["role"] == "admin":
-            orders, count = order_service.fetch_orders(db, limit=limit, page=page, status=status_value)
+            orders, count = order_service.fetch_orders(
+                db, limit=limit, page=page, status=status_value, statuses=statuses_value,
+                start_date=start_date, end_date=end_date,
+            )
         else:  # customer
             orders, count = order_service.get_orders_by_buyer(
-                db, buyer_id=user["id"], limit=limit, page=page, status=status_value
+                db, buyer_id=user["id"], limit=limit, page=page, status=status_value,
+                statuses=statuses_value, start_date=start_date, end_date=end_date,
             )
         
         orders_logger.info(f"Orders fetched successfully for user {user['id']} - count: {count}")
@@ -52,8 +72,10 @@ async def list_orders(
                 "total_pages": (count + limit - 1) // limit,
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        log_error(orders_logger, f"Failed to fetch orders for user {user['id']}", e, 
+        log_error(orders_logger, f"Failed to fetch orders for user {user['id']}", e,
                   user_id=user['id'], user_role=user['role'], page=page, limit=limit)
         raise HTTPException(status_code=500, detail="Failed to fetch orders")
 
@@ -75,6 +97,28 @@ async def get_pending_orders(
         "success": True,
         "message": "Pending orders fetched successfully",
         "data": OrderResponse.model_validate(order).model_dump(by_alias=True),
+    }
+
+
+@router.get("/track", status_code=status.HTTP_200_OK)
+async def track_order(
+    order_id: UUID = Query(..., description="Order ID from your receipt or confirmation email"),
+    email: str = Query(..., description="The billing email used for this order"),
+    db: Session = Depends(get_db),
+):
+    """Public order lookup — no login required. Only confirms the order
+    exists and returns its id/status when the email matches the buyer,
+    so a guest can be routed to sign in and view the full order."""
+    order = order_service.track_order(db, order_id=order_id, email=email)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No order found matching that Order ID and email address"
+        )
+    return {
+        "success": True,
+        "message": "Order found",
+        "data": {"order_id": str(order.id), "status": order.status},
     }
 
 
