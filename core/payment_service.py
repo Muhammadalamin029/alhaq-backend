@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from core.model import (
     Payment, Order, OrderItem, GeneralAgreement,
-    GeneralInspection, Property, PropertyUnit
+    GeneralInspection, Property, PropertyUnit, PaymentMandate, User
 )
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
@@ -43,7 +43,7 @@ class PaymentService:
         # 1. Validation based on category
         if category == "order" and not order_id:
             raise HTTPException(status_code=400, detail="order_id is required for order payments")
-        if category in ["asset_deposit", "asset_installment"] and not agreement_id:
+        if category in ["asset_deposit", "asset_installment", "full_pay"] and not agreement_id:
             raise HTTPException(status_code=400, detail="agreement_id is required for asset payments")
 
         # 2. Check if we have an existing pending payment and reuse it
@@ -54,7 +54,7 @@ class PaymentService:
         )
         if order_id: existing_payment = existing_payment.filter(Payment.order_id == order_id)
         if agreement_id: existing_payment = existing_payment.filter(Payment.agreement_id == agreement_id)
-        
+
         existing_payment = existing_payment.first()
 
         # 4. Infer payment_type if missing in metadata
@@ -181,7 +181,7 @@ class PaymentService:
         # 1. Validation based on category
         if category == "order" and not order_id:
             raise HTTPException(status_code=400, detail="order_id is required for order payments")
-        if category in ["asset_deposit", "asset_installment"] and not agreement_id:
+        if category in ["asset_deposit", "asset_installment", "full_pay"] and not agreement_id:
             raise HTTPException(status_code=400, detail="agreement_id is required for asset payments")
 
         # 2. Check if we have an existing pending payment and reuse it
@@ -338,11 +338,59 @@ class PaymentService:
         if status_raw == "success":
             if payment.status != "completed":
                 self._handle_completion(db, payment)
+            self._maybe_capture_card_mandate(db, payment, data.get("authorization") or {})
         elif status_raw in ["failed", "abandoned", "reversed"]:
             payment.status = "failed"
             db.commit()
-        
+
         return ps_res
+
+    def _maybe_capture_card_mandate(self, db: Session, payment: Payment, authorization: Dict[str, Any]) -> None:
+        """When a card payment against a structured (monthly) agreement completes with
+        a reusable authorization, that authorization *is* the recurring mandate - no
+        separate bank-consent step needed. (Direct-debit authorizations are handled
+        separately via the mandate webhook, since those aren't tied to a specific
+        Payment/charge the way a card authorization is.)"""
+        if not payment.agreement_id or not authorization.get("reusable"):
+            return
+        if authorization.get("channel") == "direct_debit":
+            return
+
+        authorization_code = authorization.get("authorization_code")
+        if not authorization_code:
+            return
+
+        agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == payment.agreement_id).first()
+        if not agreement or agreement.plan_type != "structured":
+            return
+
+        buyer = db.query(User).filter(User.id == payment.buyer_id).first()
+        if not buyer:
+            return
+
+        mandate = db.query(PaymentMandate).filter(PaymentMandate.agreement_id == agreement.id).first()
+        if not mandate:
+            mandate = PaymentMandate(agreement_id=agreement.id, user_id=payment.buyer_id, email=buyer.email)
+            db.add(mandate)
+
+        mandate.email = buyer.email
+        mandate.status = "active"
+        mandate.authorization_code = authorization_code
+        mandate.authorized_at = datetime.now(timezone.utc)
+        bank = authorization.get("bank")
+        mandate.bank_name = bank if isinstance(bank, str) else None
+        mandate.account_number_last4 = authorization.get("last4")
+        db.commit()
+
+        create_notification(db, {
+            "user_id": str(payment.buyer_id),
+            "type": "agreement_update",
+            "title": "Recurring Payment Authorized",
+            "message": "Your card has been saved for automatic monthly installment payments.",
+            "priority": "medium",
+            "channels": ["in_app", "email"],
+        })
+        logger.info(f"Mandate {mandate.id} activated via card authorization for agreement {agreement.id}")
 
     def _handle_completion(self, db: Session, payment: Payment):
         """Processes logic after successful payment confirmation"""
@@ -378,7 +426,7 @@ class PaymentService:
                 if (payment.payment_type or payment.payment_category) in ["deposit", "asset_deposit"]:
                     agreement.deposit_paid = Decimal(str(agreement.deposit_paid or 0)) + gross_amount
                     agreement.remaining_balance = Decimal(str(agreement.remaining_balance or agreement.total_price)) - gross_amount
-                    
+
                     # If this "deposit" actually paid the full price
                     if agreement.remaining_balance <= 0:
                         agreement.status = "completed"
@@ -390,21 +438,27 @@ class PaymentService:
                     if agreement.inspection_id:
                         inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
                         if inspection: inspection.status = "agreement_accepted"
-
-                    # Update unit/asset status to final held state using unified logic
-                    from core.asset_service import asset_service
-                    asset_service.update_unit_status(
-                        db, 
-                        agreement.asset_type, 
-                        agreement.status, # "active" or "completed" 
-                        unit_id=agreement.unit_id, 
-                        asset_id=agreement.asset_id
-                    )
                 else:
                     agreement.remaining_balance = Decimal(str(agreement.remaining_balance or 0)) - gross_amount
                     if agreement.remaining_balance <= 0:
                         agreement.status = "completed"
                         agreement.remaining_balance = Decimal("0.00")
+
+                # Update unit/asset status to final held state using unified logic.
+                # Applies to both branches above — a one-shot full_pay or a final
+                # installment payoff must flip the unit to sold just like a deposit does.
+                # Note: update_unit_status's map already uses the literal "completed" to mean
+                # "inspection completed" (-> inspected), so a fully-paid agreement must be
+                # signaled as "paid" (-> sold) instead, to avoid colliding with that meaning.
+                if agreement.status in ["active", "completed"]:
+                    from core.asset_service import asset_service
+                    asset_service.update_unit_status(
+                        db,
+                        agreement.asset_type,
+                        "paid" if agreement.status == "completed" else agreement.status,
+                        unit_id=agreement.unit_id,
+                        asset_id=agreement.asset_id
+                    )
 
                 # There is no seller balance/payout concept in the single-vendor model —
                 # the full payment amount is simply the business's revenue.
@@ -449,6 +503,123 @@ class PaymentService:
 
         db.commit()
         
+    def handle_mandate_webhook(self, db: Session, event: str, reference: str, authorization: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Process a direct-debit `authorization` payload from a Paystack webhook that
+        concerns mandate lifecycle (authorization consent, revocation) rather than a
+        specific Payment. Returns None if `reference` doesn't belong to a mandate at
+        all (e.g. it's actually a regular recurring installment charge, which has its
+        own Payment row and should fall through to the normal Payment-based handling).
+
+        NOTE: the exact webhook event name(s) Paystack fires for mandate
+        authorization/revocation could not be confirmed against live docs while
+        building this - this handles it defensively off the `authorization` object's
+        `channel`/`reusable`/`authorization_code` fields, which should be stable
+        regardless of the wrapping event name, but re-verify against a real Paystack
+        webhook log before relying on this in production.
+        """
+        mandate = db.query(PaymentMandate).filter(PaymentMandate.reference == reference).first()
+
+        is_revocation = "revoked" in (event or "").lower() or authorization.get("reusable") is False
+        if not mandate and is_revocation:
+            authorization_code = authorization.get("authorization_code")
+            if authorization_code:
+                mandate = db.query(PaymentMandate).filter(PaymentMandate.authorization_code == authorization_code).first()
+
+        if not mandate:
+            return None
+
+        if is_revocation:
+            mandate.status = "revoked"
+            db.commit()
+            create_notification(db, {
+                "user_id": str(mandate.user_id),
+                "type": "agreement_update",
+                "title": "Recurring Payment Cancelled",
+                "message": "Your bank has cancelled the recurring debit authorization for your monthly payment plan. Please re-authorize to avoid missing installments.",
+                "priority": "urgent",
+                "channels": ["in_app", "email"],
+            })
+            logger.info(f"Mandate {mandate.id} revoked via webhook")
+            return {"status": "success"}
+
+        authorization_code = authorization.get("authorization_code")
+        if authorization_code and authorization.get("reusable"):
+            mandate.authorization_code = authorization_code
+            mandate.status = "active"
+            mandate.authorized_at = datetime.now(timezone.utc)
+            bank = authorization.get("bank")
+            mandate.bank_name = bank if isinstance(bank, str) else (authorization.get("bank_name") or None)
+            last4 = authorization.get("last4") or authorization.get("account_number", "")[-4:] if authorization.get("account_number") else None
+            mandate.account_number_last4 = last4
+            db.commit()
+
+            create_notification(db, {
+                "user_id": str(mandate.user_id),
+                "type": "agreement_update",
+                "title": "Recurring Payment Authorized",
+                "message": "Your bank account has been authorized for recurring monthly debits. We'll automatically charge your installment each month.",
+                "priority": "medium",
+                "channels": ["in_app", "email"],
+            })
+            logger.info(f"Mandate {mandate.id} activated via webhook")
+            return {"status": "success"}
+
+        logger.info(f"Ignoring non-actionable mandate webhook for reference {reference} (event={event})")
+        return {"status": "ignored", "reason": "mandate_not_actionable"}
+
+    def charge_mandate_installment(self, db: Session, agreement: GeneralAgreement, mandate: PaymentMandate) -> Payment:
+        """Attempt one recurring installment charge against an active Direct Debit
+        mandate (called by the daily `charge_due_mandates` celery task). Creates a
+        Payment row; if Paystack responds synchronously with success, completes it
+        immediately via the normal completion path. A pending/async response is left
+        for the `charge.success`/`charge.failed` webhook to resolve later."""
+        amount = Decimal(str(agreement.monthly_installment or 0))
+        if amount <= 0:
+            raise ValueError(f"Agreement {agreement.id} has no monthly_installment configured")
+
+        reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
+        payment = Payment(
+            agreement_id=agreement.id,
+            buyer_id=agreement.user_id,
+            seller_id=agreement.seller_id,
+            amount=amount,
+            status="pending",
+            payment_category="asset_installment",
+            payment_type="installment",
+            transaction_id=reference,
+            reference=reference,
+            payment_method="paystack",
+        )
+        db.add(payment)
+        db.commit()
+
+        try:
+            ps_res = self.paystack.charge_authorization(
+                authorization_code=mandate.authorization_code,
+                email=mandate.email,
+                amount=int(amount * 100),
+                reference=reference,
+            )
+        except Exception as e:
+            logger.error(f"Mandate charge failed to reach Paystack for agreement {agreement.id}: {e}")
+            payment.status = "failed"
+            mandate.failed_attempts = (mandate.failed_attempts or 0) + 1
+            db.commit()
+            return payment
+
+        ps_status = (ps_res.get("data") or {}).get("status")
+        if ps_res.get("status") and ps_status == "success":
+            self._handle_completion(db, payment)
+            mandate.failed_attempts = 0
+            db.commit()
+        elif ps_status in ["failed", "abandoned", "reversed"]:
+            payment.status = "failed"
+            mandate.failed_attempts = (mandate.failed_attempts or 0) + 1
+            db.commit()
+        # else: pending/processing - the charge.success/charge.failed webhook resolves it later.
+
+        return payment
+
     def refund_payment(
         self,
         db: Session,

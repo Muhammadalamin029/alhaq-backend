@@ -159,20 +159,29 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         webhook_data = json.loads(body)
         event = webhook_data.get("event")
         data = webhook_data.get("data", {})
-        
+
         payment_logger.info(f"Processing webhook event: {event}")
-        
+
         # Handle different webhook events
         reference = data.get("reference")
         if not reference:
             payment_logger.warning(f"No reference found in webhook event: {event}")
             return {"status": "ignored", "reason": "no_reference"}
-        
+
+        # Direct Debit mandate authorization webhooks carry a `reference` that
+        # matches a PaymentMandate (from initialize_authorization), not a Payment -
+        # handle that before falling through to the Payment lookup below.
+        authorization = data.get("authorization") or {}
+        if authorization.get("channel") == "direct_debit":
+            mandate_result = payment_service.handle_mandate_webhook(db, event, reference, authorization)
+            if mandate_result is not None:
+                return mandate_result
+
         # Find payment record
         payment = db.query(Payment).filter(
             Payment.transaction_id == reference
         ).first()
-        
+
         if not payment:
             payment_logger.warning(f"Payment not found for reference: {reference}")
             return {"status": "ignored", "reason": "payment_not_found"}

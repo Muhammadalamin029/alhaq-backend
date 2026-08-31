@@ -652,6 +652,34 @@ class GeneralAgreement(Base):
     property = relationship("Property", primaryjoin="and_(foreign(GeneralAgreement.asset_id)==Property.id, GeneralAgreement.asset_type=='property')", back_populates="agreements", overlaps="agreements")
 
 
+class PaymentMandate(Base):
+    """A recurring bank-debit authorization (Paystack Direct Debit) backing a
+    structured GeneralAgreement's monthly installments. One mandate per agreement."""
+    __tablename__ = "payment_mandates"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=False, unique=True)
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+
+    provider = Column(String(50), nullable=False, default="paystack")
+    status = Column(Enum("pending_authorization", "active", "revoked", "failed",
+                        name="mandate_status"), default="pending_authorization")
+
+    # Paystack only allows charging an authorization with the exact email it was created with.
+    email = Column(String(255), nullable=False)
+    reference = Column(String(100), nullable=True)  # initialize_authorization reference
+    authorization_code = Column(String(100), nullable=True)  # set once the customer authorizes
+    bank_name = Column(String(100), nullable=True)
+    account_number_last4 = Column(String(10), nullable=True)
+    failed_attempts = Column(Integer, nullable=False, default=0)
+    authorized_at = Column(TIMESTAMP, nullable=True)  # Paystack requires a 6h wait before first charge
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    agreement = relationship("GeneralAgreement")
+
+
 # ---------------- AUDIT LOGS ----------------
 
 class AuditLog(Base):

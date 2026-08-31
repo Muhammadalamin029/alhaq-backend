@@ -121,3 +121,23 @@ class AgreementPaymentVerify(BaseModel):
     reference: str
 class AssetAgreementApprove(BaseModel):
     unit_id: Optional[UUID] = None
+
+class MandateInitiateRequest(BaseModel):
+    email: str
+    callback_url: Optional[str] = None
+
+class MandateResponse(BaseModel):
+    id: UUID
+    agreement_id: UUID
+    status: str
+    bank_name: Optional[str] = None
+    account_number_last4: Optional[str] = None
+    authorized_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class MandateInitiateResponse(BaseModel):
+    redirect_url: str
+    reference: str

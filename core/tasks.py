@@ -4,7 +4,7 @@ from celery import current_task
 from core.celery_app import celery_app
 from core.email_service import email_service
 from core.redis_client import verification_manager
-from core.model import User, Profile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, Order, Dispute
+from core.model import User, Profile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, Order, Dispute, PaymentMandate
 from core.system_settings_service import system_settings_service
 from datetime import datetime, timedelta
 import logging
@@ -779,6 +779,75 @@ def process_installment_defaults():
             db.close()
     except Exception as e:
         logger.error(f"Error processing installment defaults: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@celery_app.task(name='core.tasks.charge_due_mandates')
+def charge_due_mandates():
+    """
+    Periodic task to auto-charge structured (monthly) agreements with an active
+    Direct Debit mandate whose installment is due today. Runs daily; an agreement
+    stays 'active' with the same next_due_date until a charge succeeds, so a failed
+    attempt is simply retried on the next run. `process_installment_defaults`
+    independently defaults the agreement once the grace period elapses, regardless
+    of how many charge attempts happened here.
+    """
+    from core.payment_service import payment_service
+
+    try:
+        db = next(get_db())
+        try:
+            now = datetime.utcnow()
+
+            due_agreements = db.query(GeneralAgreement).join(
+                PaymentMandate, PaymentMandate.agreement_id == GeneralAgreement.id
+            ).filter(
+                GeneralAgreement.plan_type == "structured",
+                GeneralAgreement.status == "active",
+                GeneralAgreement.next_due_date != None,
+                GeneralAgreement.next_due_date <= now,
+                PaymentMandate.status == "active",
+                PaymentMandate.authorized_at != None,
+                PaymentMandate.authorized_at <= now - timedelta(hours=6),
+            ).all()
+
+            charged_count = 0
+            failed_count = 0
+            for agreement in due_agreements:
+                mandate = db.query(PaymentMandate).filter(PaymentMandate.agreement_id == agreement.id).first()
+                if not mandate or not mandate.authorization_code:
+                    continue
+                try:
+                    payment = payment_service.charge_mandate_installment(db, agreement, mandate)
+                    if payment.status == "completed":
+                        charged_count += 1
+                    elif payment.status == "failed":
+                        failed_count += 1
+                        create_notification(db, {
+                            "user_id": str(agreement.user_id),
+                            "type": "payment_failed",
+                            "title": "Recurring Payment Failed",
+                            "message": (
+                                f"We couldn't charge your bank account for this month's installment. "
+                                f"We'll try again tomorrow - please ensure your account is funded."
+                            ),
+                            "priority": "high",
+                            "channels": ["in_app", "email"],
+                        })
+                except Exception as e:
+                    logger.error(f"Failed to charge mandate for agreement {agreement.id}: {e}")
+
+            if charged_count or failed_count:
+                db.commit()
+
+            return {"success": True, "charged_count": charged_count, "failed_count": failed_count}
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error charging due mandates: {e}")
         return {"success": False, "error": str(e)}
 
 

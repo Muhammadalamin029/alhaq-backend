@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from uuid import UUID
+from uuid import UUID, uuid4
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
@@ -9,7 +9,7 @@ from sqlalchemy import or_
 from core.model import (
     Car, CarUnit, Property, PropertyUnit,
     GeneralInspection, GeneralAgreement, Payment, AssetImage,
-    Profile, User, StoreProfile
+    Profile, User, StoreProfile, PaymentMandate
 )
 from core.notifications_service import create_notification
 from core.paystack_service import paystack_service
@@ -21,12 +21,13 @@ from core.tasks import (
     send_agreement_approved_email,
 )
 from schemas.assets import (
-    AssetInspectionSchedule, 
-    AssetInspectionReview, 
+    AssetInspectionSchedule,
+    AssetInspectionReview,
     AssetInspectionComplete,
     AssetAgreementBase,
     AssetMini,
-    AgreementPaymentInitialize
+    AgreementPaymentInitialize,
+    MandateInitiateRequest
 )
 
 class AssetService():
@@ -440,7 +441,13 @@ class AssetService():
             if not buyer_id:
                  raise HTTPException(status_code=400, detail="Buyer ID could not be resolved from inspection")
         else:
-            # Customer initiated
+            # Customer initiated (e.g. the no-inspection "Buy Now" flow) - block on assets
+            # that are already spoken for, since this path has no seller/admin review gate.
+            if data.asset_type == "automotive" and asset.status == "out_of_stock":
+                raise HTTPException(status_code=400, detail="This vehicle is no longer available for purchase.")
+            if data.asset_type == "property" and asset.status not in ["available"]:
+                raise HTTPException(status_code=400, detail="This property is no longer available for purchase.")
+
             seller_id = asset.seller_id
             buyer_id = user_id
 
@@ -672,6 +679,66 @@ class AssetService():
     def verify_agreement_payment(self, db: Session, reference: str) -> Dict[str, Any]:
         """Verify an agreement payment using the unified payment service"""
         return payment_service.verify_transaction(db, reference)
+
+    def initiate_mandate(self, db: Session, user_id: UUID, agreement_id: UUID, data: MandateInitiateRequest) -> Dict[str, Any]:
+        """Start recurring bank-debit authorization for a structured (monthly) agreement.
+        Returns a redirect_url the customer must visit to consent to the mandate."""
+        agreement = db.query(GeneralAgreement).filter(
+            GeneralAgreement.id == agreement_id,
+            GeneralAgreement.user_id == user_id
+        ).first()
+
+        if not agreement:
+            raise HTTPException(status_code=404, detail="Agreement not found")
+
+        if agreement.plan_type != "structured":
+            raise HTTPException(status_code=400, detail="Recurring debit is only available for structured (monthly) payment plans")
+
+        mandate = db.query(PaymentMandate).filter(PaymentMandate.agreement_id == agreement_id).first()
+        if mandate and mandate.status == "active":
+            raise HTTPException(status_code=400, detail="A recurring mandate is already active for this agreement")
+
+        reference = f"LEL_MANDATE_{uuid4().hex[:10].upper()}"
+        ps_res = paystack_service.initialize_authorization(
+            email=data.email,
+            reference=reference,
+            channels=["direct_debit"],
+            callback_url=data.callback_url,
+        )
+
+        if not ps_res.get("status"):
+            raise HTTPException(status_code=400, detail="Could not start mandate authorization")
+
+        if mandate:
+            mandate.email = data.email
+            mandate.reference = reference
+            mandate.status = "pending_authorization"
+            mandate.authorization_code = None
+            mandate.authorized_at = None
+        else:
+            mandate = PaymentMandate(
+                agreement_id=agreement_id,
+                user_id=user_id,
+                email=data.email,
+                reference=reference,
+                status="pending_authorization",
+            )
+            db.add(mandate)
+
+        db.commit()
+
+        return {
+            "redirect_url": ps_res["data"]["redirect_url"],
+            "reference": reference,
+        }
+
+    def get_mandate(self, db: Session, user_id: UUID, agreement_id: UUID) -> Optional[PaymentMandate]:
+        return db.query(PaymentMandate).join(
+            GeneralAgreement, GeneralAgreement.id == PaymentMandate.agreement_id
+        ).filter(
+            PaymentMandate.agreement_id == agreement_id,
+            or_(GeneralAgreement.user_id == user_id, GeneralAgreement.seller_id == user_id)
+        ).first()
 
     def cancel_agreement(self, db: Session, user_id: UUID, agreement_id: UUID) -> GeneralAgreement:
         """Allow a buyer to cancel their agreement if they haven't made a deposit yet"""

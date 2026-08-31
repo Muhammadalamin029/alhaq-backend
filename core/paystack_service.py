@@ -223,6 +223,91 @@ class PaystackService:
             logger.error(f"Paystack bank transfer charge error: {str(e)}")
             raise Exception(f"Failed to initiate bank transfer charge: {str(e)}")
 
+    def initialize_authorization(self, email: str, reference: str, channels: Optional[list] = None, callback_url: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Start a reusable-authorization request. For Direct Debit, the returned
+        `redirect_url` is where the customer must be sent to consent to future
+        recurring debits against their bank account.
+
+        NOTE: this wraps Paystack's `/transaction/initialize_authorization` endpoint.
+        Its exact required/optional fields (and the webhook event(s) fired once the
+        customer completes authorization) should be re-verified against a live
+        Paystack test integration before this goes to production - Paystack's own
+        docs site could not be reached while writing this integration.
+        """
+        if not self.secret_key or not self.public_key:
+            logger.warning("Paystack keys not configured. Using mock authorization init for development.")
+            return {
+                "status": True,
+                "message": "Authorization initialization successful",
+                "data": {
+                    "redirect_url": f"https://checkout.paystack.com/mock-authorize/{reference}",
+                    "reference": reference,
+                    "access_code": f"mock_auth_{reference}",
+                }
+            }
+
+        try:
+            url = f"{self.base_url}/transaction/initialize_authorization"
+            payload: Dict[str, Any] = {
+                "email": email,
+                "reference": reference,
+                "channels": channels or ["direct_debit"],
+            }
+            if callback_url:
+                payload["callback_url"] = callback_url
+
+            response = requests.post(url, json=payload, headers=self.headers)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.info(f"Paystack authorization initialized: {reference}")
+            return data
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Paystack initialize_authorization error: {str(e)}")
+            raise Exception(f"Failed to initialize authorization: {str(e)}")
+
+    def charge_authorization(self, authorization_code: str, email: str, amount: int, reference: str) -> Dict[str, Any]:
+        """
+        Charge a previously-authorized, reusable instrument (card or direct debit
+        mandate) without further customer interaction. Used for recurring
+        installment charges once a PaymentMandate is active.
+        """
+        if not self.secret_key or not self.public_key:
+            logger.warning("Paystack keys not configured. Using mock authorization charge for development.")
+            return {
+                "status": True,
+                "message": "Charge attempted",
+                "data": {
+                    "reference": reference,
+                    "status": "success",
+                    "amount": amount,
+                    "currency": "NGN",
+                    "gateway_response": "Approved (mock)",
+                }
+            }
+
+        try:
+            url = f"{self.base_url}/transaction/charge_authorization"
+            payload = {
+                "authorization_code": authorization_code,
+                "email": email,
+                "amount": amount,
+                "reference": reference,
+            }
+
+            response = requests.post(url, json=payload, headers=self.headers)
+            response.raise_for_status()
+
+            data = response.json()
+            logger.info(f"Paystack authorization charge initiated: {reference}")
+            return data
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Paystack charge_authorization error: {str(e)}")
+            raise Exception(f"Failed to charge authorization: {str(e)}")
+
     def get_banks(self) -> Dict[str, Any]:
         """
         Get list of supported banks

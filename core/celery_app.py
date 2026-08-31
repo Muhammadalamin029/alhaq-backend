@@ -117,6 +117,10 @@ celery_app.conf.beat_schedule = {
         "task": "core.tasks.process_installment_defaults",
         "schedule": crontab(minute=0, hour=1), # Run at 1 AM UTC
     },
+    "charge_due_mandates_daily": {
+        "task": "core.tasks.charge_due_mandates",
+        "schedule": crontab(minute=0, hour=7), # Run at 7 AM UTC, before the 8 AM reminder/default sweep
+    },
     "send_weekly_admin_report": {
         "task": "core.tasks.send_weekly_admin_report",
         "schedule": crontab(minute=0, hour=8, day_of_week="mon"),

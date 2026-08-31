@@ -18,6 +18,9 @@ from schemas.assets import (
     AssetInspectionComplete,
     AssetAgreementBase,
     AssetAgreementApprove,
+    MandateInitiateRequest,
+    MandateInitiateResponse,
+    MandateResponse,
 )
 
 
@@ -228,6 +231,29 @@ def delete_inspection(
     """Delete an inspection record (Customer or Admin)"""
     lookup_id = get_store_id(db) if current_user["role"] == "admin" else UUID(current_user["id"])
     return asset_service.delete_inspection(db, lookup_id, id)
+
+@router.post("/agreements/{id}/mandate/initiate", response_model=MandateInitiateResponse)
+def initiate_agreement_mandate(
+    id: UUID,
+    data: MandateInitiateRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(role_required(["customer"]))
+):
+    """Start recurring bank-debit (Direct Debit) authorization for a monthly agreement.
+    Returns a redirect_url the customer must visit to consent to the mandate."""
+    return asset_service.initiate_mandate(db, UUID(current_user["id"]), id, data)
+
+@router.get("/agreements/{id}/mandate", response_model=MandateResponse)
+def get_agreement_mandate(
+    id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Poll the status of a recurring mandate (updated by Paystack's webhook)."""
+    mandate = asset_service.get_mandate(db, UUID(current_user["id"]), id)
+    if not mandate:
+        raise HTTPException(status_code=404, detail="Mandate not found")
+    return mandate
 
 @router.post("/agreements/{id}/cancel", response_model=AssetAgreementResponse)
 def cancel_agreement(
