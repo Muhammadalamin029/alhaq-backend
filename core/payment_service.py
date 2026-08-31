@@ -452,13 +452,28 @@ class PaymentService:
                 # signaled as "paid" (-> sold) instead, to avoid colliding with that meaning.
                 if agreement.status in ["active", "completed"]:
                     from core.asset_service import asset_service
-                    asset_service.update_unit_status(
-                        db,
-                        agreement.asset_type,
-                        "paid" if agreement.status == "completed" else agreement.status,
-                        unit_id=agreement.unit_id,
-                        asset_id=agreement.asset_id
+                    unit_status_target = "paid" if agreement.status == "completed" else agreement.status
+                    logger.info(
+                        f"Payment {payment.id}: updating unit status for agreement {agreement.id} "
+                        f"(asset_type={agreement.asset_type}, unit_id={agreement.unit_id}, asset_id={agreement.asset_id}, "
+                        f"target={unit_status_target})"
                     )
+                    try:
+                        asset_service.update_unit_status(
+                            db,
+                            agreement.asset_type,
+                            unit_status_target,
+                            unit_id=agreement.unit_id,
+                            asset_id=agreement.asset_id
+                        )
+                    except Exception:
+                        # A failure here must never roll back a successful payment/agreement
+                        # completion - log loudly so it's fixable, but don't re-raise.
+                        logger.exception(
+                            f"Payment {payment.id}: update_unit_status FAILED for agreement {agreement.id} "
+                            f"(unit_id={agreement.unit_id}, asset_id={agreement.asset_id}) - unit/listing status "
+                            f"may be stale and require manual correction."
+                        )
 
                 # There is no seller balance/payout concept in the single-vendor model —
                 # the full payment amount is simply the business's revenue.

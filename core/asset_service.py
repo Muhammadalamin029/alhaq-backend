@@ -5,6 +5,9 @@ from decimal import Decimal
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException
 from sqlalchemy import or_
+import logging
+
+logger = logging.getLogger(__name__)
 
 from core.model import (
     Car, CarUnit, Property, PropertyUnit,
@@ -63,33 +66,54 @@ class AssetService():
 
         new_status = unit_status_map.get(status)
         if not new_status:
+            logger.warning(f"update_unit_status: no mapping for status='{status}' (asset_type={asset_type}) - nothing updated.")
             return
 
-        if asset_type == "automotive" and unit_id:
+        if asset_type == "automotive":
+            if not unit_id:
+                logger.warning(
+                    f"update_unit_status: automotive call with no unit_id (asset_id={asset_id}, status='{status}' -> "
+                    f"'{new_status}') - nothing can be updated without a unit_id."
+                )
+                return
+
             unit = db.query(CarUnit).filter(CarUnit.id == unit_id).first()
-            if unit:
-                # CarUnit doesn't have pending_inspection, skip if that's the status
-                if new_status != "pending_inspection":
-                    unit.status = new_status
-                
-                # If sold/awaiting_payment, check if main listing should be out of stock
-                if new_status in ["sold", "awaiting_payment"]:
-                    available_count = db.query(CarUnit).filter(
-                        CarUnit.car_id == unit.car_id,
-                        CarUnit.status.in_(["available", "inspected"]),
-                        CarUnit.id != unit.id
-                    ).count()
-                    if available_count == 0:
-                        car = db.query(Car).filter(Car.id == unit.car_id).first()
-                        if car: car.status = "out_of_stock"
+            if not unit:
+                logger.warning(f"update_unit_status: CarUnit {unit_id} not found - nothing updated.")
+                return
+
+            # CarUnit doesn't have pending_inspection, skip if that's the status
+            if new_status != "pending_inspection":
+                unit.status = new_status
+                logger.info(f"update_unit_status: CarUnit {unit.id} -> {new_status}")
+
+            # If sold/awaiting_payment, check if main listing should be out of stock
+            if new_status in ["sold", "awaiting_payment"]:
+                available_count = db.query(CarUnit).filter(
+                    CarUnit.car_id == unit.car_id,
+                    CarUnit.status.in_(["available", "inspected"]),
+                    CarUnit.id != unit.id
+                ).count()
+                if available_count == 0:
+                    car = db.query(Car).filter(Car.id == unit.car_id).first()
+                    if car:
+                        car.status = "out_of_stock"
+                        logger.info(f"update_unit_status: Car {car.id} -> out_of_stock (no available units left)")
 
         elif asset_type == "property":
+            if not unit_id and not asset_id:
+                logger.warning(f"update_unit_status: property call with no unit_id and no asset_id (status='{status}') - nothing updated.")
+                return
+
             # If unit_id is provided, update specific unit
             if unit_id:
                 unit = db.query(PropertyUnit).filter(PropertyUnit.id == unit_id).first()
                 if unit:
                     unit.status = new_status
-            
+                    logger.info(f"update_unit_status: PropertyUnit {unit.id} -> {new_status}")
+                else:
+                    logger.warning(f"update_unit_status: PropertyUnit {unit_id} not found.")
+
             # If asset_id is provided, update main property status or all units if acquisitions
             if asset_id:
                 prop = db.query(Property).filter(Property.id == asset_id).first()
@@ -101,12 +125,17 @@ class AssetService():
                             PropertyUnit.status.in_(["available", "property_inspected", "pending_inspection"]),
                             PropertyUnit.id != unit_id if unit_id else True
                         ).count()
-                        
+
                         if available_count == 0:
                             prop.status = new_status
+                            logger.info(f"update_unit_status: Property {prop.id} -> {new_status} (no available units left)")
+                        else:
+                            logger.info(f"update_unit_status: Property {prop.id} left as-is ({available_count} unit(s) still available)")
                     else:
-                        # Update main property status for global changes
                         prop.status = new_status
+                        logger.info(f"update_unit_status: Property {prop.id} -> {new_status}")
+                else:
+                    logger.warning(f"update_unit_status: Property {asset_id} not found.")
 
     def _get_asset_details(self, db: Session, asset_type: str, asset_id: UUID) -> AssetMini:
         """Helper to fetch basic asset details for nested response"""
