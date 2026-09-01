@@ -302,7 +302,10 @@ class Review(Base):
 
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
-    product_id = Column(UUID, ForeignKey("products.id"), nullable=False)
+    # A review belongs to exactly one of product_id/car_id/property_id (enforced in the service layer).
+    product_id = Column(UUID, ForeignKey("products.id"), nullable=True)
+    car_id = Column(UUID, ForeignKey("cars.id"), nullable=True)
+    property_id = Column(UUID, ForeignKey("properties.id"), nullable=True)
     user_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     # Should add CHECK constraint (1-5)
     rating = Column(Integer, nullable=False)
@@ -313,6 +316,8 @@ class Review(Base):
 
     # Relationships
     product = relationship("Product", back_populates="reviews")
+    car = relationship("Car")
+    property = relationship("Property")
     user = relationship("Profile", back_populates="reviews")
 
 
