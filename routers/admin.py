@@ -20,7 +20,7 @@ import os
 from core.redis_client import redis_client
 from schemas.property import PropertyPublish, PropertyResponse
 from schemas.admin import (
-    AdminDashboardStats, AdminUserListResponse,
+    AdminDashboardStats, AdminUserListResponse, AdminUserDetailResponse,
     AdminProductListResponse, AdminOrderListResponse,
     AdminUserActionRequest, AdminProductActionRequest,
     AdminResponse, AdminListResponse, AdminProductListFilters,
@@ -462,6 +462,65 @@ async def get_admin_users(
     except Exception as e:
         log_error(admin_logger, f"Failed to fetch users list", e)
         raise HTTPException(status_code=500, detail="Failed to fetch users")
+
+
+@router.get("/users/{user_id}", response_model=AdminResponse)
+async def get_admin_user_details(
+    user_id: UUID,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """Get a single user's details plus aggregate activity stats for the admin panel"""
+    try:
+        target_user = db.query(User).outerjoin(Profile).filter(User.id == user_id).first()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        total_orders = db.query(Order).filter(Order.buyer_id == user_id).count()
+        total_inspections = db.query(GeneralInspection).filter(GeneralInspection.user_id == user_id).count()
+        total_agreements = db.query(GeneralAgreement).filter(GeneralAgreement.user_id == user_id).count()
+        total_spent = (
+            db.query(func.sum(Payment.amount))
+            .filter(Payment.buyer_id == user_id, Payment.status == "completed")
+            .scalar() or 0
+        )
+
+        profile = target_user.profile
+        user_data = AdminUserDetailResponse(
+            id=target_user.id,
+            email=target_user.email,
+            role=target_user.role,
+            email_verified=target_user.email_verified,
+            email_verified_at=target_user.email_verified_at,
+            failed_login_attempts=target_user.failed_login_attempts,
+            locked_until=target_user.locked_until,
+            last_login=target_user.last_login,
+            password_changed_at=target_user.password_changed_at,
+            created_at=target_user.created_at,
+            updated_at=target_user.updated_at,
+            profile_name=profile.name if profile else None,
+            profile_bio=profile.bio if profile else None,
+            profile_avatar=profile.avatar_url if profile else None,
+            kyc_status=profile.kyc_status if profile else None,
+            approval_date=profile.approval_date if profile else None,
+            order_count=total_orders,
+            total_orders=total_orders,
+            total_inspections=total_inspections,
+            total_agreements=total_agreements,
+            total_spent=Decimal(str(total_spent)),
+        )
+
+        return AdminResponse(
+            success=True,
+            message="User details retrieved successfully",
+            data=user_data.dict(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to fetch user details", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch user details")
 
 
 @router.get("/products", response_model=AdminListResponse)

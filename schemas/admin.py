@@ -34,7 +34,7 @@ class AdminUserListResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     profile_name: Optional[str] = None  # From Profile.name
-    
+
     class Config:
         from_attributes = True
 
@@ -74,7 +74,9 @@ class AdminUserDetailResponse(BaseModel):
     # Admin calculated fields
     order_count: int = 0
     total_spent: Decimal = Decimal('0.00')
-    
+    total_inspections: int = 0
+    total_agreements: int = 0
+
     class Config:
         from_attributes = True
 
