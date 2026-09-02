@@ -151,6 +151,24 @@ class AdminOrderListResponse(BaseModel):
         from_attributes = True
 
 
+# ---------------- REVIEW MANAGEMENT ----------------
+class AdminReviewListResponse(BaseModel):
+    """Admin view of a review, across products, cars and properties"""
+    id: UUID
+    rating: int
+    comment: Optional[str] = None
+    reviewer_id: UUID
+    reviewer_name: str
+    target_type: str  # "product" | "car" | "property"
+    target_id: UUID
+    target_name: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ---------------- DASHBOARD & ANALYTICS ----------------
 class AdminDashboardStats(BaseModel):
     """Admin dashboard statistics - matches AdminStats model"""

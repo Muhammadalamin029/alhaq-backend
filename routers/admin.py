@@ -11,7 +11,7 @@ from core.auth import role_required
 from core.model import (
     User, Profile, StoreProfile, Product, Order, OrderItem, Category,
     Payment, GeneralInspection, GeneralAgreement,
-    Property, PropertyUnit
+    Property, PropertyUnit, Review, Car
 )
 from fastapi.responses import StreamingResponse
 import csv
@@ -23,7 +23,8 @@ from schemas.admin import (
     AdminDashboardStats, AdminUserListResponse,
     AdminProductListResponse, AdminOrderListResponse,
     AdminUserActionRequest, AdminProductActionRequest,
-    AdminResponse, AdminListResponse, AdminProductListFilters
+    AdminResponse, AdminListResponse, AdminProductListFilters,
+    AdminReviewListResponse
 )
 from core.property_service import property_service
 from core.asset_service import asset_service
@@ -634,6 +635,91 @@ async def get_admin_orders(
     except Exception as e:
         log_error(admin_logger, f"Failed to fetch orders for admin", e)
         raise HTTPException(status_code=500, detail="Failed to fetch orders")
+
+
+@router.get("/reviews", response_model=AdminListResponse)
+async def get_admin_reviews(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+    rating: Optional[int] = Query(None, ge=1, le=5),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """Get all reviews (products, cars and properties) for admin moderation"""
+    try:
+        offset = (page - 1) * limit
+
+        query = db.query(Review).options(
+            joinedload(Review.user),
+            joinedload(Review.product),
+            joinedload(Review.car),
+            joinedload(Review.property),
+        )
+
+        if rating:
+            query = query.filter(Review.rating == rating)
+
+        if search:
+            like = f"%{search}%"
+            query = query.join(Profile, Review.user_id == Profile.id).filter(
+                or_(Profile.name.ilike(like), Review.comment.ilike(like))
+            )
+
+        total_reviews = query.count()
+
+        reviews = (
+            query.order_by(desc(Review.created_at))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        review_list = []
+        for r in reviews:
+            if r.product_id:
+                target_type = "product"
+                target_id = r.product_id
+                target_name = r.product.name if r.product else "Unknown"
+            elif r.car_id:
+                target_type = "car"
+                target_id = r.car_id
+                target_name = f"{r.car.brand} {r.car.model}" if r.car else "Unknown"
+            else:
+                target_type = "property"
+                target_id = r.property_id
+                target_name = r.property.title if r.property else "Unknown"
+
+            review_list.append(AdminReviewListResponse(
+                id=r.id,
+                rating=r.rating,
+                comment=r.comment,
+                reviewer_id=r.user_id,
+                reviewer_name=r.user.name if r.user else "Unknown",
+                target_type=target_type,
+                target_id=target_id,
+                target_name=target_name,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
+            ).dict())
+
+        return AdminListResponse(
+            success=True,
+            message="Reviews retrieved successfully",
+            data=review_list,
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_pages": (total_reviews + limit - 1) // limit,
+                "has_next": page * limit < total_reviews,
+                "has_prev": page > 1
+            },
+            total=total_reviews
+        )
+
+    except Exception as e:
+        log_error(admin_logger, f"Failed to fetch reviews for admin", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch reviews")
 
 
 @router.get("/orders/{order_id}", response_model=AdminResponse)
