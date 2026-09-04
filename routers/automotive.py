@@ -101,10 +101,13 @@ def get_cars(
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     seller_id: Optional[UUID] = None,
+    search: Optional[str] = Query(None, description="Search by brand or model"),
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """Get all cars with filters"""
-    cars = automotive_service.list_cars(db, brand, model, status, min_price, max_price, seller_id)
+    cars = automotive_service.list_cars(db, brand, model, status, min_price, max_price, seller_id, search, min_year, max_year)
     return {
         "success": True,
         "message": "Cars fetched successfully",

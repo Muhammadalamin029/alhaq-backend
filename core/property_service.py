@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from uuid import UUID
 from datetime import datetime
 from typing import List, Optional
@@ -56,12 +57,14 @@ class PropertyService:
         db.refresh(new_property)
         return new_property
 
-    def list_properties(self, db: Session, seller_id: UUID = None, status: str = "available") -> List[Property]:
+    def list_properties(self, db: Session, seller_id: UUID = None, status: str = "available", search: Optional[str] = None) -> List[Property]:
         query = db.query(Property)
         if seller_id:
             query = query.filter(Property.seller_id == seller_id)
         if status:
             query = query.filter(Property.status == status)
+        if search:
+            query = query.filter(or_(Property.title.ilike(f"%{search}%"), Property.location.ilike(f"%{search}%")))
         return query.order_by(Property.created_at.desc()).all()
 
     def get_property(self, db: Session, property_id: UUID) -> Optional[Property]:

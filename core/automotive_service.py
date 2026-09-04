@@ -87,19 +87,24 @@ class AutomotiveService:
     def get_car(self, db: Session, car_id: UUID) -> Optional[Car]:
         return db.query(Car).filter(Car.id == car_id).first()
 
-    def list_cars(self, db: Session, 
-                 brand: Optional[str] = None, 
-                 model: Optional[str] = None, 
+    def list_cars(self, db: Session,
+                 brand: Optional[str] = None,
+                 model: Optional[str] = None,
                  status: Optional[str] = None,
                  min_price: Optional[float] = None,
                  max_price: Optional[float] = None,
-                 seller_id: Optional[UUID] = None) -> List[Car]:
+                 seller_id: Optional[UUID] = None,
+                 search: Optional[str] = None,
+                 min_year: Optional[int] = None,
+                 max_year: Optional[int] = None) -> List[Car]:
         query = db.query(Car)
-        
+
         if brand:
             query = query.filter(Car.brand.ilike(f"%{brand}%"))
         if model:
             query = query.filter(Car.model.ilike(f"%{model}%"))
+        if search:
+            query = query.filter(or_(Car.brand.ilike(f"%{search}%"), Car.model.ilike(f"%{search}%")))
         if status:
             query = query.filter(Car.status == status)
         if min_price:
@@ -108,7 +113,11 @@ class AutomotiveService:
             query = query.filter(Car.price <= max_price)
         if seller_id:
             query = query.filter(Car.seller_id == seller_id)
-            
+        if min_year:
+            query = query.filter(Car.year >= min_year)
+        if max_year:
+            query = query.filter(Car.year <= max_year)
+
         return query.order_by(Car.created_at.desc()).all()
 
     def update_car(self, db: Session, car_id: UUID, seller_id: UUID, update_data: CarUpdate) -> Car:

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -15,8 +15,11 @@ from schemas.property import (
 router = APIRouter(tags=["Properties"])
 
 @router.get("/", response_model=dict)
-def list_available_properties(db: Session = Depends(get_db)):
-    properties = property_service.list_properties(db)
+def list_available_properties(
+    db: Session = Depends(get_db),
+    search: Optional[str] = Query(None, description="Search by title or location"),
+):
+    properties = property_service.list_properties(db, search=search)
     return {
         "success": True,
         "message": "Properties fetched successfully",
