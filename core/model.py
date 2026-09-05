@@ -150,6 +150,7 @@ class Category(Base):
                 default=func.gen_random_uuid())
     name = Column(String(100), unique=True, nullable=False)
     description = Column(Text, nullable=True)
+    icon = Column(String(50), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships

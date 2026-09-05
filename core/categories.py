@@ -24,13 +24,13 @@ class CategoryService:
         
         return categories, count
 
-    def add_category(self, db: Session, name: str, description: str = None):
+    def add_category(self, db: Session, name: str, description: str = None, icon: str = None):
         # Check if category with same name already exists
         existing = self.get_category_by_name(db, name)
         if existing:
             raise ValueError("Category name already exists")
-        
-        new_category = Category(name=name, description=description)
+
+        new_category = Category(name=name, description=description, icon=icon)
         db.add(new_category)
         db.commit()
         db.refresh(new_category)

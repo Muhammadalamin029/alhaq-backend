@@ -61,7 +61,8 @@ async def create_category(
         category = category_service.add_category(
             db=db,
             name=payload.name,
-            description=payload.description
+            description=payload.description,
+            icon=payload.icon
         )
         
         categories_logger.info(f"Category created successfully: {category.id} by user {user['id']}")
