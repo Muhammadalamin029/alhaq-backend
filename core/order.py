@@ -290,14 +290,14 @@ class OrderService:
 
                 if existing_item:
                     # Validate and reserve additional stock only for the diff
-                    self._validate_and_reserve_stock(db, product_id, quantity, order_id)
+                    self._validate_and_reserve_stock(db, product_id, quantity)
                     inventory_service.reserve_stock(db, product_id, quantity, order_id)
 
                     # Increase quantity
                     existing_item.quantity = existing_item.quantity + quantity
                 else:
                     # Validate and reserve stock for new item
-                    self._validate_and_reserve_stock(db, product_id, quantity, order_id)
+                    self._validate_and_reserve_stock(db, product_id, quantity)
                     inventory_service.reserve_stock(db, product_id, quantity, order_id)
 
                     # Create new order item
