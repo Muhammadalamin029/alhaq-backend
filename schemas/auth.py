@@ -15,6 +15,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+
+
 class UserRole(str, Enum):
     CUSTOMER = "customer"
     ADMIN = "admin"

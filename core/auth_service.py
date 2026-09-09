@@ -83,6 +83,78 @@ class AuthService:
         
         return str(user.id)
 
+    def authenticate_or_create_google_user(self, db: Session, google_id: str, email: str, full_name: str) -> User:
+        """
+        Look up a user by Google id, falling back to linking-by-email for an
+        existing password account, or creating a brand-new customer.
+
+        Returns the User (existing or newly created).
+        """
+        user = db.query(User).filter(User.google_id == google_id).first()
+        if user:
+            return user
+
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            # Auto-link: this email already has a password account — attach the Google identity.
+            user.google_id = google_id
+            db.commit()
+            db.refresh(user)
+            return user
+
+        # Brand-new signup via Google — no password, email already verified by Google.
+        display_name = full_name or email.split("@")[0]
+        user = User(
+            email=email,
+            hashed_password=None,
+            google_id=google_id,
+            role=UserRole.CUSTOMER,
+            email_verified=True,
+            email_verified_at=func.current_timestamp(),
+            password_changed_at=func.current_timestamp(),
+        )
+        db.add(user)
+        db.flush()  # ensures user.id exists
+
+        profile = Profile(id=user.id, name=display_name)
+        db.add(profile)
+        db.commit()
+        db.refresh(user)
+
+        try:
+            create_notification(db, {
+                "user_id": str(user.id),
+                "type": "account_verified",
+                "title": "Welcome to LEL Marketplace!",
+                "message": f"Welcome {display_name}! Your account has been created successfully. Start exploring our marketplace.",
+                "priority": "medium",
+                "channels": ["in_app", "email"],
+                "data": {
+                    "user_id": str(user.id),
+                    "role": UserRole.CUSTOMER.value,
+                    "welcome": True
+                }
+            })
+        except Exception as e:
+            print(f"Failed to create welcome notification: {e}")
+
+        try:
+            system_settings_service.notify_admins(
+                db=db,
+                event_key="new_user",
+                title="New User Registration",
+                message=f"A new customer account was created for {email} via Google.",
+                data={
+                    "user_id": str(user.id),
+                    "email": email,
+                    "role": UserRole.CUSTOMER.value,
+                },
+            )
+        except Exception as e:
+            print(f"Failed to notify admins about new user: {e}")
+
+        return user
+
     def authenticate_user(self, db: Session, email: str, password: str) -> Tuple[User, bool]:
         """
         Authenticate user and handle login attempts

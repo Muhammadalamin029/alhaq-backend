@@ -14,7 +14,8 @@ class User(Base):
     id = Column(UUID, primary_key=True, index=True,
                 default=func.gen_random_uuid())
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)
+    google_id = Column(String(255), unique=True, index=True, nullable=True)
     role = Column(Enum("customer", "admin",
                   name="user_roles"), default="customer")
     

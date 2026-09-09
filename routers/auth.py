@@ -14,8 +14,11 @@ from schemas.auth import (
     LoginRequest, RegisterRequest, TokenResponse, RefreshRequest,
     ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse,
     VerifyEmailRequest, ResendVerificationRequest, VerifyPasswordResetRequest,
-    EmailVerificationResponse, PasswordResetResponse, LoginRequest, SendVerificationRequest, RequestPasswordResetRequest
+    EmailVerificationResponse, PasswordResetResponse, LoginRequest, SendVerificationRequest, RequestPasswordResetRequest,
+    GoogleAuthRequest
 )
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 from sqlalchemy.exc import IntegrityError
 from core.logging_config import get_logger, log_auth_event, log_error
 # Get logger for auth routes
@@ -135,6 +138,46 @@ def login(request: Request, form_data: LoginRequest, db: Session = Depends(get_d
     except Exception as e:
         log_error(auth_logger, f"Unexpected error during login for {form_data.email}", e, email=form_data.email)
         raise HTTPException(status_code=500, detail="Login failed")
+
+
+@router.post("/google", response_model=TokenResponse)
+def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
+    """Authenticate (or create) a customer via a Google Sign-In ID token."""
+    if not settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=501, detail="Google sign-in is not configured")
+
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            body.id_token, google_requests.Request(), settings.GOOGLE_CLIENT_ID
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+    if not claims.get("email_verified"):
+        raise HTTPException(status_code=401, detail="Google email is not verified")
+
+    try:
+        user = auth_service.authenticate_or_create_google_user(
+            db,
+            google_id=claims["sub"],
+            email=claims["email"],
+            full_name=claims.get("name", ""),
+        )
+        log_auth_event(
+            auth_logger,
+            "user_login",
+            email=user.email,
+            user_id=str(user.id),
+            success=True,
+            user_role=user.role,
+        )
+        access_token, refresh_token = generate_tokens(db, str(user.id), user.role)
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(auth_logger, f"Unexpected error during Google auth for {claims.get('email')}", e)
+        raise HTTPException(status_code=500, detail="Google sign-in failed")
 
 
 # ---------------- REGISTRATION ---------------- #

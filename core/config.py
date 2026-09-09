@@ -14,7 +14,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ALGORITHM: str
-    
+
+    # Google Sign-In
+    GOOGLE_CLIENT_ID: str = ""
+
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_PASSWORD: str = ""
