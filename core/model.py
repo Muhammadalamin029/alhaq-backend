@@ -71,6 +71,8 @@ class SystemSettings(Base):
     # Payment settings
     commission_rate_percent = Column(Numeric(5, 2), nullable=False, default=5.00)
     minimum_payout_amount = Column(Numeric(15, 2), nullable=False, default=10000)
+    installment_min_percent = Column(Numeric(5, 2), nullable=False, default=0)
+    installment_price_floor = Column(Numeric(15, 2), nullable=False, default=0)
 
     # Inspection policy settings
     minimum_inspection_notice_hours = Column(Integer, nullable=False, default=24)
@@ -508,7 +510,8 @@ class Car(Base):
     year = Column(Integer, nullable=False)
     price = Column(Numeric(15, 2), nullable=False)
     min_deposit_percentage = Column(Numeric(5, 2), default=10)
-    
+    monthly_allowed = Column(Boolean, nullable=False, default=True)
+
     status = Column(Enum("available", "out_of_stock", name="car_listing_status"), default="available")
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -553,6 +556,7 @@ class Property(Base):
     description = Column(Text, nullable=True)
     price = Column(Numeric(15, 2), nullable=False)
     min_deposit_percentage = Column(Numeric(5, 2), default=10)
+    monthly_allowed = Column(Boolean, nullable=False, default=True)
     location = Column(String(255), nullable=False)
     buildings_count = Column(Integer, default=1)
     bedrooms = Column(Integer, nullable=True)
@@ -640,6 +644,7 @@ class GeneralAgreement(Base):
     remaining_balance = Column(Numeric(15, 2), nullable=True)
     
     plan_type = Column(Enum("structured", "flexible", name="financing_plan_type"), nullable=False)
+    payment_plan = Column(Enum("monthly", "full_payment", "installment", name="agreement_payment_plan"), nullable=False)
     duration_months = Column(Integer, nullable=True)
     monthly_installment = Column(Numeric(15, 2), nullable=True)
     next_due_date = Column(TIMESTAMP, nullable=True)
