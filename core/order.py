@@ -687,6 +687,21 @@ class OrderService:
                 detail="Failed to update order status"
             )
 
+    def update_estimated_delivery(self, db: Session, order_id: UUID, estimated_delivery_date) -> Order:
+        """Admin-only: set/override an order's estimated delivery date."""
+        with self.transaction_context(db):
+            order = db.query(Order).filter(Order.id == order_id).first()
+            if not order:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Order not found"
+                )
+
+            order.estimated_delivery_date = estimated_delivery_date
+            db.flush()
+            db.refresh(order)
+            return order
+
     def _send_order_status_notification(self, order_id: UUID, order: Order, old_status: str, new_status: str, user_id: str, notes: str):
         """Notify the buyer when their order status changes."""
         notification_data = {

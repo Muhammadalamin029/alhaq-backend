@@ -28,6 +28,9 @@ class PropertyBase(BaseModel):
     bedrooms: Optional[int] = None
     bathrooms: Optional[Decimal] = None
     square_feet: Optional[int] = None
+    amenities: Optional[List[str]] = None
+    latitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = None
 
 
 class PropertyResponse(PropertyBase):
@@ -61,6 +64,9 @@ class PropertyUpdate(BaseModel):
     bedrooms: Optional[int] = None
     bathrooms: Optional[Decimal] = None
     square_feet: Optional[int] = None
+    amenities: Optional[List[str]] = None
+    latitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = None
     images: Optional[List[AssetImageCreate]] = None
 
 class PropertyAgreementResponse(BaseModel):

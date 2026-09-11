@@ -71,6 +71,7 @@ class OrderResponse(BaseModel):
     id: UUID4
     total_amount: float
     status: str
+    estimated_delivery_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -81,6 +82,10 @@ class OrderResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class EstimatedDeliveryUpdate(BaseModel):
+    estimated_delivery_date: datetime
 
 
 # ----------------- ORDER STATUS MANAGEMENT -----------------

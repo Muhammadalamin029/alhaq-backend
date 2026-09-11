@@ -6,7 +6,8 @@ from core.order import order_service
 from core.products import product_service
 from schemas.order import (
     OrderResponse, OrderItemCreate, OrderCreate,
-    OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate, OrderStatus
+    OrderStatusUpdate, OrderStatusResponse, BulkOrderStatusUpdate, OrderStatus,
+    EstimatedDeliveryUpdate
 )
 from decimal import Decimal
 from datetime import date
@@ -496,6 +497,37 @@ async def update_order_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update order status"
+        )
+
+
+@router.patch("/{order_id}/estimated-delivery", response_model=OrderStatusResponse)
+async def update_estimated_delivery(
+    order_id: str,
+    payload: EstimatedDeliveryUpdate,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db)
+):
+    """Admin: set or override an order's estimated delivery date"""
+    try:
+        order = order_service.update_estimated_delivery(
+            db=db,
+            order_id=order_id,
+            estimated_delivery_date=payload.estimated_delivery_date
+        )
+        return OrderStatusResponse(
+            success=True,
+            message="Estimated delivery date updated",
+            data={
+                "order_id": str(order.id),
+                "estimated_delivery_date": order.estimated_delivery_date.isoformat(),
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update estimated delivery date"
         )
 
 

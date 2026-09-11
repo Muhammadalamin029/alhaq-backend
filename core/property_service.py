@@ -21,6 +21,9 @@ class PropertyService:
             bedrooms=property_data.bedrooms,
             bathrooms=property_data.bathrooms,
             square_feet=property_data.square_feet,
+            amenities=property_data.amenities,
+            latitude=property_data.latitude,
+            longitude=property_data.longitude,
             status="available"
         )
         db.add(new_property)

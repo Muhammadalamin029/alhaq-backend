@@ -218,12 +218,13 @@ class Order(Base):
                     "cancelled", "partially_shipped", "partially_delivered", 
                     "partially_cancelled", name="order_status"), default="pending")
     delivery_address = Column(UUID, ForeignKey("addresses.id"), nullable=True)
-    
+    estimated_delivery_date = Column(TIMESTAMP, nullable=True)  # Admin-settable; defaults to created_at + 7 days on the frontend when unset
+
     # Payment URL fields
     payment_url = Column(Text, nullable=True)  # Paystack authorization URL
     payment_reference = Column(String(100), nullable=True)  # Paystack reference
     payment_initialized_at = Column(TIMESTAMP, nullable=True)  # When payment was first initialized
-    
+
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
@@ -560,6 +561,9 @@ class Property(Base):
     bedrooms = Column(Integer, nullable=True)
     bathrooms = Column(Numeric(3, 1), nullable=True)
     square_feet = Column(Integer, nullable=True)
+    amenities = Column(JSON, nullable=True, default=list)
+    latitude = Column(Numeric(9, 6), nullable=True)
+    longitude = Column(Numeric(9, 6), nullable=True)
 
     listing_type = Column(Enum("sale", "rental", "professional", name="listing_type"), default="sale")
     status = Column(Enum("available", "pending_inspection", "property_inspected", "awaiting_payment", 
