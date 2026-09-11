@@ -11,6 +11,7 @@ class CarBase(BaseModel):
     year: int
     price: Decimal
     min_deposit_percentage: Optional[Decimal] = 10.0
+    monthly_allowed: Optional[bool] = True
 
 class CarUnitBase(BaseModel):
     vin: str
@@ -50,6 +51,7 @@ class CarUpdate(BaseModel):
     year: Optional[int] = None
     price: Optional[Decimal] = None
     min_deposit_percentage: Optional[Decimal] = None
+    monthly_allowed: Optional[bool] = None
     status: Optional[str] = None
     images: Optional[List[AssetImageCreate]] = None
 

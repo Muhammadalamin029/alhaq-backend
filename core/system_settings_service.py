@@ -30,8 +30,8 @@ class SystemSettingsService:
             "currency": "NGN",
             "language": "en",
             "timezone": "Africa/Lagos",
-            "commission_rate_percent": Decimal("5.00"),
-            "minimum_payout_amount": Decimal("10000.00"),
+            "installment_min_percent": Decimal("0.00"),
+            "installment_price_floor": Decimal("0.00"),
             "minimum_inspection_notice_hours": 24,
             "inspection_cancellation_cutoff_hours": 12,
             "missed_inspection_expiry_hours": 24,
@@ -75,8 +75,8 @@ class SystemSettingsService:
                 "timezone": settings_row.timezone,
             },
             "payments": {
-                "commission_rate_percent": float(settings_row.commission_rate_percent or 0),
-                "minimum_payout_amount": float(settings_row.minimum_payout_amount or 0),
+                "installment_min_percent": float(settings_row.installment_min_percent or 0),
+                "installment_price_floor": float(settings_row.installment_price_floor or 0),
             },
             "inspection": {
                 "minimum_inspection_notice_hours": int(settings_row.minimum_inspection_notice_hours),
@@ -123,12 +123,12 @@ class SystemSettingsService:
     def update_payments(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         for field in (
-            "commission_rate_percent",
-            "minimum_payout_amount",
+            "installment_min_percent",
+            "installment_price_floor",
         ):
             if field in payload:
                 value = payload[field]
-                if field.endswith("_percent") or field == "minimum_payout_amount":
+                if field.endswith("_percent") or field == "installment_price_floor":
                     value = Decimal(str(value))
                 setattr(settings_row, field, value)
         settings_row.updated_by_user_id = updated_by_user_id
@@ -183,8 +183,8 @@ class SystemSettingsService:
     def get_payment_setting_values(self, db: Session) -> Dict[str, Any]:
         settings_row = self.get_or_create_settings(db)
         return {
-            "commission_rate_percent": float(settings_row.commission_rate_percent or 0),
-            "minimum_payout_amount": float(settings_row.minimum_payout_amount or 0),
+            "installment_min_percent": float(settings_row.installment_min_percent or 0),
+            "installment_price_floor": float(settings_row.installment_price_floor or 0),
         }
 
     def get_inspection_setting_values(self, db: Session) -> Dict[str, int]:

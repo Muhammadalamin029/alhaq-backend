@@ -137,6 +137,43 @@ class AssetService():
                 else:
                     logger.warning(f"update_unit_status: Property {asset_id} not found.")
 
+    def _get_asset_row(self, db: Session, asset_type: str, asset_id: UUID):
+        """Helper to fetch the underlying Car/Property row (not the AssetMini DTO)."""
+        if asset_type == "automotive":
+            return db.query(Car).filter(Car.id == asset_id).first()
+        elif asset_type == "property":
+            return db.query(Property).filter(Property.id == asset_id).first()
+        return None
+
+    def _resolve_payment_plan(self, db: Session, asset, total_price: Decimal, payment_plan: str) -> str:
+        """
+        Validates the requested payment_plan (monthly/full_payment/installment) against
+        admin-configured rules and returns the legacy plan_type ("structured"/"flexible")
+        that the rest of the system (recurring mandates, etc.) keys off.
+
+        Note: the installment minimum-percent rule is enforced separately, in
+        payment_service.initialize_payment, at the moment the plan-starting payment is
+        made - deposit_paid is always 0 at agreement-creation time (no money has moved
+        yet), so it cannot be checked here.
+        """
+        if payment_plan == "monthly":
+            if not getattr(asset, "monthly_allowed", True):
+                raise HTTPException(status_code=400, detail="Monthly payment is not available for this listing.")
+            return "structured"
+
+        if payment_plan == "installment":
+            settings = system_settings_service.get_payment_setting_values(db)
+            price_floor = Decimal(str(settings.get("installment_price_floor", 0)))
+            if Decimal(total_price) < price_floor:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Installment is only available for purchases of ₦{price_floor:,.2f} or more."
+                )
+            return "flexible"
+
+        # full_payment - always allowed
+        return "flexible"
+
     def _get_asset_details(self, db: Session, asset_type: str, asset_id: UUID) -> AssetMini:
         """Helper to fetch basic asset details for nested response"""
         title = ""
@@ -144,18 +181,21 @@ class AssetService():
         min_deposit = Decimal(10)
         image_url = None
         
+        monthly_allowed = True
         if asset_type == "automotive":
             asset = db.query(Car).filter(Car.id == asset_id).first()
             if asset:
                 title = f"{asset.brand} {asset.model}"
                 price = asset.price
                 min_deposit = asset.min_deposit_percentage
+                monthly_allowed = asset.monthly_allowed
         elif asset_type == "property":
             asset = db.query(Property).filter(Property.id == asset_id).first()
             if asset:
                 title = asset.title
                 price = asset.price
                 min_deposit = asset.min_deposit_percentage
+                monthly_allowed = asset.monthly_allowed
         # Get first image
         img = db.query(AssetImage).filter(
             or_(
@@ -167,7 +207,7 @@ class AssetService():
         if img:
             image_url = img.image_url
             
-        return AssetMini(id=asset_id, type=asset_type, title=title, price=price, min_deposit_percentage=min_deposit, image_url=image_url)
+        return AssetMini(id=asset_id, type=asset_type, title=title, price=price, min_deposit_percentage=min_deposit, monthly_allowed=monthly_allowed, image_url=image_url)
 
     def schedule_inspection(self, db: Session, user_id: UUID, data: AssetInspectionSchedule) -> GeneralInspection:
         inspection_date = self._to_naive_utc(data.inspection_date)
@@ -401,7 +441,13 @@ class AssetService():
         # 2. Update physical asset status
         self.update_unit_status(db, inspection.asset_type, "completed", unit_id=inspection.unit_id, asset_id=inspection.asset_id)
 
-        # 3. Create or Update Agreement automatically in pending_review
+        # 3. Validate the requested payment plan against admin-configured rules
+        asset_row = self._get_asset_row(db, inspection.asset_type, inspection.asset_id)
+        if not asset_row:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        plan_type = self._resolve_payment_plan(db, asset_row, data.agreed_price, data.payment_plan)
+
+        # 4. Create or Update Agreement automatically in pending_review
         existing = db.query(GeneralAgreement).filter(GeneralAgreement.inspection_id == inspection_id).first()
         if not existing:
             new_agreement = GeneralAgreement(
@@ -414,7 +460,8 @@ class AssetService():
                 total_price=data.agreed_price,
                 deposit_paid=0,
                 remaining_balance=data.agreed_price,
-                plan_type=data.plan_type,
+                plan_type=plan_type,
+                payment_plan=data.payment_plan,
                 duration_months=data.duration_months,
                 monthly_installment=data.monthly_installment,
                 status="pending_review",
@@ -425,7 +472,8 @@ class AssetService():
             existing.unit_id = inspection.unit_id
             existing.total_price = data.agreed_price
             existing.remaining_balance = data.agreed_price
-            existing.plan_type = data.plan_type
+            existing.plan_type = plan_type
+            existing.payment_plan = data.payment_plan
             existing.duration_months = data.duration_months
             existing.monthly_installment = data.monthly_installment
 
@@ -446,13 +494,7 @@ class AssetService():
 
     def create_agreement(self, db: Session, user_id: UUID, data: AssetAgreementBase, is_seller: bool = True) -> GeneralAgreement:
         # Get asset to verify details
-        asset = None
-        if data.asset_type == "automotive":
-            asset = db.query(Car).filter(Car.id == data.asset_id).first()
-        elif data.asset_type == "property":
-            asset = db.query(Property).filter(Property.id == data.asset_id).first()
-        else:
-            asset = None
+        asset = self._get_asset_row(db, data.asset_type, data.asset_id)
 
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -480,6 +522,8 @@ class AssetService():
             seller_id = asset.seller_id
             buyer_id = user_id
 
+        plan_type = self._resolve_payment_plan(db, asset, data.total_price, data.payment_plan)
+
         remaining_balance = data.total_price - (data.deposit_paid or 0)
 
         new_agreement = GeneralAgreement(
@@ -492,7 +536,8 @@ class AssetService():
             total_price=data.total_price,
             deposit_paid=data.deposit_paid or 0,
             remaining_balance=remaining_balance,
-            plan_type=data.plan_type,
+            plan_type=plan_type,
+            payment_plan=data.payment_plan,
             duration_months=data.duration_months,
             monthly_installment=data.monthly_installment,
             status="pending_review",  # Start in review

@@ -56,6 +56,7 @@ class AutomotiveService:
             year=car_data.year,
             price=car_data.price,
             min_deposit_percentage=car_data.min_deposit_percentage,
+            monthly_allowed=car_data.monthly_allowed,
             status="available"
         )
         db.add(car_listing)

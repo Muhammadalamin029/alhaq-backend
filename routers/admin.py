@@ -1452,6 +1452,7 @@ async def get_admin_agreement(
                 "total_paid": float((agreement.total_price or 0) - (agreement.remaining_balance or 0)),
                 "remaining_balance": float(agreement.remaining_balance or 0),
                 "plan_type": agreement.plan_type,
+                "payment_plan": agreement.payment_plan,
                 "status": agreement.status,
                 "created_at": agreement.created_at.isoformat(),
                 "user": {"email": agreement.user.email, "name": agreement.user.name or "N/A"},

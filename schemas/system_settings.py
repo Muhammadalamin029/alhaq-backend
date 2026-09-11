@@ -16,8 +16,8 @@ class SystemSettingsGeneral(BaseModel):
 
 
 class SystemSettingsPayments(BaseModel):
-    commission_rate_percent: float
-    minimum_payout_amount: float
+    installment_min_percent: float
+    installment_price_floor: float
 
 
 class SystemSettingsInspection(BaseModel):
@@ -66,8 +66,8 @@ class UpdateSystemSettingsGeneralRequest(BaseModel):
 
 
 class UpdateSystemSettingsPaymentsRequest(BaseModel):
-    commission_rate_percent: float = Field(..., ge=0, le=100)
-    minimum_payout_amount: float = Field(..., ge=0)
+    installment_min_percent: float = Field(..., ge=0, le=100)
+    installment_price_floor: float = Field(..., ge=0)
 
 
 class UpdateSystemSettingsInspectionRequest(BaseModel):

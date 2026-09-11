@@ -13,6 +13,7 @@ from core.model import (
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
 from core.redis_client import redis_client
+from core.system_settings_service import system_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,15 +68,34 @@ class PaymentService:
 
         # Get seller_id if applicable
         seller_id = None
+        agreement = None
         if agreement_id:
             agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == agreement_id).first()
             if agreement:
                 seller_id = agreement.seller_id
         elif order_id:
-            # For orders, we might have multiple sellers, so seller_id at the payment level might be None 
+            # For orders, we might have multiple sellers, so seller_id at the payment level might be None
             # and handled per item or per split. But for simplicity if it's single seller we can set it.
             pass
-        
+
+        # Admin-configured minimum initial-payment percentage for installment plans.
+        # Checked once - only on the payment that starts the plan (no prior completed
+        # payment on this agreement yet) - never on later top-up installments.
+        if agreement and agreement.payment_plan == "installment" and category in ("asset_deposit", "asset_installment"):
+            has_prior_payment = db.query(Payment).filter(
+                Payment.agreement_id == agreement_id,
+                Payment.status == "completed"
+            ).first() is not None
+            if not has_prior_payment:
+                min_percent = Decimal(str(system_settings_service.get_payment_setting_values(db).get("installment_min_percent", 0)))
+                amount = Decimal(amount_kobo) / 100
+                paid_percent = (amount / agreement.total_price * 100) if agreement.total_price else Decimal(0)
+                if paid_percent < min_percent:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"An initial payment of at least {min_percent}% of the price is required to start an installment plan."
+                    )
+
         if existing_payment:
             # Re-initialize with Paystack if it's old or just return existing
             logger.info(f"Re-using existing pending payment for {category}: {existing_payment.id}")

@@ -69,8 +69,6 @@ class SystemSettings(Base):
     timezone = Column(String(100), nullable=False, default="Africa/Lagos")
 
     # Payment settings
-    commission_rate_percent = Column(Numeric(5, 2), nullable=False, default=5.00)
-    minimum_payout_amount = Column(Numeric(15, 2), nullable=False, default=10000)
     installment_min_percent = Column(Numeric(5, 2), nullable=False, default=0)
     installment_price_floor = Column(Numeric(15, 2), nullable=False, default=0)
 

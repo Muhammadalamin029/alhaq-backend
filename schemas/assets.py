@@ -26,7 +26,7 @@ class AssetInspectionReview(BaseModel):
 class AssetInspectionComplete(BaseModel):
     notes: Optional[str] = None
     agreed_price: Decimal
-    plan_type: str = Field(..., pattern="^(structured|flexible)$")
+    payment_plan: str = Field(..., pattern="^(monthly|full_payment|installment)$")
     duration_months: Optional[int] = None
     monthly_installment: Optional[Decimal] = None
     unit_id: Optional[UUID] = None
@@ -37,6 +37,7 @@ class AssetMini(BaseModel):
     title: str # Brand + Model or Property Title
     price: Decimal
     min_deposit_percentage: Optional[Decimal] = 10
+    monthly_allowed: Optional[bool] = True
     image_url: Optional[str] = None
 
     class Config:
@@ -78,7 +79,7 @@ class AssetAgreementBase(BaseModel):
     total_price: Decimal
     deposit_paid: Optional[Decimal] = 0
     remaining_balance: Optional[Decimal] = None
-    plan_type: str = Field(..., pattern="^(structured|flexible)$")
+    payment_plan: str = Field(..., pattern="^(monthly|full_payment|installment)$")
     duration_months: Optional[int] = None
     monthly_installment: Optional[Decimal] = None
     status: str = "pending_review"
@@ -87,11 +88,12 @@ class AssetAgreementResponse(AssetAgreementBase):
     id: UUID
     seller_id: UUID
     user_id: UUID
+    plan_type: str
     total_paid: Optional[Decimal] = None
     next_due_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    
+
     asset: Optional[AssetMini] = None
 
     class Config:

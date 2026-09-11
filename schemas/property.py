@@ -21,6 +21,7 @@ class PropertyBase(BaseModel):
     title: str
     description: Optional[str] = None
     price: Decimal
+    monthly_allowed: Optional[bool] = True
     location: str
     listing_type: str = "sale"
     buildings_count: Optional[int] = 1
@@ -53,6 +54,7 @@ class PropertyUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     price: Optional[Decimal] = None
+    monthly_allowed: Optional[bool] = None
     location: Optional[str] = None
     listing_type: Optional[str] = None
     status: Optional[str] = None

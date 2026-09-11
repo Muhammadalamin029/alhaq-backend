@@ -14,6 +14,7 @@ class PropertyService:
             title=property_data.title,
             description=property_data.description,
             price=property_data.price,
+            monthly_allowed=property_data.monthly_allowed,
             location=property_data.location,
             listing_type=property_data.listing_type,
             buildings_count=property_data.buildings_count or 1,
