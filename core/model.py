@@ -45,6 +45,12 @@ class User(Base):
             return "System Administrator"
         return self.email.split("@")[0]
 
+    @property
+    def phone(self):
+        if self.profile and self.profile.phone:
+            return self.profile.phone
+        return None
+
     notifications = relationship("Notification", back_populates="recipient", cascade="all, delete-orphan")
     notification_prefs = relationship("NotificationPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", back_populates="user")

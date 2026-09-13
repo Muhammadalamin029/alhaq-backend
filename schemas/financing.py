@@ -9,6 +9,7 @@ class UserMini(BaseModel):
     id: UUID
     email: str
     name: Optional[str] = None
+    phone: Optional[str] = None
 
     class Config:
         from_attributes = True
