@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List
@@ -68,16 +68,31 @@ def notify_admins_of_agreement_event(agreement_type: str, action: str):
         db.close()
 
 
-@router.get("/inspections", response_model=List[AssetInspectionResponse])
+@router.get("/inspections")
 def list_my_inspections(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    status: str | None = Query(None, description="Filter by inspection status"),
 ):
     """List all inspections for the current user (Customer or Admin)"""
     if current_user["role"] == "admin":
-        return asset_service.list_seller_inspections(db, get_store_id(db))
+        inspections, count = asset_service.list_seller_inspections(db, get_store_id(db), page=page, limit=limit, status=status)
     else:
-        return asset_service.list_user_inspections(db, UUID(current_user["id"]))
+        inspections, count = asset_service.list_user_inspections(db, UUID(current_user["id"]), page=page, limit=limit, status=status)
+
+    return {
+        "success": True,
+        "message": "Inspections fetched successfully",
+        "data": [AssetInspectionResponse.model_validate(i).model_dump() for i in inspections],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": count,
+            "total_pages": (count + limit - 1) // limit if count else 0,
+        },
+    }
 
 @router.get("/inspections/{id}", response_model=AssetInspectionResponse)
 def get_inspection_details(
@@ -173,16 +188,31 @@ async def reject_agreement(
 
     return agreement
 
-@router.get("/agreements", response_model=List[AssetAgreementResponse])
+@router.get("/agreements")
 def list_my_agreements(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    status: str | None = Query(None, description="Filter by agreement status"),
 ):
     """List all agreements for the current user"""
     if current_user["role"] == "admin":
-        return asset_service.list_seller_agreements(db, get_store_id(db))
+        agreements, count = asset_service.list_seller_agreements(db, get_store_id(db), page=page, limit=limit, status=status)
     else:
-        return asset_service.list_user_agreements(db, UUID(current_user["id"]))
+        agreements, count = asset_service.list_user_agreements(db, UUID(current_user["id"]), page=page, limit=limit, status=status)
+
+    return {
+        "success": True,
+        "message": "Agreements fetched successfully",
+        "data": [AssetAgreementResponse.model_validate(a).model_dump() for a in agreements],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": count,
+            "total_pages": (count + limit - 1) // limit if count else 0,
+        },
+    }
 
 @router.get("/payments", response_model=List[AssetPaymentResponse])
 def get_asset_payments(

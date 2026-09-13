@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import HTTPException
 from sqlalchemy import or_
 import logging
@@ -335,17 +335,31 @@ class AssetService():
 
         return inspection
 
-    def list_seller_inspections(self, db: Session, seller_id: UUID) -> List[GeneralInspection]:
-        inspections = db.query(GeneralInspection).filter(GeneralInspection.seller_id == seller_id).order_by(GeneralInspection.created_at.desc()).all()
+    def list_seller_inspections(
+        self, db: Session, seller_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+    ) -> Tuple[List[GeneralInspection], int]:
+        query = db.query(GeneralInspection).filter(GeneralInspection.seller_id == seller_id)
+        if status:
+            query = query.filter(GeneralInspection.status == status)
+        query = query.order_by(GeneralInspection.created_at.desc())
+        count = query.count()
+        inspections = query.offset((page - 1) * limit).limit(limit).all()
         for ins in inspections:
             ins.asset = self._get_asset_details(db, ins.asset_type, ins.asset_id)
-        return inspections
+        return inspections, count
 
-    def list_user_inspections(self, db: Session, user_id: UUID) -> List[GeneralInspection]:
-        inspections = db.query(GeneralInspection).filter(GeneralInspection.user_id == user_id).order_by(GeneralInspection.created_at.desc()).all()
+    def list_user_inspections(
+        self, db: Session, user_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+    ) -> Tuple[List[GeneralInspection], int]:
+        query = db.query(GeneralInspection).filter(GeneralInspection.user_id == user_id)
+        if status:
+            query = query.filter(GeneralInspection.status == status)
+        query = query.order_by(GeneralInspection.created_at.desc())
+        count = query.count()
+        inspections = query.offset((page - 1) * limit).limit(limit).all()
         for ins in inspections:
             ins.asset = self._get_asset_details(db, ins.asset_type, ins.asset_id)
-        return inspections
+        return inspections, count
 
     def get_inspection(self, db: Session, user_id: UUID, inspection_id: UUID) -> Optional[GeneralInspection]:
         inspection = db.query(GeneralInspection).filter(
@@ -374,19 +388,33 @@ class AssetService():
 
         agreement.total_paid = max(total_paid, max(total_price - remaining_balance, Decimal("0.00")))
 
-    def list_seller_agreements(self, db: Session, seller_id: UUID) -> List[GeneralAgreement]:
-        agreements = db.query(GeneralAgreement).filter(GeneralAgreement.seller_id == seller_id).order_by(GeneralAgreement.created_at.desc()).all()
+    def list_seller_agreements(
+        self, db: Session, seller_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+    ) -> Tuple[List[GeneralAgreement], int]:
+        query = db.query(GeneralAgreement).filter(GeneralAgreement.seller_id == seller_id)
+        if status:
+            query = query.filter(GeneralAgreement.status == status)
+        query = query.order_by(GeneralAgreement.created_at.desc())
+        count = query.count()
+        agreements = query.offset((page - 1) * limit).limit(limit).all()
         for ag in agreements:
             ag.asset = self._get_asset_details(db, ag.asset_type, ag.asset_id)
             self._attach_agreement_financials(db, ag)
-        return agreements
+        return agreements, count
 
-    def list_user_agreements(self, db: Session, user_id: UUID) -> List[GeneralAgreement]:
-        agreements = db.query(GeneralAgreement).filter(GeneralAgreement.user_id == user_id).order_by(GeneralAgreement.created_at.desc()).all()
+    def list_user_agreements(
+        self, db: Session, user_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+    ) -> Tuple[List[GeneralAgreement], int]:
+        query = db.query(GeneralAgreement).filter(GeneralAgreement.user_id == user_id)
+        if status:
+            query = query.filter(GeneralAgreement.status == status)
+        query = query.order_by(GeneralAgreement.created_at.desc())
+        count = query.count()
+        agreements = query.offset((page - 1) * limit).limit(limit).all()
         for ag in agreements:
             ag.asset = self._get_asset_details(db, ag.asset_type, ag.asset_id)
             self._attach_agreement_financials(db, ag)
-        return agreements
+        return agreements, count
 
     def get_agreement(self, db: Session, user_id: UUID, agreement_id: UUID) -> Optional[GeneralAgreement]:
         agreement = db.query(GeneralAgreement).filter(
