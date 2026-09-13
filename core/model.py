@@ -49,6 +49,7 @@ class User(Base):
     notification_prefs = relationship("NotificationPreferences", back_populates="user", uselist=False, cascade="all, delete-orphan")
     inspections = relationship("GeneralInspection", back_populates="user")
     agreements = relationship("GeneralAgreement", back_populates="user")
+    financing_applications = relationship("FinancingApplication", back_populates="user", foreign_keys="[FinancingApplication.user_id]")
 
 
 # ---------------- SYSTEM SETTINGS ----------------
@@ -435,6 +436,10 @@ class Notification(Base):
         "payment_reminder",
         "installment_due",
         "installment_defaulted",
+        "financing_application_submitted",
+        "financing_application_approved",
+        "financing_application_rejected",
+        "financing_application_revoked",
         name="notification_type"
     ), nullable=False)
 
@@ -692,6 +697,80 @@ class PaymentMandate(Base):
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
     agreement = relationship("GeneralAgreement")
+
+
+# ---------------- FINANCING APPLICATIONS ----------------
+
+class FinancingDocumentRequirement(Base):
+    """Admin-configured catalog of document types applicants must upload
+    alongside a FinancingApplication (e.g. "Government ID", "Payslip")."""
+    __tablename__ = "financing_document_requirements"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_required = Column(Boolean, nullable=False, default=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    display_order = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    documents = relationship("FinancingApplicationDocument", back_populates="requirement")
+
+
+class FinancingApplication(Base):
+    """A customer's profile-level financing eligibility application. Not tied to a
+    specific asset - once approved, the user may select monthly/installment plans on
+    any purchase. Rows are never reused across submissions: rejection/revocation is
+    terminal for that row and a resubmission creates a new one, preserving history."""
+    __tablename__ = "financing_applications"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+
+    employment_status = Column(Enum(
+        "employed", "self_employed", "business_owner", "unemployed", "retired", "student",
+        name="financing_employment_status"
+    ), nullable=False)
+    employer_name = Column(String(255), nullable=True)
+    job_title = Column(String(255), nullable=True)
+    monthly_income = Column(Numeric(15, 2), nullable=False)
+    employment_duration_months = Column(Integer, nullable=True)
+    additional_notes = Column(Text, nullable=True)
+
+    status = Column(Enum(
+        "pending_review", "approved", "rejected", "revoked",
+        name="financing_application_status"
+    ), default="pending_review", nullable=False)
+
+    reviewed_by = Column(UUID, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(TIMESTAMP, nullable=True)
+    decision_reason = Column(Text, nullable=True)
+
+    revoked_by = Column(UUID, ForeignKey("users.id"), nullable=True)
+    revoked_at = Column(TIMESTAMP, nullable=True)
+    revocation_reason = Column(Text, nullable=True)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    user = relationship("User", back_populates="financing_applications", foreign_keys=[user_id])
+    documents = relationship("FinancingApplicationDocument", back_populates="application", cascade="all, delete-orphan")
+
+
+class FinancingApplicationDocument(Base):
+    __tablename__ = "financing_application_documents"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    application_id = Column(UUID, ForeignKey("financing_applications.id", ondelete="CASCADE"), nullable=False)
+    requirement_id = Column(UUID, ForeignKey("financing_document_requirements.id"), nullable=False)
+    document_url = Column(Text, nullable=False)
+    original_filename = Column(String(255), nullable=True)
+    uploaded_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    application = relationship("FinancingApplication", back_populates="documents")
+    requirement = relationship("FinancingDocumentRequirement", back_populates="documents")
 
 
 # ---------------- AUDIT LOGS ----------------

@@ -377,6 +377,67 @@ def send_agreement_approved_email(self, user_email: str, user_name: str,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Financing application emails
+# ──────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(bind=True, name='core.tasks.send_financing_application_approved_email')
+def send_financing_application_approved_email(self, user_email: str, user_name: str):
+    """Notify the buyer their financing application was approved."""
+    try:
+        html_body, text_body = email_service.render_financing_application_approved_email(user_name)
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject="Financing Application Approved",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Financing application approved email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending financing application approved email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_financing_application_rejected_email')
+def send_financing_application_rejected_email(self, user_email: str, user_name: str, reason: str):
+    """Notify the buyer their financing application was rejected."""
+    try:
+        html_body, text_body = email_service.render_financing_application_rejected_email(user_name, reason)
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject="Financing Application Rejected",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Financing application rejected email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending financing application rejected email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+@celery_app.task(bind=True, name='core.tasks.send_financing_application_revoked_email')
+def send_financing_application_revoked_email(self, user_email: str, user_name: str, reason: str):
+    """Notify the buyer their financing eligibility was revoked."""
+    try:
+        html_body, text_body = email_service.render_financing_application_revoked_email(user_name, reason)
+        success = email_service.send_email_sync(
+            to_email=user_email,
+            subject="Financing Eligibility Revoked",
+            html_body=html_body, text_body=text_body,
+        )
+        if success:
+            logger.info(f"Financing eligibility revoked email sent to {user_email}")
+            return {"success": True}
+        raise self.retry(countdown=60, max_retries=2)
+    except Exception as exc:
+        logger.error(f"Error sending financing eligibility revoked email to {user_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Dispute emails
 # ──────────────────────────────────────────────────────────────────────────────
 

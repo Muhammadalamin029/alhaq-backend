@@ -18,6 +18,7 @@ from core.notifications_service import create_notification
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
 from core.system_settings_service import system_settings_service
+from core.financing_service import financing_service
 from core.tasks import (
     send_inspection_confirmed_email,
     send_agreement_created_email,
@@ -446,6 +447,7 @@ class AssetService():
         if not asset_row:
             raise HTTPException(status_code=404, detail="Asset not found")
         plan_type = self._resolve_payment_plan(db, asset_row, data.agreed_price, data.payment_plan)
+        financing_service.check_eligible(db, inspection.user_id, data.payment_plan)
 
         # 4. Create or Update Agreement automatically in pending_review
         existing = db.query(GeneralAgreement).filter(GeneralAgreement.inspection_id == inspection_id).first()
@@ -523,6 +525,7 @@ class AssetService():
             buyer_id = user_id
 
         plan_type = self._resolve_payment_plan(db, asset, data.total_price, data.payment_plan)
+        financing_service.check_eligible(db, buyer_id, data.payment_plan)
 
         remaining_balance = data.total_price - (data.deposit_paid or 0)
 

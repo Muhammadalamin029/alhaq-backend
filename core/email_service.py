@@ -462,6 +462,77 @@ class EmailService:
         )
         return html, text
 
+    def render_financing_application_approved_email(self, user_name: str) -> tuple[str, str]:
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Good news - your financing application has been reviewed and approved. '
+            f'You can now select a monthly or installment plan on any purchase.</p>'
+            + _info_box("Head back to your purchase to continue with your preferred plan.", "#27ae60")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="✅",
+            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
+            header_fg="#fff",
+            header_title="Financing Application Approved",
+            header_subtitle="You're eligible for monthly and installment plans",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Financing Application Approved",
+            greeting=f"Hello {user_name},",
+            body="Your financing application has been approved. You can now select a monthly or installment plan on any purchase.",
+        )
+        return html, text
+
+    def render_financing_application_rejected_email(self, user_name: str, reason: str) -> tuple[str, str]:
+        rows = [("Reason", reason)]
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your financing application was not approved this time.</p>'
+            + _details_card(rows, "#c0392b")
+            + _info_box("You may submit a new application at any time.", "#c0392b")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="✖️",
+            header_bg="linear-gradient(135deg,#922b21,#c0392b)",
+            header_fg="#fff",
+            header_title="Financing Application Rejected",
+            header_subtitle="Your application was not approved",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Financing Application Rejected",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_financing_application_revoked_email(self, user_name: str, reason: str) -> tuple[str, str]:
+        rows = [("Reason", reason)]
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your financing eligibility has been revoked. You will need to submit a new '
+            f'application before selecting a monthly or installment plan again.</p>'
+            + _details_card(rows, "#c0392b")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="⚠️",
+            header_bg="linear-gradient(135deg,#922b21,#c0392b)",
+            header_fg="#fff",
+            header_title="Financing Eligibility Revoked",
+            header_subtitle="Your financing eligibility has changed",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Financing Eligibility Revoked",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
     def render_installment_reminder_email(self, user_name: str, asset_title: str,
                                            amount_due: str, due_date: str,
                                            days_left: int,

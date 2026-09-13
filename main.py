@@ -12,6 +12,7 @@ from routers import (
     payments, automotive, assets, properties, disputes, system_settings,
     public as public_router,
     legal_documents as legal_documents_router,
+    financing as financing_router,
 )
 from core.config import settings
 from db.session import engine
@@ -123,6 +124,8 @@ app.include_router(system_settings.router, prefix="/system-settings", tags=["Sys
 app.include_router(public_router.router, prefix="/public", tags=["Public"])
 app.include_router(legal_documents_router.public_router, prefix="/public", tags=["Public"])
 app.include_router(legal_documents_router.admin_router, prefix="/admin", tags=["Admin"])
+app.include_router(financing_router.router, prefix="/financing", tags=["Financing"])
+app.include_router(financing_router.admin_router, prefix="/admin/financing", tags=["Admin"])
 
 # ------------------------------------------------------
 # Global exception handlers
