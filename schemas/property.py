@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
@@ -31,6 +31,10 @@ class PropertyBase(BaseModel):
     amenities: Optional[List[str]] = None
     latitude: Optional[Decimal] = None
     longitude: Optional[Decimal] = None
+
+    @field_serializer('latitude', 'longitude')
+    def serialize_decimal_to_float(self, value: Optional[Decimal]) -> Optional[float]:
+        return float(value) if value is not None else None
 
 
 class PropertyResponse(PropertyBase):
