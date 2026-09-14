@@ -5,13 +5,15 @@ from decimal import Decimal
 
 
 class CheckoutRequest(BaseModel):
-    delivery_address_id: UUID
+    delivery_address_id: Optional[UUID] = None  # Optional for pickup
+    delivery_type: str = Field("delivery", pattern="^(pickup|delivery)$")
     notes: Optional[str] = Field(None, max_length=500)
 
 
 class CheckoutSummary(BaseModel):
     subtotal: Decimal
     shipping_fee: Decimal
+    delivery_fee: Decimal
     tax: Decimal
     total: Decimal
     items_count: int

@@ -99,10 +99,31 @@ class SystemSettings(Base):
     # Store defaults (single-vendor)
     default_grace_period_days = Column(Integer, nullable=True)
 
+    # Delivery settings
+    base_delivery_price = Column(Numeric(15, 2), default=0)
+    store_pickup_location = Column(Text, nullable=True)
+    store_pickup_address = Column(Text, nullable=True)
+
     updated_by_user_id = Column(UUID, ForeignKey("users.id"), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
+
+
+# ---------------- DELIVERY STATES ----------------
+class DeliveryState(Base):
+    __tablename__ = "delivery_states"
+
+    id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
+    state_name = Column(String(100), unique=True, nullable=False)
+    delivery_price = Column(Numeric(15, 2), nullable=True)  # If null, uses base price
+    is_active = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+    # Relationships
+    addresses = relationship("Address", back_populates="delivery_state")
 
 
 # ---------------- PROFILES (CUSTOMERS) ----------------
@@ -222,10 +243,15 @@ class Order(Base):
     buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=False)
     total_amount = Column(Numeric(15, 2), nullable=False)
     status = Column(Enum("pending", "processing", "paid", "shipped", "delivered",
-                    "cancelled", "partially_shipped", "partially_delivered", 
+                    "cancelled", "partially_shipped", "partially_delivered",
                     "partially_cancelled", name="order_status"), default="pending")
     delivery_address = Column(UUID, ForeignKey("addresses.id"), nullable=True)
     estimated_delivery_date = Column(TIMESTAMP, nullable=True)  # Admin-settable; defaults to created_at + 7 days on the frontend when unset
+
+    # Delivery fields
+    delivery_type = Column(Enum("pickup", "delivery", name="delivery_type"), default="delivery")
+    delivery_fee = Column(Numeric(15, 2), default=0)
+    pickup_location = Column(Text, nullable=True)  # For pickup orders
 
     # Payment URL fields
     payment_url = Column(Text, nullable=True)  # Paystack authorization URL
@@ -341,7 +367,8 @@ class Address(Base):
     title = Column(String(50), nullable=False)
     street_address = Column(String(255), nullable=False)
     city = Column(String(100), nullable=False)
-    state_province = Column(String(100), nullable=False)
+    state_province = Column(String(100), nullable=False)  # Kept for backward compatibility
+    delivery_state_id = Column(UUID, ForeignKey("delivery_states.id"), nullable=True)  # New foreign key
     postal_code = Column(String(20), nullable=False)
     country = Column(String(100), nullable=False)
     is_default = Column(Boolean, default=False)
@@ -352,6 +379,7 @@ class Address(Base):
     # Relationships
     user = relationship("Profile", back_populates="addresses")
     orders = relationship("Order", back_populates="delivery_addr")
+    delivery_state = relationship("DeliveryState", back_populates="addresses")
 
 
 # ---------------- WISHLISTS ----------------

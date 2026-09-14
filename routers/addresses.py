@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 from uuid import UUID
 
@@ -7,10 +7,10 @@ from db.session import get_db
 from core.auth import role_required
 from core.model import Address
 from schemas.address import (
-    AddressCreate, 
-    AddressUpdate, 
-    AddressResponse, 
-    AddressListResponse, 
+    AddressCreate,
+    AddressUpdate,
+    AddressResponse,
+    AddressListResponse,
     AddressSingleResponse
 )
 
@@ -25,10 +25,12 @@ async def list_addresses(
     limit: int = Query(50, ge=1, le=100)
 ):
     """Get all addresses for the current user"""
-    q = db.query(Address).filter(Address.user_id == user["id"]) 
+    q = db.query(Address).options(
+        joinedload(Address.delivery_state)
+    ).filter(Address.user_id == user["id"])
     total = q.count()
     addresses = q.order_by(Address.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
-    
+
     return AddressListResponse(
         success=True,
         message="Addresses retrieved successfully",

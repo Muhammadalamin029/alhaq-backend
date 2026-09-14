@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
+from schemas.delivery import DeliveryStateResponse
 
 
 class AddressCreate(BaseModel):
@@ -9,6 +10,7 @@ class AddressCreate(BaseModel):
     street_address: str = Field(..., min_length=1, max_length=255)
     city: str = Field(..., min_length=1, max_length=100)
     state_province: str = Field(..., min_length=1, max_length=100)
+    delivery_state_id: Optional[UUID] = None
     postal_code: str = Field(..., min_length=1, max_length=20)
     country: str = Field(..., min_length=1, max_length=100)
     is_default: Optional[bool] = False
@@ -19,6 +21,7 @@ class AddressUpdate(BaseModel):
     street_address: Optional[str] = Field(None, min_length=1, max_length=255)
     city: Optional[str] = Field(None, min_length=1, max_length=100)
     state_province: Optional[str] = Field(None, min_length=1, max_length=100)
+    delivery_state_id: Optional[UUID] = None
     postal_code: Optional[str] = Field(None, min_length=1, max_length=20)
     country: Optional[str] = Field(None, min_length=1, max_length=100)
     is_default: Optional[bool] = None
@@ -30,6 +33,8 @@ class AddressResponse(BaseModel):
     street_address: str
     city: str
     state_province: str
+    delivery_state_id: Optional[UUID] = None
+    delivery_state: Optional[DeliveryStateResponse] = None
     postal_code: str
     country: str
     is_default: bool

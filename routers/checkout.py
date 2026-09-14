@@ -7,7 +7,7 @@ import logging
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import Order, OrderItem, Address
+from core.model import Order, OrderItem, Address, DeliveryState
 from core.order import order_service
 
 logger = logging.getLogger(__name__)
@@ -31,36 +31,38 @@ async def get_checkout_summary(
     db: Session = Depends(get_db)
 ):
     """Get checkout summary for pending order"""
-    
+
     # Get pending order
     pending_order = order_service.get_orders_by_status(
         db=db, user_id=user["id"], status="pending"
     )
-    
+
     if not pending_order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No pending order found"
         )
-    
+
     # Calculate totals
     subtotal = Decimal(str(pending_order.total_amount))
-    # Note: Customer pays delivery directly to logistics provider
-    # No delivery fee included in order total
-    shipping_fee = Decimal("0.00")  # Customer pays delivery separately
+    # Delivery fee will be calculated based on delivery type and address
+    # Default to 0 for now, will be updated during checkout process
+    shipping_fee = Decimal("0.00")
+    delivery_fee = Decimal("0.00")
     tax = Decimal("0.00")  # No tax for now
-    total = subtotal + shipping_fee + tax
-    
+    total = subtotal + shipping_fee + delivery_fee + tax
+
     items_count = len(pending_order.order_items)
-    
+
     summary = CheckoutSummary(
         subtotal=subtotal,
         shipping_fee=shipping_fee,
+        delivery_fee=delivery_fee,
         tax=tax,
         total=total,
         items_count=items_count
     )
-    
+
     return CheckoutResponse(
         success=True,
         message="Checkout summary retrieved successfully",
@@ -80,7 +82,7 @@ async def process_checkout(
     """Process checkout and convert pending order to processing"""
     system_settings_service.require_verified_email_for_user(db, user["id"], "process checkout")
     
-    logger.info(f"Checkout request from user {user.get('id')}, address {checkout_data.delivery_address_id}")
+    logger.info(f"Checkout request from user {user.get('id')}, delivery_type {checkout_data.delivery_type}")
     
     # Get pending order
     pending_order = order_service.get_orders_by_status(
@@ -93,28 +95,56 @@ async def process_checkout(
             detail="No pending order found"
         )
     
-    # Validate delivery address
-    address = db.query(Address).filter(
-        Address.id == checkout_data.delivery_address_id,
-        Address.user_id == user["id"]
-    ).first()
+    # Calculate delivery fee
+    delivery_fee = Decimal("0.00")
     
-    if not address:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Delivery address not found"
-        )
+    if checkout_data.delivery_type == "delivery":
+        # Validate delivery address is provided
+        if not checkout_data.delivery_address_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Delivery address is required for delivery orders"
+            )
+        
+        # Validate delivery address
+        address = db.query(Address).options(
+            joinedload(Address.delivery_state)
+        ).filter(
+            Address.id == checkout_data.delivery_address_id,
+            Address.user_id == user["id"]
+        ).first()
+        
+        if not address:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Delivery address not found"
+            )
+        
+        # Get delivery state price
+        if address.delivery_state and address.delivery_state.delivery_price:
+            delivery_fee = address.delivery_state.delivery_price
+        else:
+            # Use base price from system settings
+            settings = system_settings_service.get_or_create_settings(db)
+            delivery_fee = settings.base_delivery_price or Decimal("0.00")
+
+        pending_order.delivery_address = checkout_data.delivery_address_id
+    elif checkout_data.delivery_type == "pickup":
+        # Pickup - no address needed, no delivery fee
+        settings = system_settings_service.get_or_create_settings(db)
+        pending_order.pickup_location = settings.store_pickup_location or "Store Location"
+        delivery_fee = Decimal("0.00")
+    
+    # Update order with delivery information
+    pending_order.delivery_type = checkout_data.delivery_type
+    pending_order.delivery_fee = delivery_fee
+    
+    # Add delivery fee to total amount
+    pending_order.total_amount = Decimal(str(pending_order.total_amount)) + delivery_fee
     
     # Stock was already reserved when the order was created — no re-validation or deduction needed here.
-
-    # Update order with delivery address (keep as pending until payment)
-    pending_order.delivery_address = checkout_data.delivery_address_id
-    # Don't change status to processing yet - wait for payment confirmation
     
-    # Add notes if provided
-    if checkout_data.notes:
-        # In a real app, you might have an order_notes field or separate notes table
-        pass
+    # Don't change status to processing yet - wait for payment confirmation
     
     db.commit()
     db.refresh(pending_order)
