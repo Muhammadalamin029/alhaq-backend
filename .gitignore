@@ -1,16 +1,28 @@
-# Python-generated files
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# Python
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.py[cod]
+*.pyo
 
 # Virtual environments
-.venv
-.env
-.env.example
-plans/
-reports/
-logs/
-*.db
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
