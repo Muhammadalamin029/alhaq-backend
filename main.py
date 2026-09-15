@@ -1,7 +1,10 @@
 import os
 from fastapi import FastAPI
 from routers import (
-    auth, products, categories, order,
+    auth,
+    products,
+    categories,
+    order,
     wishlist as wishlist_router,
     dashboard as dashboard_router,
     addresses as addresses_router,
@@ -9,7 +12,12 @@ from routers import (
     checkout as checkout_router,
     notifications as notifications_router,
     admin as admin_router,
-    payments, automotive, assets, properties, disputes, system_settings,
+    payments,
+    automotive,
+    assets,
+    properties,
+    disputes,
+    system_settings,
     public as public_router,
     legal_documents as legal_documents_router,
     financing as financing_router,
@@ -48,29 +56,28 @@ app.add_middleware(UserContextMiddleware)
 app.add_middleware(LoggingMiddleware)
 
 # Log startup
-logger.info(f"Starting {settings.PROJECT_NAME} application", extra={
-    "log_level": settings.LOG_LEVEL,
-    "log_to_console": settings.LOG_TO_CONSOLE,
-})
+logger.info(
+    f"Starting {settings.PROJECT_NAME} application",
+    extra={
+        "log_level": settings.LOG_LEVEL,
+        "log_to_console": settings.LOG_TO_CONSOLE,
+    },
+)
 
 # ------------------------------------------------------
 # Database setup
 # ------------------------------------------------------
-try:
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created successfully")
-except Exception as e:
-    logger.error("Failed to create database tables", exc_info=e)
+logger.info("Database schema managed by Alembic")
 
 # ------------------------------------------------------
 # CORS setup
 # ------------------------------------------------------
 origins = [
-    "http://localhost:8080",                 # Local dev FE
-    "http://127.0.0.1:8080",                # Alternative local dev FE
-    "http://localhost:3000",                 # Alternative dev port
-    "http://127.0.0.1:3000",                # Alternative dev port
-    "https://alhaq-frontend.vercel.app",     # Production FE (no trailing slash!)
+    "http://localhost:8080",  # Local dev FE
+    "http://127.0.0.1:8080",  # Alternative local dev FE
+    "http://localhost:3000",  # Alternative dev port
+    "http://127.0.0.1:3000",  # Alternative dev port
+    "https://alhaq-frontend.vercel.app",  # Production FE (no trailing slash!)
 ]
 
 # Add CORS middleware with more permissive settings for development
@@ -83,23 +90,27 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+
 # Add CORS debugging middleware
 @app.middleware("http")
 async def cors_debug_middleware(request, call_next):
     # Log CORS-related headers
     origin = request.headers.get("origin")
     method = request.method
-    
-    logger.info(f"CORS Debug - Origin: {origin}, Method: {method}, Path: {request.url.path}")
-    
+
+    logger.info(
+        f"CORS Debug - Origin: {origin}, Method: {method}, Path: {request.url.path}"
+    )
+
     response = await call_next(request)
-    
+
     # Add CORS headers to response for debugging
     if origin and origin in origins:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-    
+
     return response
+
 
 # ------------------------------------------------------
 # Routers
@@ -114,19 +125,27 @@ app.include_router(dashboard_router.router, prefix="/dashboard", tags=["Dashboar
 app.include_router(addresses_router.router, prefix="/addresses", tags=["Addresses"])
 app.include_router(reviews_router.router, prefix="/reviews", tags=["Reviews"])
 app.include_router(checkout_router.router, prefix="/checkout", tags=["Checkout"])
-app.include_router(notifications_router.router, prefix="/notifications", tags=["Notifications"])
+app.include_router(
+    notifications_router.router, prefix="/notifications", tags=["Notifications"]
+)
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])
 app.include_router(properties.router, prefix="/properties", tags=["Properties"])
 app.include_router(disputes.router, prefix="/disputes", tags=["Disputes"])
-app.include_router(system_settings.router, prefix="/system-settings", tags=["System Settings"])
+app.include_router(
+    system_settings.router, prefix="/system-settings", tags=["System Settings"]
+)
 app.include_router(public_router.router, prefix="/public", tags=["Public"])
-app.include_router(legal_documents_router.public_router, prefix="/public", tags=["Public"])
+app.include_router(
+    legal_documents_router.public_router, prefix="/public", tags=["Public"]
+)
 app.include_router(legal_documents_router.admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(financing_router.router, prefix="/financing", tags=["Financing"])
-app.include_router(financing_router.admin_router, prefix="/admin/financing", tags=["Admin"])
+app.include_router(
+    financing_router.admin_router, prefix="/admin/financing", tags=["Admin"]
+)
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
 
 # ------------------------------------------------------
@@ -137,6 +156,7 @@ app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
+
 # ------------------------------------------------------
 # Health check
 # ------------------------------------------------------
@@ -146,7 +166,8 @@ def health_check():
     return {
         "status": "ok",
         "service": settings.PROJECT_NAME,
-        "message": "Service is running"
+        "message": "Service is running",
     }
+
 
 logger.info(f"{settings.PROJECT_NAME} application startup complete")
