@@ -2,12 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from decimal import Decimal
 from datetime import datetime, timedelta
-from uuid import UUID
 import logging
 
 from db.session import get_db
 from core.auth import role_required
-from core.model import Order, OrderItem, Address, DeliveryState
+from core.model import Order, Address
 from core.order import order_service
 
 logger = logging.getLogger(__name__)
@@ -23,6 +22,13 @@ from core.notifications_service import create_notification
 from core.system_settings_service import system_settings_service
 
 router = APIRouter()
+
+
+def _items_subtotal(order: Order) -> Decimal:
+    return sum(
+        (Decimal(str(item.price)) * item.quantity for item in (order.order_items or [])),
+        Decimal("0.00"),
+    )
 
 
 @router.get("/summary", response_model=CheckoutResponse)
@@ -43,13 +49,10 @@ async def get_checkout_summary(
             detail="No pending order found"
         )
 
-    # Calculate totals
-    subtotal = Decimal(str(pending_order.total_amount))
-    # Delivery fee will be calculated based on delivery type and address
-    # Default to 0 for now, will be updated during checkout process
+    subtotal = _items_subtotal(pending_order)
     shipping_fee = Decimal("0.00")
-    delivery_fee = Decimal("0.00")
-    tax = Decimal("0.00")  # No tax for now
+    delivery_fee = Decimal(str(pending_order.delivery_fee or 0))
+    tax = Decimal("0.00")
     total = subtotal + shipping_fee + delivery_fee + tax
 
     items_count = len(pending_order.order_items)
@@ -95,18 +98,17 @@ async def process_checkout(
             detail="No pending order found"
         )
     
-    # Calculate delivery fee
+    items_subtotal = _items_subtotal(pending_order)
     delivery_fee = Decimal("0.00")
+    settings = system_settings_service.get_or_create_settings(db)
     
     if checkout_data.delivery_type == "delivery":
-        # Validate delivery address is provided
         if not checkout_data.delivery_address_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Delivery address is required for delivery orders"
             )
         
-        # Validate delivery address
         address = db.query(Address).options(
             joinedload(Address.delivery_state)
         ).filter(
@@ -120,27 +122,25 @@ async def process_checkout(
                 detail="Delivery address not found"
             )
         
-        # Get delivery state price
-        if address.delivery_state and address.delivery_state.delivery_price:
-            delivery_fee = address.delivery_state.delivery_price
+        state = address.delivery_state
+        if state and state.is_active and state.delivery_price is not None:
+            delivery_fee = Decimal(str(state.delivery_price))
         else:
-            # Use base price from system settings
-            settings = system_settings_service.get_or_create_settings(db)
-            delivery_fee = settings.base_delivery_price or Decimal("0.00")
+            delivery_fee = Decimal(str(settings.base_delivery_price or 0))
 
         pending_order.delivery_address = checkout_data.delivery_address_id
+        pending_order.pickup_location = None
+        pending_order.pickup_address = None
     elif checkout_data.delivery_type == "pickup":
-        # Pickup - no address needed, no delivery fee
-        settings = system_settings_service.get_or_create_settings(db)
         pending_order.pickup_location = settings.store_pickup_location or "Store Location"
+        pending_order.pickup_address = settings.store_pickup_address
+        pending_order.delivery_address = None
         delivery_fee = Decimal("0.00")
     
-    # Update order with delivery information
     pending_order.delivery_type = checkout_data.delivery_type
     pending_order.delivery_fee = delivery_fee
-    
-    # Add delivery fee to total amount
-    pending_order.total_amount = Decimal(str(pending_order.total_amount)) + delivery_fee
+    # Idempotent: always rebuild from items + fee (never +=)
+    pending_order.total_amount = items_subtotal + delivery_fee
     
     # Stock was already reserved when the order was created — no re-validation or deduction needed here.
     

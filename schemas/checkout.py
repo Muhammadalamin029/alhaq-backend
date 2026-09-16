@@ -7,7 +7,6 @@ from decimal import Decimal
 class CheckoutRequest(BaseModel):
     delivery_address_id: Optional[UUID] = None  # Optional for pickup
     delivery_type: str = Field("delivery", pattern="^(pickup|delivery)$")
-    notes: Optional[str] = Field(None, max_length=500)
 
 
 class CheckoutSummary(BaseModel):

@@ -824,6 +824,10 @@ async def get_admin_order_details(
             "buyer_email": order.buyer.user.email if order.buyer and order.buyer.user else "Unknown",
             "total_amount": float(order.total_amount),
             "status": order.status,
+            "delivery_type": order.delivery_type or "delivery",
+            "delivery_fee": float(order.delivery_fee or 0),
+            "pickup_location": order.pickup_location,
+            "pickup_address": order.pickup_address,
             # order.delivery_address is just the FK (UUID) to addresses.id.
             # Use the joinedloaded order.delivery_addr relationship to send the
             # actual address fields the frontend renders (title, street_address,

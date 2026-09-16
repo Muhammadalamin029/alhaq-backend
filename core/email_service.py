@@ -653,7 +653,7 @@ class EmailService:
             f'Your order has been dispatched and is on its way to you!</p>'
             + _details_card(rows, "#3498db")
             + _info_box(
-                tracking_note or "You will pay the delivery fee directly to the courier.",
+                tracking_note or "Delivery fees are included in your order total when applicable.",
                 "#3498db"
             )
         )
@@ -760,6 +760,7 @@ class EmailService:
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
                 total=d.get("amount") and f"₦{float(d['amount']):,.2f}" or "",
+                tracking_note=d.get("tracking_note"),
             )
 
         if notification_type == "order_delivered":

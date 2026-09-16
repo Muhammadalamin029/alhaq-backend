@@ -252,6 +252,7 @@ class Order(Base):
     delivery_type = Column(Enum("pickup", "delivery", name="delivery_type"), default="delivery")
     delivery_fee = Column(Numeric(15, 2), default=0)
     pickup_location = Column(Text, nullable=True)  # For pickup orders
+    pickup_address = Column(Text, nullable=True)  # Full address snapshot at checkout
 
     # Payment URL fields
     payment_url = Column(Text, nullable=True)  # Paystack authorization URL

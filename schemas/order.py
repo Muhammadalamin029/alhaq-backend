@@ -72,6 +72,10 @@ class OrderResponse(BaseModel):
     total_amount: float
     status: str
     estimated_delivery_date: Optional[datetime] = None
+    delivery_type: Optional[str] = "delivery"
+    delivery_fee: float = 0
+    pickup_location: Optional[str] = None
+    pickup_address: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

@@ -39,6 +39,20 @@ class OrderService:
             joinedload(Order.payments),
         )
 
+    def _items_subtotal(self, order: Order) -> Decimal:
+        return sum(
+            (Decimal(str(item.price)) * item.quantity for item in (order.order_items or [])),
+            Decimal("0.00"),
+        )
+
+    def _recompute_order_total(self, order: Order) -> Decimal:
+        """items_subtotal + delivery_fee — preserves fee across cart mutations."""
+        items_subtotal = self._items_subtotal(order)
+        delivery_fee = Decimal(str(order.delivery_fee or 0))
+        new_total = items_subtotal + delivery_fee
+        order.total_amount = float(new_total)
+        return new_total
+
     def calculate_overall_order_status(self, item_statuses):
         """Reduce a list of item statuses to a single overall order status."""
         if not item_statuses:
@@ -259,8 +273,7 @@ class OrderService:
 
                 # Ensure total is consistent (already set), but recalc in case of float/decimal quirks
                 db.refresh(new_order)
-                recalc_total = sum(Decimal(str(i.price)) * i.quantity for i in new_order.order_items)
-                new_order.total_amount = float(recalc_total)
+                self._recompute_order_total(new_order)
                 db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(new_order)
                 return new_order
@@ -311,10 +324,9 @@ class OrderService:
                     db.add(new_item)
                     db.flush()
 
-                # Recalculate order total
+                # Recalculate order total (preserve delivery_fee)
                 db.refresh(order)
-                new_total = sum(Decimal(str(item.price)) * item.quantity for item in order.order_items)
-                order.total_amount = float(new_total)
+                self._recompute_order_total(order)
                 db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(order)
                 return order
@@ -375,12 +387,9 @@ class OrderService:
                 # Update quantity
                 order_item.quantity = quantity
 
-                # Recalculate order total using loaded relationship
+                # Recalculate order total using loaded relationship (preserve delivery_fee)
                 order = order_item.order
-                new_total = sum(
-                    Decimal(str(item.price)) * item.quantity for item in order.order_items
-                )
-                order.total_amount = float(new_total)
+                self._recompute_order_total(order)
 
                 db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(order)  # refresh with latest DB state
@@ -461,12 +470,8 @@ class OrderService:
                     db.delete(order)
                     return "ORDER_DELETED"
 
-                # Otherwise recalc total with proper decimal handling
-                new_total = sum(
-                    Decimal(str(item.price)) * item.quantity
-                    for item in order.order_items
-                )
-                order.total_amount = float(new_total)
+                # Otherwise recalc total with proper decimal handling (preserve delivery_fee)
+                self._recompute_order_total(order)
 
                 db.commit()  # Commit the changes to persist the total_amount update
                 db.refresh(order)
@@ -743,14 +748,31 @@ class OrderService:
                         for item in order.order_items
                         if item.product
                     )
-                    order_total = f"₦{sum(item.quantity * item.price for item in order.order_items):,.2f}"
+                    order_total = f"₦{float(order.total_amount):,.2f}"
                     if new_status == "shipped":
+                        if order.delivery_type == "pickup":
+                            location = order.pickup_location or "our store"
+                            tracking_note = (
+                                f"Your order is ready for collection at {location}."
+                                + (f" Address: {order.pickup_address}" if order.pickup_address else "")
+                            )
+                        else:
+                            fee = float(order.delivery_fee or 0)
+                            tracking_note = (
+                                "Your order is on its way. "
+                                + (
+                                    f"Delivery fee of ₦{fee:,.2f} was included in your order total."
+                                    if fee > 0
+                                    else "Delivery was included in your order total."
+                                )
+                            )
                         send_order_shipped_email.delay(
                             buyer_user.email,
                             buyer_profile.name or buyer_user.email,
                             str(order_id),
                             items_summary,
                             order_total,
+                            tracking_note,
                         )
                     else:
                         send_order_delivered_email.delay(
