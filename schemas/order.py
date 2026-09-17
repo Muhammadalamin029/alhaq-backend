@@ -43,11 +43,12 @@ class AddressResponse(BaseModel):
         from_attributes = True
 
 
-
 # ---------------- ORDER ITEM -----------------
 class OrderItemCreate(BaseModel):
     product_id: UUID4
-    quantity: int = Field(..., gt=0, le=1000, description="Quantity must be between 1 and 1000")
+    quantity: int = Field(
+        ..., gt=0, le=1000, description="Quantity must be between 1 and 1000"
+    )
 
 
 class OrderItemResponse(BaseModel):
@@ -55,7 +56,7 @@ class OrderItemResponse(BaseModel):
     quantity: int
     price: float
     status: str = "pending"  # Item-level status
-    product: ProductResponse   # 👈 full product nested
+    product: ProductResponse  # 👈 full product nested
 
     class Config:
         from_attributes = True
@@ -73,7 +74,7 @@ class OrderResponse(BaseModel):
     status: str
     estimated_delivery_date: Optional[datetime] = None
     delivery_type: Optional[str] = "delivery"
-    delivery_fee: float = 0
+    delivery_fee: Optional[float] = 0
     pickup_location: Optional[str] = None
     pickup_address: Optional[str] = None
     created_at: datetime
@@ -95,9 +96,11 @@ class EstimatedDeliveryUpdate(BaseModel):
 # ----------------- ORDER STATUS MANAGEMENT -----------------
 class OrderStatusUpdate(BaseModel):
     status: OrderStatus
-    notes: Optional[str] = Field(None, max_length=500, description="Optional status update notes")
-    
-    @validator('status')
+    notes: Optional[str] = Field(
+        None, max_length=500, description="Optional status update notes"
+    )
+
+    @validator("status")
     def validate_status_transition(cls, v):
         # This will be further validated in the service layer with current status
         allowed_statuses = [status.value for status in OrderStatus]
@@ -113,6 +116,10 @@ class OrderStatusResponse(BaseModel):
 
 
 class BulkOrderStatusUpdate(BaseModel):
-    order_ids: List[UUID4] = Field(..., min_items=1, max_items=50, description="List of order IDs to update")
+    order_ids: List[UUID4] = Field(
+        ..., min_items=1, max_items=50, description="List of order IDs to update"
+    )
     status: OrderStatus
-    notes: Optional[str] = Field(None, max_length=500, description="Optional notes for all orders")
+    notes: Optional[str] = Field(
+        None, max_length=500, description="Optional notes for all orders"
+    )
