@@ -59,9 +59,12 @@ async def get_customer_dashboard_stats(
     )
     
     # Get pending order (cart) info
-    pending_order = db.query(Order).filter(
-        and_(Order.buyer_id == user_id, Order.status == "pending")
-    ).first()
+    pending_order = (
+        db.query(Order)
+        .filter(and_(Order.buyer_id == user_id, Order.status == "pending"))
+        .order_by(Order.created_at.desc(), Order.id.desc())
+        .first()
+    )
     
     cart_items_count = 0
     cart_total = 0.0

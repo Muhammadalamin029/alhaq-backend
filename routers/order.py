@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from db.session import get_db
 from core.auth import role_required
 from core.order import order_service
+from core.order_installment_service import order_installment_service
 from core.products import product_service
 from schemas.order import (
     OrderResponse, OrderItemCreate, OrderCreate,
@@ -225,6 +226,34 @@ async def fetch_order_by_id(
         "success": True,
         "message": "Order fetched successfully",
         "data": OrderResponse.model_validate(order).model_dump(by_alias=True),
+    }
+
+
+@router.get("/{order_id}/installment", status_code=status.HTTP_200_OK)
+async def get_order_installment(
+    order_id: UUID,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Derived installment summary + eligibility for an order."""
+    order = order_service.get_order_by_id(db, order_id)
+
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+
+    if user["role"] == "customer" and str(order.buyer_id) != user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own orders"
+        )
+
+    return {
+        "success": True,
+        "message": "Installment details fetched successfully",
+        "data": order_installment_service.build_eligibility(db, order),
     }
 
 

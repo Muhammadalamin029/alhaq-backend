@@ -654,7 +654,7 @@ async def get_admin_orders(
         # Get paginated results
         orders = (
             query
-            .order_by(desc(Order.created_at))
+            .order_by(desc(Order.created_at), desc(Order.id))
             .offset(offset)
             .limit(limit)
             .all()

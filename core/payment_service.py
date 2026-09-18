@@ -14,6 +14,7 @@ from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
 from core.redis_client import redis_client
 from core.system_settings_service import system_settings_service
+from core.order_installment_service import order_installment_service
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +97,20 @@ class PaymentService:
                         detail=f"An initial payment of at least {min_percent}% of the price is required to start an installment plan."
                     )
 
+        # Product-order installment validation (first payment percentage, balance cap, etc.)
+        if category == "order" and (metadata or {}).get("payment_type") == "installment":
+            order = db.query(Order).filter(Order.id == order_id).first()
+            order_installment_service.validate_installment_payment(
+                db, user_id, order, Decimal(amount_kobo) / 100
+            )
+
         if existing_payment:
             # Re-initialize with Paystack if it's old or just return existing
             logger.info(f"Re-using existing pending payment for {category}: {existing_payment.id}")
             # We update the amount in case it changed
             existing_payment.amount = Decimal(amount_kobo) / 100
+            if (metadata or {}).get("payment_type"):
+                existing_payment.payment_type = payment_type
             
         # 3. Generate unique reference
         reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
@@ -215,6 +225,14 @@ class PaymentService:
 
         existing_payment = existing_payment.first()
         amount_naira = Decimal(amount_kobo) / 100
+        requested_payment_type = (metadata or {}).get("payment_type")
+
+        # 2a. Product-order installment validation (first payment percentage, balance cap, etc.)
+        if category == "order" and requested_payment_type == "installment":
+            order = db.query(Order).filter(Order.id == order_id).first()
+            order_installment_service.validate_installment_payment(
+                db, user_id, order, amount_naira
+            )
 
         # 2b. Reuse existing bank transfer details if still valid for this amount
         if existing_payment and existing_payment.transaction_metadata:
@@ -224,6 +242,9 @@ class PaymentService:
                 is_expired = not redis_client.exists(f"{BANK_TRANSFER_EXPIRY_PREFIX}{existing_payment.reference}")
 
                 if not is_expired:
+                    if requested_payment_type and existing_payment.payment_type != requested_payment_type:
+                        existing_payment.payment_type = requested_payment_type
+                        db.commit()
                     logger.info(f"Reusing existing bank transfer account for {category}: {existing_payment.id}")
                     return {
                         "account_number": cached_bank_transfer["account_number"],
@@ -253,6 +274,8 @@ class PaymentService:
         if existing_payment:
             logger.info(f"Re-using existing pending payment for {category}: {existing_payment.id}")
             existing_payment.amount = amount_naira
+            if requested_payment_type:
+                existing_payment.payment_type = payment_type
 
         # 4. Generate unique reference
         reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
@@ -421,20 +444,72 @@ class PaymentService:
         if hasattr(payment, 'order_id') and payment.order_id:
             order = db.query(Order).filter(Order.id == payment.order_id).first()
             if order:
-                order.status = "paid"
+                if (payment.payment_type or "") == "installment":
+                    # Flush so the derived summary sees this payment as completed,
+                    # then recompute the balance from the ledger rather than counters.
+                    db.flush()
+                    db.expire(order, ["payments"])
+                    summary = order_installment_service.summarize(db, order)
+                    amount_paid = summary["amount_paid"]
+                    remaining = summary["remaining_balance"]
+                    total_amount = float(order.total_amount or 0)
+                    notification_data = {
+                        "order_id": str(order.id),
+                        "amount": float(payment.amount or 0),
+                        "amount_paid": amount_paid,
+                        "remaining_balance": remaining,
+                        "total_amount": total_amount,
+                    }
 
-                # Sync all order items to "paid"
-                db.query(OrderItem).filter(OrderItem.order_id == payment.order_id).update(
-                    {"status": "paid"}, synchronize_session=False
-                )
+                    if remaining <= 0:
+                        order.status = "paid"
+                        # Sync all order items to "paid"
+                        db.query(OrderItem).filter(OrderItem.order_id == payment.order_id).update(
+                            {"status": "paid"}, synchronize_session=False
+                        )
+                        create_notification(db, {
+                            "user_id": str(payment.buyer_id),
+                            "type": "payment_successful",
+                            "title": "Order Payment Confirmed",
+                            "message": (
+                                f"Your final installment payment of ₦{payment.amount:,.2f} for "
+                                f"Order #{str(order.id)[:8]} has been confirmed. Your order is fully paid."
+                            ),
+                            "priority": "high",
+                            "channels": ["in_app", "email"],
+                            "data": notification_data,
+                        })
+                    else:
+                        # Order stays processing while a balance remains.
+                        order.status = "processing"
+                        create_notification(db, {
+                            "user_id": str(payment.buyer_id),
+                            "type": "installment_paid",
+                            "title": "Installment Payment Received",
+                            "message": (
+                                f"Your installment payment of ₦{payment.amount:,.2f} for "
+                                f"Order #{str(order.id)[:8]} has been confirmed. "
+                                f"Remaining balance: ₦{remaining:,.2f}."
+                            ),
+                            "priority": "high",
+                            "channels": ["in_app", "email"],
+                            "data": notification_data,
+                        })
+                else:
+                    order.status = "paid"
 
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_successful",
-                    "title": "Order Payment Confirmed",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} for Order #{str(order.id)[:8]} has been confirmed.",
-                    "priority": "high"
-                })
+                    # Sync all order items to "paid"
+                    db.query(OrderItem).filter(OrderItem.order_id == payment.order_id).update(
+                        {"status": "paid"}, synchronize_session=False
+                    )
+
+                    create_notification(db, {
+                        "user_id": str(payment.buyer_id),
+                        "type": "payment_successful",
+                        "title": "Order Payment Confirmed",
+                        "message": f"Your payment of ₦{payment.amount:,.2f} for Order #{str(order.id)[:8]} has been confirmed.",
+                        "priority": "high"
+                    })
 
         # 3. Handle Asset Agreement Logic
         if hasattr(payment, 'agreement_id') and payment.agreement_id:

@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Import notification utilities
 from core.notification_utils import send_order_notification
+from core.order_installment_service import order_installment_service
 
 
 class OrderService:
@@ -140,6 +141,9 @@ class OrderService:
             query = query.filter(Order.created_at >= start_date)
         if end_date:
             query = query.filter(Order.created_at < end_date + timedelta(days=1))
+        # Newest first; id as a tiebreaker keeps pagination stable when several
+        # orders share the same created_at timestamp.
+        query = query.order_by(Order.created_at.desc(), Order.id.desc())
         count = query.count()
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()
@@ -158,12 +162,15 @@ class OrderService:
                     "id": str(payment.id),
                     "amount": float(payment.amount),
                     "status": payment.status,
+                    "payment_category": payment.payment_category,
+                    "payment_type": payment.payment_type,
                     "payment_method": payment.payment_method,
                     "transaction_id": payment.transaction_id,
                     "transaction_metadata": payment.transaction_metadata,
                     "created_at": payment.created_at.isoformat()
                 } for payment in order.payments
             ] if order.payments else []
+            order.installment = order_installment_service.summarize(db, order)
         return order
 
     def track_order(self, db: Session, order_id: UUID, email: str) -> Optional[Order]:
@@ -193,6 +200,9 @@ class OrderService:
             query = query.filter(Order.created_at >= start_date)
         if end_date:
             query = query.filter(Order.created_at < end_date + timedelta(days=1))
+        # Newest first; id as a tiebreaker keeps pagination stable when several
+        # orders share the same created_at timestamp.
+        query = query.order_by(Order.created_at.desc(), Order.id.desc())
         count = query.count()
         offset = (page - 1) * limit
         orders = query.offset(offset).limit(limit).all()
@@ -204,12 +214,15 @@ class OrderService:
                     "id": str(payment.id),
                     "amount": float(payment.amount),
                     "status": payment.status,
+                    "payment_category": payment.payment_category,
+                    "payment_type": payment.payment_type,
                     "payment_method": payment.payment_method,
                     "transaction_id": payment.transaction_id,
                     "transaction_metadata": payment.transaction_metadata,
                     "created_at": payment.created_at.isoformat()
                 } for payment in order.payments
             ] if order.payments else []
+            order.installment = order_installment_service.summarize(db, order)
 
         return orders, count
 
@@ -219,6 +232,7 @@ class OrderService:
             self._with_relationships(db.query(Order))
             .filter(Order.status == status)
             .filter(Order.buyer_id == user_id)
+            .order_by(Order.created_at.desc(), Order.id.desc())
             .first()
         )
 
@@ -608,6 +622,19 @@ class OrderService:
                     )
 
                 current_status = order.status
+
+                # An order with an active installment plan and an outstanding
+                # balance cannot be marked paid manually — that only happens
+                # when the plan is settled. Once a one-shot payment has already
+                # settled the order it is no longer 'processing', so the guard
+                # naturally does not apply.
+                if new_status == "paid" and current_status in ("pending", "processing"):
+                    summary = order_installment_service.summarize(db, order)
+                    if summary["is_installment"] and summary["remaining_balance"] > 0:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Order has an outstanding installment balance"
+                        )
 
                 # Check if status transition is valid
                 if not self.validate_status_transition(current_status, new_status, user_role):

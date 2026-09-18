@@ -62,6 +62,27 @@ class OrderItemResponse(BaseModel):
         from_attributes = True
 
 
+# ---------------- ORDER INSTALLMENTS -----------------
+class OrderInstallmentSummary(BaseModel):
+    is_installment: bool = False
+    amount_paid: float = 0
+    remaining_balance: float = 0
+    fully_paid: bool = False
+    active: bool = False
+
+
+class InstallmentEligibilityResponse(BaseModel):
+    eligible: bool
+    reason: Optional[str] = None
+    total_amount: float
+    amount_paid: float
+    remaining_balance: float
+    min_percent: float
+    price_floor: float
+    min_initial_amount: float
+    is_installment: bool = False
+
+
 # ---------------- ORDER -----------------
 class OrderCreate(BaseModel):
     delivery_address_id: Optional[UUID4] = None
@@ -84,6 +105,7 @@ class OrderResponse(BaseModel):
     delivery_addr: Optional[AddressResponse] = None
     order_items: List[OrderItemResponse]
     formatted_payments: Optional[List[dict]] = None  # Payment information
+    installment: Optional[OrderInstallmentSummary] = None
 
     class Config:
         from_attributes = True
