@@ -11,6 +11,7 @@ from schemas.system_settings import (
     UpdateSystemSettingsInspectionRequest,
     UpdateSystemSettingsNotificationsRequest,
     UpdateSystemSettingsPaymentsRequest,
+    UpdateSystemSettingsPromoRequest,
     UpdateSystemSettingsSecurityRequest,
 )
 
@@ -156,3 +157,27 @@ def update_notification_settings(
     except Exception as e:
         log_error(system_settings_logger, "Failed to update notification settings", e, user_id=user["id"])
         raise HTTPException(status_code=500, detail="Failed to update notification settings")
+
+
+@router.put("/promo", response_model=dict)
+def update_promo_settings(
+    payload: UpdateSystemSettingsPromoRequest,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    try:
+        settings_data = system_settings_service.update_promo(
+            db,
+            payload.model_dump(),
+            user["id"],
+        )
+        return {
+            "success": True,
+            "message": "Promo banner settings updated successfully",
+            "data": settings_data.model_dump(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(system_settings_logger, "Failed to update promo banner settings", e, user_id=user["id"])
+        raise HTTPException(status_code=500, detail="Failed to update promo banner settings")

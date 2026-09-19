@@ -15,7 +15,8 @@ def send_notification_async(
     message: str,
     data: Optional[Dict[str, Any]] = None,
     priority: str = "medium",
-    channels: Optional[List[str]] = None
+    channels: Optional[List[str]] = None,
+    skip_email: bool = False
 ) -> Optional[str]:
     """
     Send a notification asynchronously using Celery
@@ -43,7 +44,8 @@ def send_notification_async(
             message=message,
             data=data,
             priority=priority,
-            channels=channels or ["in_app", "email"]
+            channels=channels or ["in_app", "email"],
+            skip_email=skip_email
         )
         
         logger.info(f"Queued notification task {task.id} for user {user_id}, type {notification_type}")
@@ -59,7 +61,8 @@ def send_order_notification(
     status: str,
     message: str,
     is_seller: bool = False,
-    order_data: Optional[Dict[str, Any]] = None
+    order_data: Optional[Dict[str, Any]] = None,
+    skip_email: bool = False
 ) -> Optional[str]:
     """
     Send order-related notification
@@ -97,7 +100,8 @@ def send_order_notification(
         message=message,
         data=order_data,
         priority=priority,
-        channels=["in_app", "email"]
+        channels=["in_app", "email"],
+        skip_email=skip_email
     )
 
 

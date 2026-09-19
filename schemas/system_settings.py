@@ -40,6 +40,17 @@ class SystemSettingsNotifications(BaseModel):
     weekly_reports: bool
 
 
+class SystemSettingsPromo(BaseModel):
+    enabled: bool
+    tag: Optional[str] = None
+    headline: Optional[str] = None
+    discount_prefix: Optional[str] = None
+    discount_value: Optional[str] = None
+    discount_suffix: Optional[str] = None
+    cta_text: Optional[str] = None
+    cta_link: Optional[str] = None
+
+
 class SystemSettingsMeta(BaseModel):
     scope: str
     updated_at: Optional[datetime] = None
@@ -52,6 +63,7 @@ class SystemSettingsResponse(BaseModel):
     inspection: SystemSettingsInspection
     security: SystemSettingsSecurity
     notifications: SystemSettingsNotifications
+    promo: SystemSettingsPromo
     meta: SystemSettingsMeta
 
 
@@ -88,3 +100,14 @@ class UpdateSystemSettingsNotificationsRequest(BaseModel):
     dispute_notifications: bool
     system_alerts: bool
     weekly_reports: bool
+
+
+class UpdateSystemSettingsPromoRequest(BaseModel):
+    enabled: bool
+    tag: Optional[str] = Field(None, max_length=50)
+    headline: Optional[str] = Field(None, max_length=255)
+    discount_prefix: Optional[str] = Field(None, max_length=100)
+    discount_value: Optional[str] = Field(None, max_length=50)
+    discount_suffix: Optional[str] = Field(None, max_length=50)
+    cta_text: Optional[str] = Field(None, max_length=100)
+    cta_link: Optional[str] = Field(None, max_length=255)

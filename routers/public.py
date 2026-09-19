@@ -71,3 +71,15 @@ def get_public_delivery_settings(db: Session = Depends(get_db)):
             "store_pickup_address": settings.store_pickup_address
         }
     }
+
+
+@router.get("/promo-banner", response_model=dict)
+def get_public_promo_banner(db: Session = Depends(get_db)):
+    """Get admin-configured storefront promo banner settings."""
+    promo = system_settings_service.get_promo_setting_values(db)
+
+    return {
+        "success": True,
+        "message": "Promo banner settings fetched successfully",
+        "data": promo,
+    }

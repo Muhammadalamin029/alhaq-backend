@@ -760,6 +760,8 @@ class OrderService:
                 message=buyer_messages.get(new_status, f"Your order #{str(order_id)[:8]} status changed to {new_status}."),
                 is_seller=False,
                 order_data=notification_data,
+                # shipped/delivered also send a dedicated email below
+                skip_email=new_status in ("shipped", "delivered"),
             )
         except Exception as e:
             logger.error(f"Failed to send buyer notification for order {order_id}: {e}")

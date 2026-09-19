@@ -35,8 +35,10 @@ class DisputeService:
             "message": f"Your dispute '{data.title}' has been received and is under review.",
             "priority": "high",
             "channels": ["in_app", "email"],
+            "skip_email": True,  # dedicated dispute-opened email is queued below
             "data": {
                 "dispute_id": str(dispute.id),
+                "dispute_event": "opened",
                 "order_id": str(data.order_id) if data.order_id else None,
                 "agreement_id": str(data.agreement_id) if data.agreement_id else None,
             },
@@ -93,8 +95,12 @@ class DisputeService:
             ),
             "priority": "high",
             "channels": ["in_app", "email"],
+            # A resolution also sends a dedicated email below; keep the
+            # notification copy in-app only in that case.
+            "skip_email": is_resolved,
             "data": {
                 "dispute_id": str(dispute.id),
+                "dispute_event": "resolved" if is_resolved else "updated",
                 "resolved": is_resolved,
                 "resolution": dispute.status,
                 "resolution_notes": dispute.resolution_notes,

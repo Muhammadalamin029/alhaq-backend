@@ -59,10 +59,16 @@ def _parse_data(data_text: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
-    # Always include email channel for all notifications
+    # When a dedicated transactional email is already queued for the same event,
+    # callers set skip_email to keep this notification in-app only.
+    skip_email = bool(payload.get("skip_email"))
+
+    # Include email by default, but never when the event is email-suppressed.
     req_channels = payload.get("channels") or []
     if not req_channels:
         req_channels = ["in_app", "email"]
+    if skip_email:
+        req_channels = [c for c in req_channels if c != "email"] or ["in_app"]
     elif "email" not in req_channels:
         req_channels.append("email")
 
@@ -82,7 +88,7 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
 
     # Email dispatch logic
     channels = set(_parse_channels(notification.channels))
-    if 'email' in channels:
+    if 'email' in channels and not skip_email:
         prefs = get_or_create_preferences(db, str(notification.user_id))
         type_to_group = {
             'order_confirmed': 'order_updates',

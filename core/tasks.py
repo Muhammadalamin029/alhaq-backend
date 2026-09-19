@@ -598,7 +598,7 @@ def send_notification_email(self, to_email: str, subject: str, html_body: str, t
 
 
 @celery_app.task(bind=True, name='core.tasks.send_notification')
-def send_notification(self, user_id: str, notification_type: str, title: str, message: str, data: dict = None, priority: str = "medium", channels: list = None):
+def send_notification(self, user_id: str, notification_type: str, title: str, message: str, data: dict = None, priority: str = "medium", channels: list = None, skip_email: bool = False):
     """
     Generic Celery task to send notifications
     
@@ -639,6 +639,7 @@ def send_notification(self, user_id: str, notification_type: str, title: str, me
                 "priority": priority,
                 "channels": final_channels,
                 "data": data,
+                "skip_email": skip_email,
                 "to_email": user_email  # Include user's email for email sending
             }
             

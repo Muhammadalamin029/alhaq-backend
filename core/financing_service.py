@@ -214,6 +214,7 @@ class FinancingService:
             "title": "Financing Application Approved",
             "message": "Your financing application has been approved. You can now select monthly or installment plans.",
             "priority": "high",
+            "skip_email": True,  # dedicated approval email is queued below
         })
 
         user = db.query(User).filter(User.id == application.user_id).first()
@@ -243,6 +244,7 @@ class FinancingService:
             "title": "Financing Application Rejected",
             "message": f"Your financing application was rejected. Reason: {reason}",
             "priority": "high",
+            "skip_email": True,  # dedicated rejection email is queued below
         })
 
         user = db.query(User).filter(User.id == application.user_id).first()
@@ -272,6 +274,7 @@ class FinancingService:
             "title": "Financing Eligibility Revoked",
             "message": f"Your financing eligibility has been revoked. Reason: {reason}",
             "priority": "urgent",
+            "skip_email": True,  # dedicated revocation email is queued below
         })
 
         user = db.query(User).filter(User.id == application.user_id).first()

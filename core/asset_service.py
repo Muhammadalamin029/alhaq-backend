@@ -305,14 +305,17 @@ class AssetService():
         db.commit()
         db.refresh(inspection)
 
-        # Notify User
+        # Notify User. Confirmation also sends a dedicated email below, so the
+        # notification copy is in-app only in that case; rejections have no
+        # dedicated email and keep their notification email.
         create_notification(db, {
             "user_id": str(inspection.user_id),
             "type": "inspection_confirmed" if data.action == "approve" else "inspection_rejected",
             "title": title,
             "message": message,
             "priority": "high",
-            "channel": ["email", "in_app"]
+            "channels": ["in_app", "email"],
+            "skip_email": data.action == "approve",
         })
 
         if data.action == "approve":
@@ -658,7 +661,8 @@ class AssetService():
             "title": "Agreement Approved!",
             "message": f"Your agreement for the {agreement.asset_type} has been approved by the seller. Please proceed to pay your deposit to activate it.",
             "priority": "high",
-            "channels": ["in_app", "email"]
+            "channels": ["in_app", "email"],
+            "skip_email": True,  # dedicated agreement-approved email is queued below
         })
 
         try:

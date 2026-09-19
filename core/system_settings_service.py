@@ -43,6 +43,14 @@ class SystemSettingsService:
             "dispute_notifications": True,
             "system_alerts": True,
             "weekly_reports": True,
+            "promo_banner_enabled": False,
+            "promo_banner_tag": "Sale",
+            "promo_banner_headline": "Huge Savings",
+            "promo_banner_discount_prefix": "Up to",
+            "promo_banner_discount_value": "59%",
+            "promo_banner_discount_suffix": "OFF",
+            "promo_banner_cta_text": "Shop Now",
+            "promo_banner_cta_link": "/products",
         }
 
     def get_or_create_settings(self, db: Session) -> SystemSettings:
@@ -95,6 +103,7 @@ class SystemSettingsService:
                 "system_alerts": bool(settings_row.system_alerts),
                 "weekly_reports": bool(settings_row.weekly_reports),
             },
+            "promo": self.get_promo_setting_values_from_row(settings_row),
             "meta": {
                 "scope": settings_row.scope,
                 "updated_at": settings_row.updated_at,
@@ -175,6 +184,41 @@ class SystemSettingsService:
         ):
             if field in payload:
                 setattr(settings_row, field, payload[field])
+        settings_row.updated_by_user_id = updated_by_user_id
+        db.commit()
+        db.refresh(settings_row)
+        return self.to_response(settings_row)
+
+    def get_promo_setting_values_from_row(self, settings_row: SystemSettings) -> Dict[str, Any]:
+        return {
+            "enabled": bool(settings_row.promo_banner_enabled),
+            "tag": settings_row.promo_banner_tag,
+            "headline": settings_row.promo_banner_headline,
+            "discount_prefix": settings_row.promo_banner_discount_prefix,
+            "discount_value": settings_row.promo_banner_discount_value,
+            "discount_suffix": settings_row.promo_banner_discount_suffix,
+            "cta_text": settings_row.promo_banner_cta_text,
+            "cta_link": settings_row.promo_banner_cta_link,
+        }
+
+    def get_promo_setting_values(self, db: Session) -> Dict[str, Any]:
+        return self.get_promo_setting_values_from_row(self.get_or_create_settings(db))
+
+    def update_promo(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+        settings_row = self.get_or_create_settings(db)
+        field_mapping = {
+            "enabled": "promo_banner_enabled",
+            "tag": "promo_banner_tag",
+            "headline": "promo_banner_headline",
+            "discount_prefix": "promo_banner_discount_prefix",
+            "discount_value": "promo_banner_discount_value",
+            "discount_suffix": "promo_banner_discount_suffix",
+            "cta_text": "promo_banner_cta_text",
+            "cta_link": "promo_banner_cta_link",
+        }
+        for field, column in field_mapping.items():
+            if field in payload:
+                setattr(settings_row, column, payload[field])
         settings_row.updated_by_user_id = updated_by_user_id
         db.commit()
         db.refresh(settings_row)

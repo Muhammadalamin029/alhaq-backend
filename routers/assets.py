@@ -6,7 +6,6 @@ from typing import List
 from db.session import get_db, SessionLocal
 from core.auth import get_current_user, role_required
 from core.asset_service import asset_service
-from core.notifications_service import create_notification
 from core.system_settings_service import system_settings_service
 from core.store_service import get_store_id
 from schemas.assets import (
@@ -25,28 +24,6 @@ from schemas.assets import (
 
 
 router = APIRouter(prefix="", tags=["Assets"])
-
-def notify_agreement_update(target_id: str, agreement_type: str, action: str):
-    """Background task to notify a buyer with its own session"""
-    db = SessionLocal()
-    try:
-        title = "New Purchase Agreement" if action == "created" else "Agreement Approved"
-        message = (
-            f"A new agreement has been submitted for review. Please check your agreements list."
-            if action == "created" else
-            f"Your purchase agreement has been approved! You can now proceed with the deposit."
-        )
-
-        create_notification(db, {
-            "user_id": target_id,
-            "type": "agreement_update",
-            "title": title,
-            "message": message,
-            "priority": "high"
-        })
-    finally:
-        db.close()
-
 
 def notify_admins_of_agreement_event(agreement_type: str, action: str):
     """Background task to notify admins (there's no more per-listing seller user to notify)"""
@@ -168,8 +145,7 @@ async def approve_agreement(
     """Approve a pending agreement (Admin)"""
     agreement = asset_service.approve_agreement(db, get_store_id(db), id, body.unit_id)
 
-    # Notify the buyer in background
-    background_tasks.add_task(notify_agreement_update, str(agreement.user_id), agreement.asset_type, "approved")
+    # Buyer notification and the dedicated approval email are sent by asset_service.
 
     return agreement
 
@@ -183,8 +159,7 @@ async def reject_agreement(
     """Reject a pending agreement (Admin)"""
     agreement = asset_service.reject_agreement(db, get_store_id(db), id)
 
-    # Notify the buyer in background
-    background_tasks.add_task(notify_agreement_update, str(agreement.user_id), agreement.asset_type, "rejected")
+    # Buyer notification is sent by asset_service.
 
     return agreement
 

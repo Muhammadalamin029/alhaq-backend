@@ -104,6 +104,16 @@ class SystemSettings(Base):
     store_pickup_location = Column(Text, nullable=True)
     store_pickup_address = Column(Text, nullable=True)
 
+    # Promo banner settings (admin-controlled storefront banner)
+    promo_banner_enabled = Column(Boolean, nullable=False, default=False)
+    promo_banner_tag = Column(String(50), nullable=True)
+    promo_banner_headline = Column(String(255), nullable=True)
+    promo_banner_discount_prefix = Column(String(100), nullable=True)
+    promo_banner_discount_value = Column(String(50), nullable=True)
+    promo_banner_discount_suffix = Column(String(50), nullable=True)
+    promo_banner_cta_text = Column(String(100), nullable=True)
+    promo_banner_cta_link = Column(String(255), nullable=True)
+
     updated_by_user_id = Column(UUID, ForeignKey("users.id"), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(

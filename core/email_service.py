@@ -772,19 +772,22 @@ class EmailService:
             )
 
         if d.get("dispute_id"):
-            if d.get("resolved"):
+            dispute_event = d.get("dispute_event")
+            if dispute_event == "resolved" or d.get("resolved"):
                 return self.render_dispute_resolved_email(
                     user_name=user_name,
                     dispute_title=title,
                     resolution=d.get("resolution") or "Resolved",
                     notes=d.get("resolution_notes"),
                 )
-            return self.render_dispute_opened_email(
-                user_name=user_name,
-                dispute_title=title,
-                reference=d.get("dispute_id", "")[:8].upper(),
-                order_or_agreement_id=d.get("order_id") or d.get("agreement_id"),
-            )
+            if dispute_event == "opened":
+                return self.render_dispute_opened_email(
+                    user_name=user_name,
+                    dispute_title=title,
+                    reference=d.get("dispute_id", "")[:8].upper(),
+                    order_or_agreement_id=d.get("order_id") or d.get("agreement_id"),
+                )
+            # Other dispute updates (e.g. status changes) use the generic template.
 
         # --- Generic fallback ---
         return self._render_generic_notification_email(
