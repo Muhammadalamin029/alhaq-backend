@@ -92,10 +92,20 @@ class AuthService:
         """
         user = db.query(User).filter(User.google_id == google_id).first()
         if user:
+            if user.is_active is False:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="This account has been deactivated."
+                )
             return user
 
         user = db.query(User).filter(User.email == email).first()
         if user:
+            if user.is_active is False:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="This account has been deactivated."
+                )
             # Auto-link: this email already has a password account — attach the Google identity.
             user.google_id = google_id
             db.commit()
@@ -176,6 +186,13 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
+            )
+
+        # Google-only accounts have no password to verify
+        if not user.hashed_password:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This account uses Google Sign-In. Please continue with Google."
             )
 
         # Check if account is locked
@@ -308,6 +325,13 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
+            )
+
+        # Google-only accounts have no current password to verify
+        if not user.hashed_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account has no password set. Use 'Forgot password' to create one."
             )
 
         # Verify current password

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from core.config import settings
 from core.auth import create_access_token, create_refresh_token, decode_token, get_current_user
 from core.auth_service import auth_service
+from core.model import User
 from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
 from core.system_settings_service import system_settings_service
 from db.session import get_db
@@ -156,28 +157,41 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
     if not claims.get("email_verified"):
         raise HTTPException(status_code=401, detail="Google email is not verified")
 
+    google_sub = claims.get("sub")
+    email = claims.get("email")
+    if not google_sub or not email:
+        raise HTTPException(status_code=401, detail="Google account did not provide a usable identity")
+
     try:
         user = auth_service.authenticate_or_create_google_user(
             db,
-            google_id=claims["sub"],
-            email=claims["email"],
+            google_id=google_sub,
+            email=email,
             full_name=claims.get("name", ""),
         )
-        log_auth_event(
-            auth_logger,
-            "user_login",
-            email=user.email,
-            user_id=str(user.id),
-            success=True,
-            user_role=user.role,
-        )
-        access_token, refresh_token = generate_tokens(db, str(user.id), user.role)
-        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    except IntegrityError:
+        # A concurrent first login raced us to create the user; re-query and continue.
+        db.rollback()
+        user = db.query(User).filter(User.google_id == google_sub).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Google sign-in failed")
     except HTTPException:
         raise
     except Exception as e:
-        log_error(auth_logger, f"Unexpected error during Google auth for {claims.get('email')}", e)
+        db.rollback()
+        log_error(auth_logger, f"Unexpected error during Google auth for {email}", e)
         raise HTTPException(status_code=500, detail="Google sign-in failed")
+
+    log_auth_event(
+        auth_logger,
+        "user_login",
+        email=user.email,
+        user_id=str(user.id),
+        success=True,
+        user_role=user.role,
+    )
+    access_token, refresh_token = generate_tokens(db, str(user.id), user.role)
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
 # ---------------- REGISTRATION ---------------- #
