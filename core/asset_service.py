@@ -15,6 +15,7 @@ from core.model import (
     Profile, User, StoreProfile, PaymentMandate
 )
 from core.notifications_service import create_notification
+from core.email_service import _ref
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
 from core.system_settings_service import system_settings_service
@@ -305,9 +306,30 @@ class AssetService():
         db.commit()
         db.refresh(inspection)
 
+        # Fetch asset details once for both the notification data and the
+        # dedicated confirmation email below.
+        asset = None
+        try:
+            asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
+        except Exception:
+            pass  # non-critical
+
+        notification_data = {
+            "asset_title": (
+                asset.title if asset and asset.title
+                else f"{inspection.asset_type.title()} asset"
+            ),
+            "inspection_date": (
+                inspection.inspection_date.strftime("%B %d, %Y at %I:%M %p")
+                if inspection.inspection_date else None
+            ),
+        }
+        if data.action != "approve":
+            notification_data["reason"] = message
+
         # Notify User. Confirmation also sends a dedicated email below, so the
-        # notification copy is in-app only in that case; rejections have no
-        # dedicated email and keep their notification email.
+        # notification copy is in-app only in that case; rejections keep their
+        # notification email and use the rejection template.
         create_notification(db, {
             "user_id": str(inspection.user_id),
             "type": "inspection_confirmed" if data.action == "approve" else "inspection_rejected",
@@ -316,13 +338,13 @@ class AssetService():
             "priority": "high",
             "channels": ["in_app", "email"],
             "skip_email": data.action == "approve",
+            "data": notification_data,
         })
 
         if data.action == "approve":
             try:
                 user = db.query(User).filter(User.id == inspection.user_id).first()
                 seller = db.query(StoreProfile).filter(StoreProfile.id == inspection.seller_id).first()
-                asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
                 if user and seller and asset:
                     send_inspection_confirmed_email.delay(
                         user.email,
@@ -677,6 +699,7 @@ class AssetService():
                     f"₦{agreement.remaining_balance:,.2f}",
                     agreement.next_due_date.strftime("%B %d, %Y") if agreement.next_due_date else None,
                     f"₦{agreement.monthly_installment:,.2f}" if agreement.monthly_installment else None,
+                    _ref(agreement.id),
                 )
         except Exception as e:
             pass  # non-critical

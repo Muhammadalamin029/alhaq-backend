@@ -12,6 +12,7 @@ from core.model import (
 )
 from core.paystack_service import paystack_service
 from core.notifications_service import create_notification
+from core.email_service import _ref
 from core.redis_client import redis_client
 from core.system_settings_service import system_settings_service
 from core.order_installment_service import order_installment_service
@@ -477,7 +478,11 @@ class PaymentService:
                             ),
                             "priority": "high",
                             "channels": ["in_app", "email"],
-                            "data": notification_data,
+                            "data": {
+                                **notification_data,
+                                "context": "order",
+                                "reference": payment.reference,
+                            },
                         })
                     else:
                         # Order stays processing while a balance remains.
@@ -493,7 +498,11 @@ class PaymentService:
                             ),
                             "priority": "high",
                             "channels": ["in_app", "email"],
-                            "data": notification_data,
+                            "data": {
+                                **notification_data,
+                                "context": "installment",
+                                "reference": payment.reference,
+                            },
                         })
                 else:
                     order.status = "paid"
@@ -508,7 +517,17 @@ class PaymentService:
                         "type": "payment_successful",
                         "title": "Order Payment Confirmed",
                         "message": f"Your payment of ₦{payment.amount:,.2f} for Order #{str(order.id)[:8]} has been confirmed.",
-                        "priority": "high"
+                        "priority": "high",
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "context": "order",
+                            "order_id": str(order.id),
+                            "reference": payment.reference,
+                            "amount": float(payment.amount or 0),
+                            "amount_paid": float(payment.amount or 0),
+                            "remaining_balance": 0,
+                            "total_amount": float(order.total_amount or 0),
+                        },
                     })
 
         # 3. Handle Asset Agreement Logic
@@ -517,6 +536,7 @@ class PaymentService:
             agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == payment.agreement_id).first()
             if agreement:
                 logger.info(f"Loaded agreement status: {agreement.status}, Asset Type: {agreement.asset_type}")
+                previous_status = agreement.status
                 gross_amount = Decimal(str(payment.amount or 0))
                 if (payment.payment_type or payment.payment_category) in ["deposit", "asset_deposit"]:
                     agreement.deposit_paid = Decimal(str(agreement.deposit_paid or 0)) + gross_amount
@@ -577,14 +597,77 @@ class PaymentService:
                     from datetime import timedelta
                     agreement.next_due_date = datetime.utcnow() + timedelta(days=30)
 
-                # Send primary payment confirmation
-                create_notification(db, {
-                    "user_id": str(payment.buyer_id),
-                    "type": "payment_successful",
-                    "title": "Agreement Payment Confirmed",
-                    "message": f"Your payment of ₦{payment.amount:,.2f} for your {agreement.asset_type} agreement has been confirmed. Next payment due on {agreement.next_due_date.strftime('%B %d, %Y') if agreement.next_due_date else 'N/A'}.",
-                    "priority": "high"
-                })
+                # Resolve asset title for richer email content (non-critical).
+                asset_title = None
+                try:
+                    from core.asset_service import asset_service
+                    asset_obj = asset_service._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+                    if asset_obj and asset_obj.title:
+                        asset_title = asset_obj.title
+                except Exception:
+                    pass  # non-critical
+                asset_title = asset_title or f"{agreement.asset_type.title()} asset"
+
+                agreement_ref = _ref(agreement.id)
+                total_paid = Decimal(str(agreement.total_price or 0)) - Decimal(str(agreement.remaining_balance or 0))
+                next_due_str = agreement.next_due_date.strftime("%B %d, %Y") if agreement.next_due_date else None
+                monthly = (
+                    float(agreement.monthly_installment)
+                    if agreement.monthly_installment is not None else None
+                )
+
+                # The deposit payment that flips the agreement out of
+                # "pending_deposit" is the activation event: send a dedicated
+                # "Agreement Activated" email instead of the generic payment
+                # confirmation (which is kept for later installments).
+                is_activation = (
+                    previous_status == "pending_deposit"
+                    and agreement.status in ("active", "completed")
+                )
+
+                if is_activation:
+                    create_notification(db, {
+                        "user_id": str(payment.buyer_id),
+                        "type": "agreement_activated",
+                        "title": "Agreement Activated",
+                        "message": (
+                            f"Your deposit for {asset_title} has been confirmed and your "
+                            f"agreement is now active."
+                        ),
+                        "priority": "high",
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "asset_title": asset_title,
+                            "total_price": float(agreement.total_price or 0),
+                            "amount_paid": float(total_paid),
+                            "remaining_balance": float(agreement.remaining_balance or 0),
+                            "monthly_installment": monthly,
+                            "next_due_date": next_due_str,
+                            "reference": agreement_ref,
+                        },
+                    })
+                else:
+                    create_notification(db, {
+                        "user_id": str(payment.buyer_id),
+                        "type": "payment_successful",
+                        "title": "Agreement Payment Confirmed",
+                        "message": (
+                            f"Your payment of ₦{payment.amount:,.2f} for your {agreement.asset_type} "
+                            f"agreement has been confirmed. Next payment due on "
+                            f"{next_due_str or 'N/A'}."
+                        ),
+                        "priority": "high",
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "context": "agreement",
+                            "reference": agreement_ref,
+                            "amount": float(payment.amount or 0),
+                            "amount_paid": float(total_paid),
+                            "remaining_balance": float(agreement.remaining_balance or 0),
+                            "total_amount": float(agreement.total_price or 0),
+                            "next_due_date": next_due_str,
+                        },
+                    })
 
                 # Ownership logic (individual customer purchase)
                 if agreement.status == "completed" and agreement.asset_type == "property" and agreement.unit_id:
@@ -606,9 +689,16 @@ class PaymentService:
                         "user_id": str(payment.buyer_id),
                         "type": "agreement_completed",
                         "title": f"🎉 Congratulations! You now own this {asset_noun}!",
-                        "message": f"Your {agreement.asset_type} agreement has been fully paid. You are now the full owner of this asset. Thank you for choosing LEL Store!",
+                        "message": f"Your {agreement.asset_type} agreement has been fully paid. You are now the full owner of this asset. Thank you for choosing us!",
                         "priority": "urgent",
-                        "channels": ["in_app", "email"]
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "asset_title": asset_title,
+                            "reference": agreement_ref,
+                            "total_paid": float(total_paid),
+                            "completed_date": datetime.utcnow().strftime("%B %d, %Y"),
+                            "asset_noun": asset_noun,
+                        },
                     })
 
         db.commit()
@@ -763,10 +853,15 @@ class PaymentService:
                 # Notify Buyer
                 create_notification(db, {
                     "user_id": str(payment.buyer_id),
-                    "type": "payment_successful", # fallback
+                    "type": "payment_refunded",
                     "title": "Payment Refunded",
                     "message": f"Your payment of ₦{payment.amount:,.2f} has been refunded. Reason: {reason}",
-                    "channels": ["in_app", "email"]
+                    "channels": ["in_app", "email"],
+                    "data": {
+                        "amount": float(payment.amount or 0),
+                        "reason": reason,
+                        "reference": payment.reference,
+                    },
                 })
                 
                 db.commit()

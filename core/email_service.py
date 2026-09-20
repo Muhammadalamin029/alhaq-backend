@@ -11,6 +11,36 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
+
+def _ngn(value) -> str:
+    """Format a numeric value as Naira; pass non-numeric values through as text."""
+    if value is None or value == "":
+        return ""
+    try:
+        return f"₦{float(value):,.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _ref(value) -> str:
+    """Short human-readable reference from a UUID/string id."""
+    return str(value)[:8].upper() if value else ""
+
+
+# Keys that describe internal mechanics and must never appear in a user email.
+_INTERNAL_DATA_KEYS = {
+    "user_id", "seller_id", "buyer_id", "updated_by", "old_status", "new_status",
+    "dispute_event", "dispute_id", "resolved", "resolution", "resolution_notes",
+    "context",
+}
+
+# Substrings that mark a data value as a currency amount for generic rendering.
+_MONEY_KEY_HINTS = ("amount", "price", "balance", "fee", "total")
+
+
+# ---------------------------------------------------------------------------
 # Shared HTML building blocks
 # ---------------------------------------------------------------------------
 
@@ -428,7 +458,8 @@ class EmailService:
     def render_agreement_approved_email(self, user_name: str, asset_title: str,
                                          total_price: str, remaining: str,
                                          next_due: Optional[str] = None,
-                                         monthly: Optional[str] = None) -> tuple[str, str]:
+                                         monthly: Optional[str] = None,
+                                         reference: Optional[str] = None) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Total Price", total_price),
@@ -438,36 +469,92 @@ class EmailService:
             rows.append(("Monthly Installment", monthly))
         if next_due:
             rows.append(("Next Payment Due", next_due))
+        if reference:
+            rows.append(("Reference", reference))
 
         body = (
             f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your purchase agreement for <strong>{escape(asset_title)}</strong> is now active. '
-            f'Your deposit has been confirmed and your installment plan has started.</p>'
-            + _details_card(rows, "#27ae60")
-            + _info_box("Keep up with your payments to complete the purchase.", "#27ae60")
+            f'Your purchase agreement for <strong>{escape(asset_title)}</strong> has been '
+            f'approved. Pay your deposit to activate it.</p>'
+            + _details_card(rows, "#f39c12")
+            + _info_box("Your agreement activates once your deposit is confirmed.", "#f39c12")
         )
         html = _base_html(
             from_name=self.from_name, icon="🤝",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
+            header_bg="linear-gradient(135deg,#7d3c00,#f39c12)",
             header_fg="#fff",
             header_title="Agreement Approved",
-            header_subtitle="Your installment plan is now active",
+            header_subtitle="Deposit required to activate",
             greeting=f"Hello {escape(user_name)},",
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Agreement Approved",
+            from_name=self.from_name, title="Agreement Approved — Deposit Required",
+            greeting=f"Hello {user_name},",
+            body=("Your agreement has been approved. Pay your deposit to activate it.\n\n"
+                  + "\n".join(f"{k}: {v}" for k, v in rows)
+                  + "\n\nYour agreement activates once your deposit is confirmed."),
+        )
+        return html, text
+
+    def render_agreement_activated_email(self, user_name: str, asset_title: str,
+                                          total_price, amount_paid, remaining,
+                                          monthly=None, next_due: Optional[str] = None,
+                                          reference: Optional[str] = None) -> tuple[str, str]:
+        rows = [
+            ("Asset", asset_title),
+            ("Total Price", _ngn(total_price)),
+            ("Deposit Paid", _ngn(amount_paid)),
+            ("Remaining Balance", _ngn(remaining)),
+        ]
+        if monthly:
+            rows.append(("Monthly Installment", _ngn(monthly)))
+        if next_due:
+            rows.append(("Next Payment Due", next_due))
+        if reference:
+            rows.append(("Reference", reference))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your deposit for <strong>{escape(asset_title)}</strong> has been confirmed and '
+            f'your agreement is now active.</p>'
+            + _details_card(rows, "#27ae60")
+            + _info_box("Keep up with your payments to complete the purchase.", "#27ae60")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="✅",
+            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
+            header_fg="#fff",
+            header_title="Agreement Activated",
+            header_subtitle="Your installment plan has started",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Agreement Activated",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_financing_application_approved_email(self, user_name: str) -> tuple[str, str]:
+    def render_financing_application_approved_email(self, user_name: str,
+                                                     reference: Optional[str] = None,
+                                                     reviewed_on: Optional[str] = None) -> tuple[str, str]:
+        rows = []
+        if reference:
+            rows.append(("Reference", reference))
+        if reviewed_on:
+            rows.append(("Reviewed On", reviewed_on))
+
         body = (
             f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Good news - your financing application has been reviewed and approved. '
             f'You can now select a monthly or installment plan on any purchase.</p>'
-            + _info_box("Head back to your purchase to continue with your preferred plan.", "#27ae60")
+            + (_details_card(rows, "#27ae60") if rows else "")
+            + _info_box("Head back to your purchase and choose your preferred plan at checkout.", "#27ae60")
+            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            f'Next steps: open the asset you inspected, select Monthly or Installment, and '
+            f'pay the deposit (or first installment) to activate your plan.</p>'
         )
         html = _base_html(
             from_name=self.from_name, icon="✅",
@@ -481,17 +568,30 @@ class EmailService:
         text = _base_text(
             from_name=self.from_name, title="Financing Application Approved",
             greeting=f"Hello {user_name},",
-            body="Your financing application has been approved. You can now select a monthly or installment plan on any purchase.",
+            body=("Your financing application has been approved. You can now select a monthly "
+                  "or installment plan on any purchase.\n\n"
+                  + "\n".join(f"{k}: {v}" for k, v in rows)
+                  + "\n\nNext steps: choose your preferred plan at checkout and pay the deposit "
+                  "(or first installment) to activate it."),
         )
         return html, text
 
-    def render_financing_application_rejected_email(self, user_name: str, reason: str) -> tuple[str, str]:
+    def render_financing_application_rejected_email(self, user_name: str, reason: str,
+                                                     reference: Optional[str] = None,
+                                                     decision_date: Optional[str] = None) -> tuple[str, str]:
         rows = [("Reason", reason)]
+        if reference:
+            rows.append(("Reference", reference))
+        if decision_date:
+            rows.append(("Decision Date", decision_date))
         body = (
             f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your financing application was not approved this time.</p>'
             + _details_card(rows, "#c0392b")
             + _info_box("You may submit a new application at any time.", "#c0392b")
+            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            f'You can reapply with updated documents or contact support if you believe this '
+            f'decision was made in error.</p>'
         )
         html = _base_html(
             from_name=self.from_name, icon="✖️",
@@ -509,13 +609,22 @@ class EmailService:
         )
         return html, text
 
-    def render_financing_application_revoked_email(self, user_name: str, reason: str) -> tuple[str, str]:
+    def render_financing_application_revoked_email(self, user_name: str, reason: str,
+                                                    reference: Optional[str] = None,
+                                                    decision_date: Optional[str] = None) -> tuple[str, str]:
         rows = [("Reason", reason)]
+        if reference:
+            rows.append(("Reference", reference))
+        if decision_date:
+            rows.append(("Revoked On", decision_date))
         body = (
             f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your financing eligibility has been revoked. You will need to submit a new '
             f'application before selecting a monthly or installment plan again.</p>'
             + _details_card(rows, "#c0392b")
+            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            f'To regain eligibility, submit a new application through your account. '
+            f'Contact support if you need help.</p>'
         )
         html = _base_html(
             from_name=self.from_name, icon="⚠️",
@@ -702,16 +811,312 @@ class EmailService:
         )
         return html, text
 
+    def render_order_confirmed_email(self, user_name: str, order_id: str,
+                                      items_summary: str, total: str,
+                                      delivery_type: str,
+                                      delivery_fee: Optional[str] = None,
+                                      estimated_delivery: Optional[str] = None) -> tuple[str, str]:
+        rows = [
+            ("Order ID", f"#{order_id[:8].upper()}"),
+            ("Items", items_summary),
+            ("Delivery", delivery_type.replace("_", " ").title() if delivery_type else "—"),
+        ]
+        if total:
+            rows.append(("Total", total))
+        if delivery_fee:
+            rows.append(("Delivery Fee", delivery_fee))
+        if estimated_delivery:
+            rows.append(("Estimated Delivery", estimated_delivery))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Thank you! Your order has been confirmed. Complete payment to start processing.</p>'
+            + _details_card(rows, "#FFD700")
+            + _info_box("We'll notify you as soon as your order moves to processing.", "#FFD700")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="📋",
+            header_bg="linear-gradient(135deg,#7d6a00,#FFD700)",
+            header_fg="#000",
+            header_title="Order Confirmed",
+            header_subtitle="Your order is ready for payment",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Order Confirmed",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_payment_confirmed_email(self, user_name: str, title: str, reference: str,
+                                        amount_paid: str, total_paid: Optional[str] = None,
+                                        remaining: Optional[str] = None,
+                                        balance_label: str = "Remaining Balance",
+                                        next_due: Optional[str] = None,
+                                        note: Optional[str] = None) -> tuple[str, str]:
+        rows = [("Amount Paid", amount_paid)]
+        if reference:
+            rows.append(("Reference", reference))
+        if total_paid:
+            rows.append(("Total Paid", total_paid))
+        if remaining:
+            rows.append((balance_label, remaining))
+        if next_due:
+            rows.append(("Next Payment Due", next_due))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'{escape(note) if note else "Your payment has been confirmed. Thank you!"}</p>'
+            + _details_card(rows, "#27ae60")
+            + _info_box("Your payment was received successfully.", "#27ae60")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="💰",
+            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
+            header_fg="#fff",
+            header_title=title or "Payment Confirmed",
+            header_subtitle="Payment received",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title=title or "Payment Confirmed",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_payment_refunded_email(self, user_name: str, amount: str, reason: str,
+                                       reference: Optional[str] = None) -> tuple[str, str]:
+        rows = [("Amount Refunded", amount), ("Reason", reason)]
+        if reference:
+            rows.append(("Reference", reference))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your payment has been refunded. Depending on your bank, it may take a few '
+            f'business days to reflect.</p>'
+            + _details_card(rows, "#3498db")
+            + _info_box("Refund processed successfully.", "#3498db")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="↩️",
+            header_bg="linear-gradient(135deg,#1a5276,#3498db)",
+            header_fg="#fff",
+            header_title="Payment Refunded",
+            header_subtitle="Your refund is on the way",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Payment Refunded",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_payment_failed_email(self, user_name: str, asset_title: str, reference: str,
+                                     amount: str, reason: Optional[str] = None,
+                                     next_attempt: Optional[str] = None,
+                                     note: Optional[str] = None) -> tuple[str, str]:
+        rows = [("Asset", asset_title), ("Amount", amount)]
+        if reference:
+            rows.append(("Reference", reference))
+        if reason:
+            rows.append(("Reason", reason))
+        if next_attempt:
+            rows.append(("Next Attempt", next_attempt))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'{escape(note) if note else "We could not process your recurring payment. Please ensure your account is funded."}</p>'
+            + _details_card(rows, "#e74c3c")
+            + _alert_box("Missing payments may result in your agreement defaulting.", "#e74c3c")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="❌",
+            header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
+            header_fg="#fff",
+            header_title="Recurring Payment Failed",
+            header_subtitle="Action may be required",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Recurring Payment Failed",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_installment_defaulted_email(self, user_name: str, asset_title: str, reference: str,
+                                            overdue_amount: str, due_date: str, grace_days,
+                                            note: Optional[str] = None) -> tuple[str, str]:
+        rows = [
+            ("Asset", asset_title),
+            ("Overdue Amount", overdue_amount),
+            ("Due Date", due_date),
+            ("Grace Period", f"{grace_days} day{'s' if str(grace_days) != '1' else ''}"),
+        ]
+        if reference:
+            rows.append(("Reference", reference))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your agreement has been defaulted because the payment above was not received '
+            f'within the grace period.</p>'
+            + _details_card(rows, "#e74c3c")
+            + _alert_box(note or "Please contact support to discuss reinstating your agreement.", "#e74c3c")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="⚠️",
+            header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
+            header_fg="#fff",
+            header_title="Agreement Defaulted",
+            header_subtitle="Missed payment past grace period",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Agreement Defaulted",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_agreement_completed_email(self, user_name: str, asset_title: str, reference: str,
+                                          total_paid: str, completed_date: str,
+                                          asset_noun: str = "Asset") -> tuple[str, str]:
+        rows = [
+            ("Asset", asset_title),
+            ("Amount Paid", total_paid),
+        ]
+        if reference:
+            rows.append(("Reference", reference))
+        if completed_date:
+            rows.append(("Completed On", completed_date))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Congratulations! Your agreement has been fully paid and you are now the full '
+            f'owner of this {escape(asset_noun.lower())}.</p>'
+            + _details_card(rows, "#27ae60")
+            + _info_box("Thank you for choosing " + self.from_name + "!", "#27ae60")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="🎉",
+            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
+            header_fg="#fff",
+            header_title="You Own It!",
+            header_subtitle=f"Your {asset_noun.lower()} is fully paid",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Agreement Completed",
+            greeting=f"Hello {user_name},",
+            body=("\n".join(f"{k}: {v}" for k, v in rows)
+                  + f"\n\nYou are now the full owner of this {asset_noun.lower()}."),
+        )
+        return html, text
+
+    def render_inspection_rejected_email(self, user_name: str, asset_title: str,
+                                          inspection_date: Optional[str] = None,
+                                          reason: Optional[str] = None,
+                                          note: Optional[str] = None) -> tuple[str, str]:
+        rows = [("Asset", asset_title)]
+        if inspection_date:
+            rows.append(("Inspection Date", inspection_date))
+        if reason:
+            rows.append(("Reason", reason))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your inspection request could not proceed. Schedule a new inspection to continue.</p>'
+            + _details_card(rows, "#e74c3c")
+            + _alert_box(note or "You can schedule another inspection from the asset page.", "#e74c3c")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="🚫",
+            header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
+            header_fg="#fff",
+            header_title="Inspection Rejected",
+            header_subtitle="Your inspection request was declined",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title="Inspection Rejected",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
+    def render_order_status_email(self, user_name: str, order_id: str, status_label: str,
+                                   total: Optional[str] = None, reason: Optional[str] = None,
+                                   note: Optional[str] = None) -> tuple[str, str]:
+        rows = [
+            ("Order ID", f"#{order_id[:8].upper()}" if order_id and order_id != "N/A" else "N/A"),
+            ("Status", status_label),
+        ]
+        if total:
+            rows.append(("Total", total))
+        if reason:
+            rows.append(("Reason", reason))
+
+        body = (
+            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'{escape(note) if note else f"Your order status is now {escape(status_label)}."}</p>'
+            + _details_card(rows, "#f39c12")
+        )
+        html = _base_html(
+            from_name=self.from_name, icon="⚙️",
+            header_bg="linear-gradient(135deg,#7d3c00,#f39c12)",
+            header_fg="#fff",
+            header_title=f"Order {status_label}",
+            header_subtitle="Order status update",
+            greeting=f"Hello {escape(user_name)},",
+            body_html=body,
+        )
+        text = _base_text(
+            from_name=self.from_name, title=f"Order {status_label}",
+            greeting=f"Hello {user_name},",
+            body="\n".join(f"{k}: {v}" for k, v in rows),
+        )
+        return html, text
+
     def render_notification_email(self, notification_type: str, title: str,
                                    message: str, user_name: str,
                                    data: Optional[dict] = None) -> tuple[str, str]:
         """
-        Smart dispatcher: routes to a specific template when possible,
-        falls back to a generic one.
+        Smart dispatcher: routes to a specific template when possible, falling
+        back to a generic one. A failure inside a specific template never drops
+        the email - it degrades to the generic template instead.
         """
         d = data or {}
+        try:
+            rendered = self._render_specific_notification_email(
+                notification_type, title, message, user_name, d
+            )
+            if rendered is not None:
+                return rendered
+        except Exception:
+            logger.exception(
+                f"Specific email template failed for type '{notification_type}'; "
+                f"falling back to generic template."
+            )
 
-        # --- Specific dispatches ---
+        # --- Generic fallback ---
+        return self._render_generic_notification_email(
+            notification_type, title, message, user_name, d
+        )
+
+    def _render_specific_notification_email(self, notification_type: str, title: str,
+                                            message: str, user_name: str,
+                                            d: dict) -> Optional[tuple[str, str]]:
+        """Return a specific template render, or None to use the generic fallback."""
         if notification_type == "inspection_confirmed":
             return self.render_inspection_confirmed_email(
                 user_name=user_name,
@@ -722,6 +1127,28 @@ class EmailService:
                 seller_contact=d.get("seller_contact"),
             )
 
+        if notification_type == "agreement_activated":
+            return self.render_agreement_activated_email(
+                user_name=user_name,
+                asset_title=d.get("asset_title") or "Asset",
+                total_price=d.get("total_price"),
+                amount_paid=d.get("amount_paid"),
+                remaining=d.get("remaining_balance"),
+                monthly=d.get("monthly_installment"),
+                next_due=d.get("next_due_date"),
+                reference=d.get("reference") or _ref(d.get("agreement_id")),
+            )
+
+        if notification_type == "agreement_completed":
+            return self.render_agreement_completed_email(
+                user_name=user_name,
+                asset_title=d.get("asset_title") or "Asset",
+                reference=d.get("reference") or _ref(d.get("agreement_id")),
+                total_paid=_ngn(d.get("total_paid") or d.get("total_amount") or d.get("total_price")),
+                completed_date=d.get("completed_date") or d.get("completed_on") or "",
+                asset_noun=d.get("asset_noun") or "Asset",
+            )
+
         if notification_type in ("agreement_approved", "agreement_update") and d.get("asset_title"):
             return self.render_agreement_approved_email(
                 user_name=user_name,
@@ -730,6 +1157,7 @@ class EmailService:
                 remaining=d.get("remaining_balance") or "",
                 next_due=d.get("next_due_date"),
                 monthly=d.get("monthly_installment"),
+                reference=d.get("reference") or _ref(d.get("agreement_id")),
             )
 
         if notification_type == "agreement_created" and d.get("asset_title"):
@@ -748,10 +1176,100 @@ class EmailService:
             return self.render_installment_reminder_email(
                 user_name=user_name,
                 asset_title=d.get("asset_title") or "Asset",
-                amount_due=d.get("amount_due") or "",
+                amount_due=_ngn(d.get("amount_due")),
                 due_date=d.get("due_date") or "",
                 days_left=int(d.get("days_left", 3)),
-                remaining_balance=d.get("remaining_balance"),
+                remaining_balance=_ngn(d.get("remaining_balance")) if d.get("remaining_balance") is not None else None,
+            )
+
+        if notification_type in ("payment_successful", "installment_paid") and (
+            d.get("amount") is not None or d.get("amount_paid") is not None
+        ):
+            context = (d.get("context") or "").lower()
+            amount_this = d.get("amount") if d.get("amount") is not None else d.get("amount_paid")
+            total_paid_val = d.get("amount_paid")
+            amount_paid_str = _ngn(amount_this)
+            total_paid_str = _ngn(total_paid_val) if total_paid_val is not None else None
+            if total_paid_str and total_paid_str == amount_paid_str:
+                total_paid_str = None
+            return self.render_payment_confirmed_email(
+                user_name=user_name,
+                title=title or "Payment Confirmed",
+                reference=d.get("reference") or _ref(d.get("order_id")) or _ref(d.get("agreement_id")),
+                amount_paid=amount_paid_str,
+                total_paid=total_paid_str,
+                remaining=_ngn(d.get("remaining_balance")) if d.get("remaining_balance") is not None else None,
+                balance_label="Remaining Balance",
+                next_due=d.get("next_due_date"),
+                note=d.get("note"),
+            )
+
+        if notification_type == "payment_refunded":
+            return self.render_payment_refunded_email(
+                user_name=user_name,
+                amount=_ngn(d.get("amount")),
+                reason=d.get("reason") or d.get("note") or "Refund processed",
+                reference=d.get("reference") or _ref(d.get("order_id")),
+            )
+
+        if notification_type == "payment_failed":
+            return self.render_payment_failed_email(
+                user_name=user_name,
+                asset_title=d.get("asset_title") or "Asset",
+                reference=d.get("reference") or _ref(d.get("agreement_id")) or _ref(d.get("order_id")),
+                amount=_ngn(d.get("amount") if d.get("amount") is not None else d.get("amount_due")),
+                reason=d.get("reason"),
+                next_attempt=d.get("next_attempt"),
+                note=d.get("note") or message,
+            )
+
+        if notification_type == "installment_defaulted":
+            return self.render_installment_defaulted_email(
+                user_name=user_name,
+                asset_title=d.get("asset_title") or "Asset",
+                reference=d.get("reference") or _ref(d.get("agreement_id")),
+                overdue_amount=_ngn(d.get("overdue_amount") or d.get("amount") or d.get("monthly_installment")),
+                due_date=d.get("due_date") or "—",
+                grace_days=d.get("grace_days", 0),
+                note=d.get("note"),
+            )
+
+        if notification_type == "inspection_rejected":
+            return self.render_inspection_rejected_email(
+                user_name=user_name,
+                asset_title=d.get("asset_title") or "Asset",
+                inspection_date=d.get("inspection_date"),
+                reason=d.get("reason"),
+                note=d.get("note"),
+            )
+
+        if notification_type == "order_confirmed":
+            return self.render_order_confirmed_email(
+                user_name=user_name,
+                order_id=d.get("order_id") or "N/A",
+                items_summary=d.get("items_summary") or "Your items",
+                total=_ngn(d.get("total_amount") if d.get("total_amount") is not None else d.get("amount")),
+                delivery_type=d.get("delivery_type") or "delivery",
+                delivery_fee=_ngn(d.get("delivery_fee")) if d.get("delivery_fee") is not None else None,
+                estimated_delivery=d.get("estimated_delivery"),
+            )
+
+        if notification_type == "order_processing":
+            return self.render_order_status_email(
+                user_name=user_name,
+                order_id=d.get("order_id") or "N/A",
+                status_label="Processing",
+                total=_ngn(d.get("total_amount")) if d.get("total_amount") is not None else None,
+                note=d.get("notes"),
+            )
+
+        if notification_type == "order_cancelled":
+            return self.render_order_status_email(
+                user_name=user_name,
+                order_id=d.get("order_id") or "N/A",
+                status_label="Cancelled",
+                total=_ngn(d.get("total_amount")) if d.get("total_amount") is not None else None,
+                reason=d.get("reason") or d.get("notes"),
             )
 
         if notification_type == "order_shipped":
@@ -759,7 +1277,7 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
-                total=d.get("amount") and f"₦{float(d['amount']):,.2f}" or "",
+                total=_ngn(d.get("amount") if d.get("amount") is not None else d.get("total_amount")),
                 tracking_note=d.get("tracking_note"),
             )
 
@@ -768,7 +1286,7 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
-                total=d.get("amount") and f"₦{float(d['amount']):,.2f}" or "",
+                total=_ngn(d.get("amount") if d.get("amount") is not None else d.get("total_amount")),
             )
 
         if d.get("dispute_id"):
@@ -789,10 +1307,8 @@ class EmailService:
                 )
             # Other dispute updates (e.g. status changes) use the generic template.
 
-        # --- Generic fallback ---
-        return self._render_generic_notification_email(
-            notification_type, title, message, user_name, d
-        )
+        # No specific template matched — use the generic fallback.
+        return None
 
     def _render_generic_notification_email(self, notification_type: str, title: str,
                                             message: str, user_name: str,
@@ -810,15 +1326,22 @@ class EmailService:
             "property_acquired": ("#8e44ad", "🏠"),
             "system_announcement": ("#3498db", "📢"),
             "promotional_offer": ("#e74c3c", "🎁"),
+            "payment_refunded": ("#3498db", "↩️"),
+            "agreement_activated": ("#27ae60", "✅"),
+            "agreement_completed": ("#27ae60", "🎉"),
+            "installment_defaulted": ("#e74c3c", "⚠️"),
+            "inspection_rejected": ("#e74c3c", "🚫"),
         }
         accent, icon = color_map.get(notification_type, ("#FFD700", "🔔"))
 
-        # Show key/value pairs from data when available
-        detail_rows = [
-            (k.replace("_", " ").title(), str(v))
-            for k, v in data.items()
-            if v and k not in ("user_id", "seller_id")
-        ]
+        # Show user-facing key/value pairs from data, dropping internal-only keys
+        # and formatting currency values.
+        detail_rows = []
+        for k, v in data.items():
+            if not v or k in _INTERNAL_DATA_KEYS:
+                continue
+            text = _ngn(v) if any(h in k.lower() for h in _MONEY_KEY_HINTS) else str(v)
+            detail_rows.append((k.replace("_", " ").title(), text))
         details_html = _details_card(detail_rows, accent) if detail_rows else ""
 
         body = (
@@ -835,10 +1358,11 @@ class EmailService:
             greeting=f"Hello {escape(user_name)},",
             body_html=body,
         )
+        detail_text = "\n".join(f"{k}: {v}" for k, v in detail_rows)
         text = _base_text(
             from_name=self.from_name, title=title,
             greeting=f"Hello {user_name},",
-            body=message,
+            body=message + (f"\n\n{detail_text}" if detail_text else ""),
         )
         return html, text
 

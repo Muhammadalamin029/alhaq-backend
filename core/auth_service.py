@@ -56,6 +56,7 @@ class AuthService:
                 "message": f"Welcome {full_name}! Your account has been created successfully. Start exploring our marketplace.",
                 "priority": "medium",
                 "channels": ["in_app", "email"],
+                "skip_email": True,  # the dedicated welcome email sends at verification
                 "data": {
                     "user_id": str(user.id),
                     "role": role.value,
@@ -139,6 +140,7 @@ class AuthService:
                 "message": f"Welcome {display_name}! Your account has been created successfully. Start exploring our marketplace.",
                 "priority": "medium",
                 "channels": ["in_app", "email"],
+                "skip_email": True,  # the dedicated welcome email sends at verification
                 "data": {
                     "user_id": str(user.id),
                     "role": UserRole.CUSTOMER.value,

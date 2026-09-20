@@ -736,13 +736,22 @@ class OrderService:
 
     def _send_order_status_notification(self, order_id: UUID, order: Order, old_status: str, new_status: str, user_id: str, notes: str):
         """Notify the buyer when their order status changes."""
+        try:
+            items_count = len(order.order_items or [])
+        except Exception:
+            items_count = None
+
         notification_data = {
             "order_id": str(order_id),
             "old_status": old_status,
             "new_status": new_status,
             "updated_by": str(user_id),
             "notes": notes,
+            "total_amount": float(order.total_amount) if order.total_amount is not None else None,
+            "items_count": items_count,
         }
+        if new_status == "cancelled" and notes:
+            notification_data["reason"] = notes
 
         buyer_messages = {
             "processing": f"Your order #{str(order_id)[:8]} is now being processed.",

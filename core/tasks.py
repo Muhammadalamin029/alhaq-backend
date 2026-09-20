@@ -2,7 +2,7 @@ from core.notifications_service import create_notification
 from db.session import get_db
 from celery import current_task
 from core.celery_app import celery_app
-from core.email_service import email_service
+from core.email_service import email_service, _ref
 from core.redis_client import verification_manager
 from core.model import User, Profile, GeneralInspection, GeneralAgreement, CarUnit, PropertyUnit, Order, Dispute, PaymentMandate
 from core.system_settings_service import system_settings_service
@@ -356,15 +356,16 @@ def send_agreement_created_email(self, seller_email: str, seller_name: str,
 @celery_app.task(bind=True, name='core.tasks.send_agreement_approved_email')
 def send_agreement_approved_email(self, user_email: str, user_name: str,
                                    asset_title: str, total_price: str, remaining: str,
-                                   next_due: str = None, monthly: str = None):
-    """Notify the buyer their agreement is now active after deposit confirmation."""
+                                   next_due: str = None, monthly: str = None,
+                                   reference: str = None):
+    """Notify the buyer their agreement is approved and awaiting deposit."""
     try:
         html_body, text_body = email_service.render_agreement_approved_email(
-            user_name, asset_title, total_price, remaining, next_due, monthly
+            user_name, asset_title, total_price, remaining, next_due, monthly, reference
         )
         success = email_service.send_email_sync(
             to_email=user_email,
-            subject=f"Agreement Active — {asset_title}",
+            subject=f"Agreement Approved — Deposit Required — {asset_title}",
             html_body=html_body, text_body=text_body,
         )
         if success:
@@ -381,10 +382,13 @@ def send_agreement_approved_email(self, user_email: str, user_name: str,
 # ──────────────────────────────────────────────────────────────────────────────
 
 @celery_app.task(bind=True, name='core.tasks.send_financing_application_approved_email')
-def send_financing_application_approved_email(self, user_email: str, user_name: str):
+def send_financing_application_approved_email(self, user_email: str, user_name: str,
+                                              reference: str = None, reviewed_on: str = None):
     """Notify the buyer their financing application was approved."""
     try:
-        html_body, text_body = email_service.render_financing_application_approved_email(user_name)
+        html_body, text_body = email_service.render_financing_application_approved_email(
+            user_name, reference, reviewed_on
+        )
         success = email_service.send_email_sync(
             to_email=user_email,
             subject="Financing Application Approved",
@@ -400,10 +404,13 @@ def send_financing_application_approved_email(self, user_email: str, user_name: 
 
 
 @celery_app.task(bind=True, name='core.tasks.send_financing_application_rejected_email')
-def send_financing_application_rejected_email(self, user_email: str, user_name: str, reason: str):
+def send_financing_application_rejected_email(self, user_email: str, user_name: str, reason: str,
+                                               reference: str = None, decision_date: str = None):
     """Notify the buyer their financing application was rejected."""
     try:
-        html_body, text_body = email_service.render_financing_application_rejected_email(user_name, reason)
+        html_body, text_body = email_service.render_financing_application_rejected_email(
+            user_name, reason, reference, decision_date
+        )
         success = email_service.send_email_sync(
             to_email=user_email,
             subject="Financing Application Rejected",
@@ -419,10 +426,13 @@ def send_financing_application_rejected_email(self, user_email: str, user_name: 
 
 
 @celery_app.task(bind=True, name='core.tasks.send_financing_application_revoked_email')
-def send_financing_application_revoked_email(self, user_email: str, user_name: str, reason: str):
+def send_financing_application_revoked_email(self, user_email: str, user_name: str, reason: str,
+                                              reference: str = None, decision_date: str = None):
     """Notify the buyer their financing eligibility was revoked."""
     try:
-        html_body, text_body = email_service.render_financing_application_revoked_email(user_name, reason)
+        html_body, text_body = email_service.render_financing_application_revoked_email(
+            user_name, reason, reference, decision_date
+        )
         success = email_service.send_email_sync(
             to_email=user_email,
             subject="Financing Eligibility Revoked",
@@ -687,13 +697,31 @@ def check_missed_inspections():
                 inspection.status = "rejected"
                 inspection.notes = (inspection.notes or "") + "\nSystem: Automatically expired due to missed date."
 
-                # Notify Buyer
+                asset_title = "Asset"
+                try:
+                    from core.asset_service import asset_service
+                    asset = asset_service._get_asset_details(db, inspection.asset_type, inspection.asset_id)
+                    if asset and asset.title:
+                        asset_title = asset.title
+                except Exception:
+                    pass  # non-critical
+
+                # Notify Buyer using the inspection-rejected template
                 create_notification(db, {
                     "user_id": str(inspection.user_id),
-                    "type": "order_processing", # Fallback type
+                    "type": "inspection_rejected",
                     "title": "Inspection Missed",
-                    "message": f"Your scheduled inspection has expired and was rejected.",
-                    "channels": ["in_app", "email"]
+                    "message": "Your scheduled inspection has expired and was rejected.",
+                    "channels": ["in_app", "email"],
+                    "data": {
+                        "asset_title": asset_title,
+                        "inspection_date": (
+                            inspection.inspection_date.strftime("%B %d, %Y at %I:%M %p")
+                            if inspection.inspection_date else None
+                        ),
+                        "reason": "expired",
+                        "note": "Your inspection window has passed. You can schedule a new inspection from the asset page.",
+                    },
                 })
                 # Notify admins
                 system_settings_service.notify_admins(
@@ -752,6 +780,15 @@ def send_installment_reminders():
                 ).all()
 
                 for agreement in due_agreements:
+                    asset_title = "Asset"
+                    try:
+                        from core.asset_service import asset_service
+                        asset = asset_service._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+                        if asset and asset.title:
+                            asset_title = asset.title
+                    except Exception:
+                        pass  # non-critical
+
                     create_notification(db, {
                         "user_id": str(agreement.user_id),
                         "type": "payment_reminder",
@@ -761,7 +798,14 @@ def send_installment_reminders():
                             f"(on {agreement.next_due_date.strftime('%Y-%m-%d')}). "
                             f"Please ensure your account is funded to avoid a default."
                         ),
-                        "channels": ["in_app", "email"]
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "asset_title": asset_title,
+                            "amount_due": float(agreement.monthly_installment or 0),
+                            "due_date": agreement.next_due_date.strftime("%B %d, %Y") if agreement.next_due_date else None,
+                            "days_left": days_ahead,
+                            "remaining_balance": float(agreement.remaining_balance or 0),
+                        },
                     })
                     total_reminded += 1
 
@@ -803,13 +847,30 @@ def process_installment_defaults():
                     agreement.status = "defaulted"
                     default_count += 1
 
+                    asset_title = "Asset"
+                    try:
+                        from core.asset_service import asset_service
+                        asset = asset_service._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+                        if asset and asset.title:
+                            asset_title = asset.title
+                    except Exception:
+                        pass  # non-critical
+
                     # Notify Buyer
                     create_notification(db, {
                         "user_id": str(agreement.user_id),
                         "type": "installment_defaulted",
                         "title": "Agreement Defaulted",
                         "message": f"Your agreement has been defaulted due to missed payments.",
-                        "channels": ["in_app", "email"]
+                        "channels": ["in_app", "email"],
+                        "data": {
+                            "asset_title": asset_title,
+                            "reference": _ref(agreement.id),
+                            "overdue_amount": float(agreement.monthly_installment or agreement.remaining_balance or 0),
+                            "due_date": agreement.next_due_date.strftime("%B %d, %Y") if agreement.next_due_date else None,
+                            "grace_days": grace_period,
+                            "note": "Please contact support to discuss reinstating your agreement.",
+                        },
                     })
                     # Notify admins
                     system_settings_service.notify_admins(
@@ -885,6 +946,15 @@ def charge_due_mandates():
                         charged_count += 1
                     elif payment.status == "failed":
                         failed_count += 1
+                        asset_title = "Asset"
+                        try:
+                            from core.asset_service import asset_service
+                            asset = asset_service._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+                            if asset and asset.title:
+                                asset_title = asset.title
+                        except Exception:
+                            pass  # non-critical
+
                         create_notification(db, {
                             "user_id": str(agreement.user_id),
                             "type": "payment_failed",
@@ -895,6 +965,14 @@ def charge_due_mandates():
                             ),
                             "priority": "high",
                             "channels": ["in_app", "email"],
+                            "data": {
+                                "asset_title": asset_title,
+                                "reference": _ref(payment.reference or agreement.id),
+                                "amount": float(agreement.monthly_installment or 0),
+                                "reason": "Bank charge failed",
+                                "next_attempt": (datetime.utcnow() + timedelta(days=1)).strftime("%B %d, %Y"),
+                                "note": "Please ensure your account is funded so the next attempt succeeds.",
+                            },
                         })
                 except Exception as e:
                     logger.error(f"Failed to charge mandate for agreement {agreement.id}: {e}")

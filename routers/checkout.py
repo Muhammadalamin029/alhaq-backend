@@ -165,19 +165,26 @@ async def process_checkout(
     
     # Create order confirmation notification (non-blocking)
     try:
-        # Use in-app notification only to avoid email timeout issues
+        items_summary = ", ".join(
+            f"{item.quantity}× {item.product.name}" if item.product else f"{item.quantity}× item"
+            for item in (pending_order.order_items or [])
+        ) or "Your items"
+
         create_notification(db, {
             "user_id": str(pending_order.buyer_id),
             "type": "order_confirmed",
             "title": "Order Confirmed",
             "message": f"Your order #{str(pending_order.id)[:8]} has been confirmed and is ready for payment. Total: ₦{pending_order.total_amount:,.2f}",
             "priority": "high",
-            "channels": ["in_app"],  # Remove email to avoid timeout issues
+            "channels": ["in_app", "email"],
             "data": {
                 "order_id": str(pending_order.id),
+                "items_summary": items_summary,
                 "total_amount": float(pending_order.total_amount),
+                "delivery_type": pending_order.delivery_type,
+                "delivery_fee": float(pending_order.delivery_fee or 0),
+                "estimated_delivery": estimated_delivery,
                 "tracking_number": tracking_number,
-                "estimated_delivery": estimated_delivery
             }
         })
         logger.info(f"Order confirmation notification created for order {pending_order.id}")

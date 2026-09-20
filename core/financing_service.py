@@ -15,6 +15,7 @@ from core.status_constants import (
     FINANCING_APPLICATION_STATUS_REVOKED,
 )
 from core.notifications_service import create_notification
+from core.email_service import _ref
 from core.system_settings_service import system_settings_service
 from core.tasks import (
     send_financing_application_approved_email,
@@ -219,7 +220,12 @@ class FinancingService:
 
         user = db.query(User).filter(User.id == application.user_id).first()
         if user:
-            send_financing_application_approved_email.delay(user.email, user.name)
+            send_financing_application_approved_email.delay(
+                user.email,
+                user.name,
+                _ref(application.id),
+                application.reviewed_at.strftime("%B %d, %Y") if application.reviewed_at else None,
+            )
 
         return application
 
@@ -249,7 +255,13 @@ class FinancingService:
 
         user = db.query(User).filter(User.id == application.user_id).first()
         if user:
-            send_financing_application_rejected_email.delay(user.email, user.name, reason)
+            send_financing_application_rejected_email.delay(
+                user.email,
+                user.name,
+                reason,
+                _ref(application.id),
+                application.reviewed_at.strftime("%B %d, %Y") if application.reviewed_at else None,
+            )
 
         return application
 
@@ -279,7 +291,13 @@ class FinancingService:
 
         user = db.query(User).filter(User.id == application.user_id).first()
         if user:
-            send_financing_application_revoked_email.delay(user.email, user.name, reason)
+            send_financing_application_revoked_email.delay(
+                user.email,
+                user.name,
+                reason,
+                _ref(application.id),
+                application.revoked_at.strftime("%B %d, %Y") if application.revoked_at else None,
+            )
 
         return application
 

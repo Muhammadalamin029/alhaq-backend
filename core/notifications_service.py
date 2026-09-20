@@ -98,6 +98,7 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
             'order_cancelled': 'order_updates',
             'payment_successful': 'payment_updates',
             'payment_failed': 'payment_updates',
+            'payment_refunded': 'payment_updates',
             'account_verified': 'account_updates',
             'password_changed': 'account_updates',
             'profile_updated': 'account_updates',
