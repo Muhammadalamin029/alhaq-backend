@@ -1,4 +1,3 @@
-import os
 from fastapi import FastAPI
 from routers import (
     auth,
@@ -69,21 +68,10 @@ logger.info(
 # ------------------------------------------------------
 logger.info("Database schema managed by Alembic")
 
-# ------------------------------------------------------
-# CORS setup
-# ------------------------------------------------------
-origins = [
-    "http://localhost:8080",  # Local dev FE
-    "http://127.0.0.1:8080",  # Alternative local dev FE
-    "http://localhost:3000",  # Alternative dev port
-    "http://127.0.0.1:3000",  # Alternative dev port
-    "https://alhaq-frontend.vercel.app",  # Production FE (no trailing slash!)
-]
-
 # Add CORS middleware with more permissive settings for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
@@ -105,7 +93,7 @@ async def cors_debug_middleware(request, call_next):
     response = await call_next(request)
 
     # Add CORS headers to response for debugging
-    if origin and origin in origins:
+    if origin and origin in settings.ALLOWED_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
 
