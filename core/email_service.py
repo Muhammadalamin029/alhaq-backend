@@ -46,7 +46,8 @@ _MONEY_KEY_HINTS = ("amount", "price", "balance", "fee", "total")
 # email at once.
 # ---------------------------------------------------------------------------
 
-PAGE_BG = "#f9fafb"        # page background (gray-50)
+PAGE_BG = "#fafafa"        # page background fallback (for clients without gradients)
+PAGE_GRADIENT = "linear-gradient(180deg, #FAFAFA 65.38%, #FF6D01 144.43%)"
 CARD_BG = "#ffffff"        # main card
 SURFACE = "#f9fafb"        # inner surfaces
 BORDER = "#f3f4f6"         # hairlines (gray-100)
@@ -59,6 +60,7 @@ BRAND = "#f97316"          # primary orange (orange-500)
 BRAND_DARK = "#ea580c"     # orange-600
 BRAND_SOFT = "#fff7ed"     # orange-50
 BRAND_BORDER = "#fdba74"   # orange-300
+BRAND_GRADIENT = "linear-gradient(135deg, #FF8A3D 0%, #FF6D01 55%, #EA580C 100%)"
 
 SUCCESS = "#16a34a"        # green-600
 DANGER = "#dc2626"         # red-600
@@ -66,6 +68,12 @@ WARNING = "#d97706"        # amber-600
 INFO = "#2563eb"           # blue-600
 PURPLE = "#7c3aed"         # violet-600
 RADIUS = "16px"
+
+# Brand mark shown next to the sender name in every email header. Use a raster
+# (PNG) URL, not the SVG wordmark: Gmail and several clients don't render SVG.
+# Set to "" to fall back to the letter tile. Must be an absolute URL.
+LOGO_URL = "https://alhaq-frontend.vercel.app/favicon-512.png"
+LOGO_SIZE = 36
 
 
 # ---------------------------------------------------------------------------
@@ -114,24 +122,41 @@ def _info_box(text: str, color: str = BRAND) -> str:
     )
 
 
-def _badge_html(icon: str, header_bg: str) -> str:
-    """Default circular icon badge used in the header, tinted per event."""
+def _badge_html(icon: str) -> str:
+    """Circular event icon shown at the top of the header."""
     return (
-        f'<div style="width:64px;height:64px;border-radius:9999px;background:{header_bg};'
-        f'line-height:64px;font-size:28px;text-align:center;margin:0 auto;'
-        f'box-shadow:0 8px 20px rgba(249,115,22,.16)">{icon}</div>'
+        f'<div style="width:56px;height:56px;border-radius:9999px;'
+        f'background:{BRAND_SOFT};border:1px solid {BRAND_BORDER};line-height:54px;'
+        f'font-size:26px;text-align:center;margin:0 auto 14px">{icon}</div>'
     )
 
 
-def _brand_row(from_name: str) -> str:
-    letter = escape((from_name or "L").strip()[:1].upper())
+def _brand_row(from_name: str, text_color: str = INK) -> str:
+    """Logo + sender name, centered; the logo sits on a white chip so it stays
+    visible on the colored header container."""
+    name_html = (
+        f'<td style="padding-left:10px;font-size:16px;font-weight:800;color:{text_color};'
+        f'vertical-align:middle">{escape(from_name)}</td>'
+    )
+    if LOGO_URL:
+        inner = (
+            f'<img src="{escape(LOGO_URL)}" width="24" height="24" alt="{escape(from_name)}" '
+            f'style="display:block;width:24px;height:24px;object-fit:contain;border:0;'
+            f'margin:0 auto">'
+        )
+    else:
+        inner = (
+            f'<span style="color:{BRAND};font-size:15px;font-weight:800">'
+            f'{escape((from_name or "L").strip()[:1].upper())}</span>'
+        )
+    mark_html = (
+        f'<td style="width:{LOGO_SIZE}px;height:{LOGO_SIZE}px;background:#ffffff;'
+        f'border:1px solid {BORDER};border-radius:10px;text-align:center;'
+        f'vertical-align:middle;line-height:{LOGO_SIZE}px">{inner}</td>'
+    )
     return (
-        f'<table cellpadding="0" cellspacing="0" role="presentation"><tr>'
-        f'<td style="width:36px;height:36px;background:{BRAND};border-radius:12px;'
-        f'text-align:center;vertical-align:middle;color:#ffffff;font-size:17px;'
-        f'font-weight:800">{letter}</td>'
-        f'<td style="padding-left:10px;font-size:16px;font-weight:700;color:{INK}">'
-        f'{escape(from_name)}</td></tr></table>'
+        f'<table align="center" cellpadding="0" cellspacing="0" role="presentation"><tr>'
+        f'{mark_html}{name_html}</tr></table>'
     )
 
 
@@ -154,7 +179,7 @@ def _base_html(
         f'{escape(footer_note)}</p>'
         if footer_note else ""
     )
-    badge = badge_html or _badge_html(icon, header_bg)
+    badge = badge_html or _badge_html(icon)
     subtitle_html = (
         f'<div style="font-size:14px;color:{MUTED};margin-top:6px">'
         f'{escape(header_subtitle)}</div>'
@@ -168,32 +193,26 @@ def _base_html(
   <title>{escape(header_title)}</title>
 </head>
 <body style="margin:0;padding:0;background:{PAGE_BG};font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:{PAGE_BG};padding:28px 12px">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:{PAGE_BG};background:{PAGE_GRADIENT};padding:28px 12px">
     <tr><td align="center">
-      <table width="600" cellpadding="0" cellspacing="0"
-             style="max-width:600px;width:100%;background:{CARD_BG};border-radius:20px;
-                    overflow:hidden;border:1px solid {BORDER};
-                    box-shadow:0 1px 3px rgba(17,24,39,.08)">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
 
-        <!-- BRAND -->
+        <!-- HEADER -->
         <tr>
-          <td style="padding:20px 24px 0">{_brand_row(from_name)}</td>
-        </tr>
-
-        <!-- HEADER BADGE + TITLE -->
-        <tr>
-          <td style="padding:22px 32px 0;text-align:center">
+          <td style="padding:30px 32px 0;text-align:center">
             {badge}
-            <div style="font-size:22px;font-weight:800;color:{INK};letter-spacing:-.4px;
-                        margin-top:16px">{escape(header_title)}</div>
+            <div style="margin-bottom:12px">{_brand_row(from_name, INK)}</div>
+            <div style="font-size:22px;font-weight:800;color:{INK};letter-spacing:-.4px">
+              {escape(header_title)}</div>
             {subtitle_html}
           </td>
         </tr>
 
-        <!-- BODY -->
+        <!-- BODY (sits directly on the page gradient) -->
         <tr>
-          <td style="padding:20px 32px 8px">
-            <p style="color:{INK};font-size:16px;margin:0 0 16px;font-weight:600">
+          <td style="padding:24px 8px 0">
+            <p style="color:{INK};font-size:16px;margin:0 0 16px;font-weight:600;
+                      padding:0 4px">
               {escape(greeting)}</p>
             {body_html}
           </td>
@@ -203,8 +222,8 @@ def _base_html(
 
         <!-- FOOTER -->
         <tr>
-          <td style="padding:24px 32px 28px;text-align:center;border-top:1px solid {BORDER}">
-            <p style="color:{FAINT};font-size:12px;margin:0">
+          <td style="padding:24px 8px 8px;text-align:center">
+            <p style="color:{MUTED};font-size:12px;margin:0">
               © {escape(from_name)} &nbsp;·&nbsp; All rights reserved</p>
             {footer_note_html}
           </td>
@@ -467,7 +486,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Inspection Confirmed",
             header_subtitle="Your physical inspection is scheduled",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -507,7 +526,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Agreement Created",
             header_subtitle="New purchase agreement pending deposit",
-            greeting=f"Hello {escape(seller_name)},",
+            greeting=f"Hello {seller_name},",
             body_html=body,
         )
         text = _base_text(
@@ -547,7 +566,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Agreement Approved",
             header_subtitle="Deposit required to activate",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -589,7 +608,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Agreement Activated",
             header_subtitle="Your installment plan has started",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -624,7 +643,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Financing Application Approved",
             header_subtitle="You're eligible for monthly and installment plans",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -661,7 +680,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Financing Application Rejected",
             header_subtitle="Your application was not approved",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -694,7 +713,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Financing Eligibility Revoked",
             header_subtitle="Your financing eligibility has changed",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -735,7 +754,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Installment Payment Reminder",
             header_subtitle=f"Payment due in {days_left} day{'s' if days_left != 1 else ''}",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -768,7 +787,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Dispute Opened",
             header_subtitle="Under review — we'll resolve this for you",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -800,7 +819,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Dispute Resolved",
             header_subtitle="A resolution has been reached",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -834,7 +853,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Order Shipped",
             header_subtitle="Your order is on its way",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -863,7 +882,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Order Delivered",
             header_subtitle="Your purchase has arrived",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1069,7 +1088,7 @@ class EmailService:
             header_fg="#fff",
             header_title=title or "Payment Confirmed",
             header_subtitle="Payment received",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1098,7 +1117,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Payment Refunded",
             header_subtitle="Your refund is on the way",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1132,7 +1151,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Recurring Payment Failed",
             header_subtitle="Action may be required",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1167,7 +1186,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Agreement Defaulted",
             header_subtitle="Missed payment past grace period",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1202,7 +1221,7 @@ class EmailService:
             header_fg="#fff",
             header_title="You Own It!",
             header_subtitle=f"Your {asset_noun.lower()} is fully paid",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1235,7 +1254,7 @@ class EmailService:
             header_fg="#fff",
             header_title="Inspection Rejected",
             header_subtitle="Your inspection request was declined",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1268,7 +1287,7 @@ class EmailService:
             header_fg="#fff",
             header_title=f"Order {status_label}",
             header_subtitle="Order status update",
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         text = _base_text(
@@ -1529,7 +1548,7 @@ class EmailService:
             "installment_defaulted": ("#e74c3c", "⚠️"),
             "inspection_rejected": ("#e74c3c", "🚫"),
         }
-        accent, icon = color_map.get(notification_type, ("#FFD700", "🔔"))
+        accent, icon = color_map.get(notification_type, (BRAND, "🔔"))
 
         # Show user-facing key/value pairs from data, dropping internal-only keys
         # and formatting currency values.
@@ -1548,11 +1567,11 @@ class EmailService:
         )
         html = _base_html(
             from_name=self.from_name, icon=icon,
-            header_bg=f"linear-gradient(135deg,#111,{accent})",
+            header_bg=accent,
             header_fg="#fff",
             header_title=title,
             header_subtitle="Notification from " + self.from_name,
-            greeting=f"Hello {escape(user_name)},",
+            greeting=f"Hello {user_name},",
             body_html=body,
         )
         detail_text = "\n".join(f"{k}: {v}" for k, v in detail_rows)
