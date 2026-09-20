@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
+
 def _ngn(value) -> str:
     """Format a numeric value as Naira; pass non-numeric values through as text."""
     if value is None or value == "":
@@ -31,8 +32,17 @@ def _ref(value) -> str:
 
 # Keys that describe internal mechanics and must never appear in a user email.
 _INTERNAL_DATA_KEYS = {
-    "user_id", "seller_id", "buyer_id", "updated_by", "old_status", "new_status",
-    "dispute_event", "dispute_id", "resolved", "resolution", "resolution_notes",
+    "user_id",
+    "seller_id",
+    "buyer_id",
+    "updated_by",
+    "old_status",
+    "new_status",
+    "dispute_event",
+    "dispute_id",
+    "resolved",
+    "resolution",
+    "resolution_notes",
     "context",
 }
 
@@ -46,33 +56,35 @@ _MONEY_KEY_HINTS = ("amount", "price", "balance", "fee", "total")
 # email at once.
 # ---------------------------------------------------------------------------
 
-PAGE_BG = "#fafafa"        # page background fallback (for clients without gradients)
+PAGE_BG = "#fafafa"  # page background fallback (for clients without gradients)
 PAGE_GRADIENT = "linear-gradient(180deg, #FAFAFA 65.38%, #FF6D01 144.43%)"
-CARD_BG = "#ffffff"        # main card
-SURFACE = "#f9fafb"        # inner surfaces
-BORDER = "#f3f4f6"         # hairlines (gray-100)
-INK = "#111827"            # headings / strong text (gray-900)
-BODY_TEXT = "#374151"      # body copy (gray-700)
-MUTED = "#6b7280"          # secondary text (gray-500)
-FAINT = "#9ca3af"          # labels / captions (gray-400)
+CARD_BG = "#ffffff"  # main card
+SURFACE = "#f9fafb"  # inner surfaces
+BORDER = "#f3f4f6"  # hairlines (gray-100)
+INK = "#111827"  # headings / strong text (gray-900)
+BODY_TEXT = "#374151"  # body copy (gray-700)
+MUTED = "#6b7280"  # secondary text (gray-500)
+FAINT = "#9ca3af"  # labels / captions (gray-400)
 
-BRAND = "#f97316"          # primary orange (orange-500)
-BRAND_DARK = "#ea580c"     # orange-600
-BRAND_SOFT = "#fff7ed"     # orange-50
-BRAND_BORDER = "#fdba74"   # orange-300
+BRAND = "#f97316"  # primary orange (orange-500)
+BRAND_DARK = "#ea580c"  # orange-600
+BRAND_SOFT = "#fff7ed"  # orange-50
+BRAND_BORDER = "#fdba74"  # orange-300
 BRAND_GRADIENT = "linear-gradient(135deg, #FF8A3D 0%, #FF6D01 55%, #EA580C 100%)"
 
-SUCCESS = "#16a34a"        # green-600
-DANGER = "#dc2626"         # red-600
-WARNING = "#d97706"        # amber-600
-INFO = "#2563eb"           # blue-600
-PURPLE = "#7c3aed"         # violet-600
+SUCCESS = "#16a34a"  # green-600
+DANGER = "#dc2626"  # red-600
+WARNING = "#d97706"  # amber-600
+INFO = "#2563eb"  # blue-600
+PURPLE = "#7c3aed"  # violet-600
 RADIUS = "16px"
 
 # Brand mark shown next to the sender name in every email header. Use a raster
 # (PNG) URL, not the SVG wordmark: Gmail and several clients don't render SVG.
 # Set to "" to fall back to the letter tile. Must be an absolute URL.
-LOGO_URL = "https://alhaq-frontend.vercel.app/favicon-512.png"
+# Derived from settings.FRONTEND_URL so it follows the configured environment
+# (dev, staging, production) without code changes.
+LOGO_URL = f"{settings.FRONTEND_URL.rstrip('/')}/favicon-512.png"
 LOGO_SIZE = 36
 
 
@@ -80,16 +92,17 @@ LOGO_SIZE = 36
 # Shared HTML building blocks
 # ---------------------------------------------------------------------------
 
+
 def _detail_row(label: str, value: str, value_color: str = "") -> str:
     safe_val = escape(str(value)) if value else "—"
     color = value_color or INK
     return (
-        f'<tr>'
+        f"<tr>"
         f'<td style="padding:9px 16px 9px 0;color:{FAINT};font-size:14px;'
         f'white-space:nowrap;vertical-align:top">{escape(label)}</td>'
         f'<td style="padding:9px 0;color:{color};font-size:14px;'
         f'font-weight:600;text-align:right">{safe_val}</td>'
-        f'</tr>'
+        f"</tr>"
     )
 
 
@@ -99,8 +112,8 @@ def _details_card(rows: list[tuple[str, str]], accent: str = BRAND) -> str:
         f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
         f'border-left:4px solid {accent};border-radius:14px;padding:14px 20px;margin:20px 0">'
         f'<table style="width:100%;border-collapse:collapse">'
-        f'{rows_html}'
-        f'</table></div>'
+        f"{rows_html}"
+        f"</table></div>"
     )
 
 
@@ -109,7 +122,7 @@ def _alert_box(text: str, color: str = DANGER) -> str:
         f'<div style="background:{color}14;border-left:4px solid {color};'
         f'border-radius:12px;padding:14px 18px;margin:18px 0">'
         f'<p style="color:{INK};margin:0;font-size:14px;line-height:1.55">'
-        f'{escape(text)}</p></div>'
+        f"{escape(text)}</p></div>"
     )
 
 
@@ -118,7 +131,7 @@ def _info_box(text: str, color: str = BRAND) -> str:
         f'<div style="background:{color}12;border:1px solid {color}40;'
         f'border-radius:12px;padding:16px 18px;margin:18px 0;text-align:center">'
         f'<p style="color:{INK};margin:0;font-size:15px;font-weight:600">'
-        f'{escape(text)}</p></div>'
+        f"{escape(text)}</p></div>"
     )
 
 
@@ -126,7 +139,7 @@ def _badge_html(icon: str) -> str:
     """Circular event icon shown at the top of the header."""
     return (
         f'<div style="width:56px;height:56px;border-radius:9999px;'
-        f'background:{BRAND_SOFT};border:1px solid {BRAND_BORDER};line-height:54px;'
+        f"background:{BRAND_SOFT};border:1px solid {BRAND_BORDER};line-height:54px;"
         f'font-size:26px;text-align:center;margin:0 auto 14px">{icon}</div>'
     )
 
@@ -151,12 +164,12 @@ def _brand_row(from_name: str, text_color: str = INK) -> str:
         )
     mark_html = (
         f'<td style="width:{LOGO_SIZE}px;height:{LOGO_SIZE}px;background:#ffffff;'
-        f'border:1px solid {BORDER};border-radius:10px;text-align:center;'
+        f"border:1px solid {BORDER};border-radius:10px;text-align:center;"
         f'vertical-align:middle;line-height:{LOGO_SIZE}px">{inner}</td>'
     )
     return (
         f'<table align="center" cellpadding="0" cellspacing="0" role="presentation"><tr>'
-        f'{mark_html}{name_html}</tr></table>'
+        f"{mark_html}{name_html}</tr></table>"
     )
 
 
@@ -176,14 +189,16 @@ def _base_html(
 ) -> str:
     footer_note_html = (
         f'<p style="color:{FAINT};font-size:12px;margin:8px 0 0">'
-        f'{escape(footer_note)}</p>'
-        if footer_note else ""
+        f"{escape(footer_note)}</p>"
+        if footer_note
+        else ""
     )
     badge = badge_html or _badge_html(icon)
     subtitle_html = (
         f'<div style="font-size:14px;color:{MUTED};margin-top:6px">'
-        f'{escape(header_subtitle)}</div>'
-        if header_subtitle else ""
+        f"{escape(header_subtitle)}</div>"
+        if header_subtitle
+        else ""
     )
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -236,7 +251,9 @@ def _base_html(
 </html>"""
 
 
-def _base_text(*, from_name: str, title: str, greeting: str, body: str, footer: str = "") -> str:
+def _base_text(
+    *, from_name: str, title: str, greeting: str, body: str, footer: str = ""
+) -> str:
     sep = "─" * 60
     return f"""{from_name} — {title}
 {sep}
@@ -252,6 +269,7 @@ def _base_text(*, from_name: str, title: str, greeting: str, body: str, footer: 
 # ---------------------------------------------------------------------------
 # EmailService
 # ---------------------------------------------------------------------------
+
 
 class EmailService:
 
@@ -277,18 +295,28 @@ class EmailService:
         msg.attach(MIMEText(html_body, "html"))
         return msg
 
-    async def send_email_async(self, to_email, subject, html_body, text_body=None) -> bool:
+    async def send_email_async(
+        self, to_email, subject, html_body, text_body=None
+    ) -> bool:
         try:
             msg = self._create_message(to_email, subject, html_body, text_body)
             if self.use_ssl:
                 # Port 465 — SSL from the start
-                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port,
-                                       use_tls=True, timeout=30)
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.smtp_host,
+                    port=self.smtp_port,
+                    use_tls=True,
+                    timeout=30,
+                )
             else:
                 # Port 587 — aiosmtplib v4 auto-performs STARTTLS on connect
                 # when the server announces it; do not call starttls() manually
-                smtp = aiosmtplib.SMTP(hostname=self.smtp_host, port=self.smtp_port,
-                                       use_tls=False, timeout=30)
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.smtp_host,
+                    port=self.smtp_port,
+                    use_tls=False,
+                    timeout=30,
+                )
             await smtp.connect()
             if self.username and self.password:
                 await smtp.login(self.username, self.password)
@@ -322,26 +350,31 @@ class EmailService:
 
     # ── Templates ──────────────────────────────────────────────────────────
 
-    def render_verification_email(self, user_name: str, verification_code: str) -> tuple[str, str]:
+    def render_verification_email(
+        self, user_name: str, verification_code: str
+    ) -> tuple[str, str]:
         expire = settings.EMAIL_VERIFICATION_EXPIRE_MINUTES
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Thank you for joining <strong>{escape(self.from_name)}</strong>! '
-            f'Enter the code below to verify your email address and activate your account.</p>'
+            f"Thank you for joining <strong>{escape(self.from_name)}</strong>! "
+            f"Enter the code below to verify your email address and activate your account.</p>"
             f'<div style="background:#fff7ed;border:2px solid #f97316;border-radius:16px;'
-            f'padding:32px;text-align:center;margin:24px 0;'
+            f"padding:32px;text-align:center;margin:24px 0;"
             f'box-shadow:0 8px 24px rgba(249,115,22,.12)">'
             f'<p style="color:#9ca3af;font-size:12px;text-transform:uppercase;'
             f'letter-spacing:2px;margin:0 0 12px">Verification Code</p>'
             f'<div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#ea580c;'
             f'font-family:monospace">{escape(verification_code)}</div>'
             f'<p style="color:#9ca3af;font-size:13px;margin:12px 0 0">Expires in {expire} minutes</p>'
-            f'</div>'
-            + _alert_box("Do not share this code with anyone. "
-                         "If you didn't request this, please ignore this email.")
+            f"</div>"
+            + _alert_box(
+                "Do not share this code with anyone. "
+                "If you didn't request this, please ignore this email."
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="✉️",
+            from_name=self.from_name,
+            icon="✉️",
             header_bg="linear-gradient(135deg,#FFD700,#FFA500)",
             header_fg="#000",
             header_title="Email Verification",
@@ -350,34 +383,43 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Email Verification",
+            from_name=self.from_name,
+            title="Email Verification",
             greeting=f"Hello {user_name},",
-            body=(f"Verification Code: {verification_code}\n"
-                  f"Expires in {expire} minutes.\n\n"
-                  f"Do not share this code with anyone."),
+            body=(
+                f"Verification Code: {verification_code}\n"
+                f"Expires in {expire} minutes.\n\n"
+                f"Do not share this code with anyone."
+            ),
         )
         return html, text
 
-    def render_password_reset_email(self, user_name: str, reset_code: str) -> tuple[str, str]:
+    def render_password_reset_email(
+        self, user_name: str, reset_code: str
+    ) -> tuple[str, str]:
         expire = settings.PASSWORD_RESET_EXPIRE_MINUTES
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'We received a request to reset your password. '
-            f'Use the code below to create a new password.</p>'
+            f"We received a request to reset your password. "
+            f"Use the code below to create a new password.</p>"
             f'<div style="background:#fef2f2;border:2px solid #ef4444;border-radius:16px;'
-            f'padding:32px;text-align:center;margin:24px 0;'
+            f"padding:32px;text-align:center;margin:24px 0;"
             f'box-shadow:0 8px 24px rgba(239,68,68,.12)">'
             f'<p style="color:#9ca3af;font-size:12px;text-transform:uppercase;'
             f'letter-spacing:2px;margin:0 0 12px">Reset Code</p>'
             f'<div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#dc2626;'
             f'font-family:monospace">{escape(reset_code)}</div>'
             f'<p style="color:#9ca3af;font-size:13px;margin:12px 0 0">Expires in {expire} minutes</p>'
-            f'</div>'
-            + _alert_box("If you didn't request a password reset, "
-                         "your account is safe — just ignore this email.", "#ff6b6b")
+            f"</div>"
+            + _alert_box(
+                "If you didn't request a password reset, "
+                "your account is safe — just ignore this email.",
+                "#ff6b6b",
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="🔑",
+            from_name=self.from_name,
+            icon="🔑",
             header_bg="linear-gradient(135deg,#c0392b,#e74c3c)",
             header_fg="#fff",
             header_title="Password Reset",
@@ -386,26 +428,30 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Password Reset",
+            from_name=self.from_name,
+            title="Password Reset",
             greeting=f"Hello {user_name},",
-            body=(f"Reset Code: {reset_code}\n"
-                  f"Expires in {expire} minutes.\n\n"
-                  f"If you didn't request this, ignore this email."),
+            body=(
+                f"Reset Code: {reset_code}\n"
+                f"Expires in {expire} minutes.\n\n"
+                f"If you didn't request this, ignore this email."
+            ),
         )
         return html, text
 
     def render_welcome_email(self, user_name: str) -> tuple[str, str]:
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 16px">'
-            f'Welcome to <strong>{escape(self.from_name)}</strong>! '
-            f'Your email has been verified and your account is ready to use.</p>'
+            f"Welcome to <strong>{escape(self.from_name)}</strong>! "
+            f"Your email has been verified and your account is ready to use.</p>"
             + _info_box("🎉 Your account is now active!")
             + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
-            f'Explore the marketplace to buy and sell vehicles, properties, and more. '
-            f'If you have any questions, our support team is always here to help.</p>'
+            f"Explore the marketplace to buy and sell vehicles, properties, and more. "
+            f"If you have any questions, our support team is always here to help.</p>"
         )
         html = _base_html(
-            from_name=self.from_name, icon="🌟",
+            from_name=self.from_name,
+            icon="🌟",
             header_bg="linear-gradient(135deg,#FFD700,#FFA500)",
             header_fg="#000",
             header_title="Welcome Aboard!",
@@ -414,33 +460,39 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Welcome!",
+            from_name=self.from_name,
+            title="Welcome!",
             greeting=f"Hello {user_name},",
-            body=(f"Welcome to {self.from_name}!\n\n"
-                  f"Your email has been verified. Your account is now active."),
+            body=(
+                f"Welcome to {self.from_name}!\n\n"
+                f"Your email has been verified. Your account is now active."
+            ),
         )
         return html, text
 
-    def render_login_email(self, user_name: str, login_time: str,
-                           ip_address: Optional[str] = None,
-                           device: Optional[str] = None) -> tuple[str, str]:
+    def render_login_email(
+        self,
+        user_name: str,
+        login_time: str,
+        ip_address: Optional[str] = None,
+        device: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows: list[tuple[str, str]] = [("Time", login_time)]
         if ip_address:
             rows.append(("IP Address", ip_address))
         if device:
             rows.append(("Device", device))
 
-        body = (
-            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'A new sign-in was detected on your <strong>{escape(self.from_name)}</strong> account.</p>'
-            + _details_card(rows, "#4a9eff")
-            + _alert_box(
-                "If this wasn't you, please change your password immediately "
-                "and contact our support team.", "#ff6b6b"
-            )
+        body = f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">' f"A new sign-in was detected on your <strong>{escape(self.from_name)}</strong> account.</p>" + _details_card(
+            rows, "#4a9eff"
+        ) + _alert_box(
+            "If this wasn't you, please change your password immediately "
+            "and contact our support team.",
+            "#ff6b6b",
         )
         html = _base_html(
-            from_name=self.from_name, icon="🔐",
+            from_name=self.from_name,
+            icon="🔐",
             header_bg="linear-gradient(135deg,#1a1a2e,#16213e)",
             header_fg="#4a9eff",
             header_title="New Sign-In Detected",
@@ -451,18 +503,26 @@ class EmailService:
         )
         detail_text = "\n".join(f"{k}: {v}" for k, v in rows)
         text = _base_text(
-            from_name=self.from_name, title="New Sign-In",
+            from_name=self.from_name,
+            title="New Sign-In",
             greeting=f"Hello {user_name},",
-            body=(f"A new sign-in was detected on your account.\n\n"
-                  f"{detail_text}\n\n"
-                  f"If this wasn't you, change your password immediately."),
+            body=(
+                f"A new sign-in was detected on your account.\n\n"
+                f"{detail_text}\n\n"
+                f"If this wasn't you, change your password immediately."
+            ),
         )
         return html, text
 
-    def render_inspection_confirmed_email(self, user_name: str, asset_title: str,
-                                           inspection_date: str, location: Optional[str],
-                                           seller_name: str,
-                                           seller_contact: Optional[str] = None) -> tuple[str, str]:
+    def render_inspection_confirmed_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        inspection_date: str,
+        location: Optional[str],
+        seller_name: str,
+        seller_contact: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Seller", seller_name),
@@ -475,13 +535,16 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your inspection request has been confirmed by the seller. '
-            f'Please be present at the agreed time.</p>'
+            f"Your inspection request has been confirmed by the seller. "
+            f"Please be present at the agreed time.</p>"
             + _details_card(rows, "#3498db")
-            + _info_box("Please arrive on time. Bring a valid ID for verification.", "#3498db")
+            + _info_box(
+                "Please arrive on time. Bring a valid ID for verification.", "#3498db"
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="📅",
+            from_name=self.from_name,
+            icon="📅",
             header_bg="linear-gradient(135deg,#1a5276,#2e86c1)",
             header_fg="#fff",
             header_title="Inspection Confirmed",
@@ -490,17 +553,24 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Inspection Confirmed",
+            from_name=self.from_name,
+            title="Inspection Confirmed",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_agreement_created_email(self, seller_name: str, buyer_name: str,
-                                        asset_title: str, total_price: str,
-                                        deposit: str, plan_type: str,
-                                        monthly: Optional[str] = None,
-                                        duration: Optional[str] = None) -> tuple[str, str]:
+    def render_agreement_created_email(
+        self,
+        seller_name: str,
+        buyer_name: str,
+        asset_title: str,
+        total_price: str,
+        deposit: str,
+        plan_type: str,
+        monthly: Optional[str] = None,
+        duration: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Buyer", buyer_name),
@@ -515,13 +585,17 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'A new purchase agreement has been created for <strong>{escape(asset_title)}</strong>. '
-            f'The buyer needs to pay the deposit to activate the agreement.</p>'
+            f"A new purchase agreement has been created for <strong>{escape(asset_title)}</strong>. "
+            f"The buyer needs to pay the deposit to activate the agreement.</p>"
             + _details_card(rows, "#8e44ad")
-            + _info_box("The agreement becomes active once the buyer pays the deposit.", "#8e44ad")
+            + _info_box(
+                "The agreement becomes active once the buyer pays the deposit.",
+                "#8e44ad",
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="📄",
+            from_name=self.from_name,
+            icon="📄",
             header_bg="linear-gradient(135deg,#6c3483,#8e44ad)",
             header_fg="#fff",
             header_title="Agreement Created",
@@ -530,17 +604,23 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="New Agreement Created",
+            from_name=self.from_name,
+            title="New Agreement Created",
             greeting=f"Hello {seller_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_agreement_approved_email(self, user_name: str, asset_title: str,
-                                         total_price: str, remaining: str,
-                                         next_due: Optional[str] = None,
-                                         monthly: Optional[str] = None,
-                                         reference: Optional[str] = None) -> tuple[str, str]:
+    def render_agreement_approved_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        total_price: str,
+        remaining: str,
+        next_due: Optional[str] = None,
+        monthly: Optional[str] = None,
+        reference: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Total Price", total_price),
@@ -555,13 +635,16 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your purchase agreement for <strong>{escape(asset_title)}</strong> has been '
-            f'approved. Pay your deposit to activate it.</p>'
+            f"Your purchase agreement for <strong>{escape(asset_title)}</strong> has been "
+            f"approved. Pay your deposit to activate it.</p>"
             + _details_card(rows, "#f39c12")
-            + _info_box("Your agreement activates once your deposit is confirmed.", "#f39c12")
+            + _info_box(
+                "Your agreement activates once your deposit is confirmed.", "#f39c12"
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="🤝",
+            from_name=self.from_name,
+            icon="🤝",
             header_bg="linear-gradient(135deg,#7d3c00,#f39c12)",
             header_fg="#fff",
             header_title="Agreement Approved",
@@ -570,18 +653,28 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Agreement Approved — Deposit Required",
+            from_name=self.from_name,
+            title="Agreement Approved — Deposit Required",
             greeting=f"Hello {user_name},",
-            body=("Your agreement has been approved. Pay your deposit to activate it.\n\n"
-                  + "\n".join(f"{k}: {v}" for k, v in rows)
-                  + "\n\nYour agreement activates once your deposit is confirmed."),
+            body=(
+                "Your agreement has been approved. Pay your deposit to activate it.\n\n"
+                + "\n".join(f"{k}: {v}" for k, v in rows)
+                + "\n\nYour agreement activates once your deposit is confirmed."
+            ),
         )
         return html, text
 
-    def render_agreement_activated_email(self, user_name: str, asset_title: str,
-                                          total_price, amount_paid, remaining,
-                                          monthly=None, next_due: Optional[str] = None,
-                                          reference: Optional[str] = None) -> tuple[str, str]:
+    def render_agreement_activated_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        total_price,
+        amount_paid,
+        remaining,
+        monthly=None,
+        next_due: Optional[str] = None,
+        reference: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Total Price", _ngn(total_price)),
@@ -597,13 +690,16 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your deposit for <strong>{escape(asset_title)}</strong> has been confirmed and '
-            f'your agreement is now active.</p>'
+            f"Your deposit for <strong>{escape(asset_title)}</strong> has been confirmed and "
+            f"your agreement is now active.</p>"
             + _details_card(rows, "#27ae60")
-            + _info_box("Keep up with your payments to complete the purchase.", "#27ae60")
+            + _info_box(
+                "Keep up with your payments to complete the purchase.", "#27ae60"
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="✅",
+            from_name=self.from_name,
+            icon="✅",
             header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
             header_fg="#fff",
             header_title="Agreement Activated",
@@ -612,15 +708,19 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Agreement Activated",
+            from_name=self.from_name,
+            title="Agreement Activated",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_financing_application_approved_email(self, user_name: str,
-                                                     reference: Optional[str] = None,
-                                                     reviewed_on: Optional[str] = None) -> tuple[str, str]:
+    def render_financing_application_approved_email(
+        self,
+        user_name: str,
+        reference: Optional[str] = None,
+        reviewed_on: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = []
         if reference:
             rows.append(("Reference", reference))
@@ -629,16 +729,20 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Good news - your financing application has been reviewed and approved. '
-            f'You can now select a monthly or installment plan on any purchase.</p>'
+            f"Good news - your financing application has been reviewed and approved. "
+            f"You can now select a monthly or installment plan on any purchase.</p>"
             + (_details_card(rows, "#27ae60") if rows else "")
-            + _info_box("Head back to your purchase and choose your preferred plan at checkout.", "#27ae60")
+            + _info_box(
+                "Head back to your purchase and choose your preferred plan at checkout.",
+                "#27ae60",
+            )
             + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
-            f'Next steps: open the asset you inspected, select Monthly or Installment, and '
-            f'pay the deposit (or first installment) to activate your plan.</p>'
+            f"Next steps: open the asset you inspected, select Monthly or Installment, and "
+            f"pay the deposit (or first installment) to activate your plan.</p>"
         )
         html = _base_html(
-            from_name=self.from_name, icon="✅",
+            from_name=self.from_name,
+            icon="✅",
             header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
             header_fg="#fff",
             header_title="Financing Application Approved",
@@ -647,19 +751,26 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Financing Application Approved",
+            from_name=self.from_name,
+            title="Financing Application Approved",
             greeting=f"Hello {user_name},",
-            body=("Your financing application has been approved. You can now select a monthly "
-                  "or installment plan on any purchase.\n\n"
-                  + "\n".join(f"{k}: {v}" for k, v in rows)
-                  + "\n\nNext steps: choose your preferred plan at checkout and pay the deposit "
-                  "(or first installment) to activate it."),
+            body=(
+                "Your financing application has been approved. You can now select a monthly "
+                "or installment plan on any purchase.\n\n"
+                + "\n".join(f"{k}: {v}" for k, v in rows)
+                + "\n\nNext steps: choose your preferred plan at checkout and pay the deposit "
+                "(or first installment) to activate it."
+            ),
         )
         return html, text
 
-    def render_financing_application_rejected_email(self, user_name: str, reason: str,
-                                                     reference: Optional[str] = None,
-                                                     decision_date: Optional[str] = None) -> tuple[str, str]:
+    def render_financing_application_rejected_email(
+        self,
+        user_name: str,
+        reason: str,
+        reference: Optional[str] = None,
+        decision_date: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [("Reason", reason)]
         if reference:
             rows.append(("Reference", reference))
@@ -667,15 +778,16 @@ class EmailService:
             rows.append(("Decision Date", decision_date))
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your financing application was not approved this time.</p>'
+            f"Your financing application was not approved this time.</p>"
             + _details_card(rows, "#c0392b")
             + _info_box("You may submit a new application at any time.", "#c0392b")
             + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
-            f'You can reapply with updated documents or contact support if you believe this '
-            f'decision was made in error.</p>'
+            f"You can reapply with updated documents or contact support if you believe this "
+            f"decision was made in error.</p>"
         )
         html = _base_html(
-            from_name=self.from_name, icon="✖️",
+            from_name=self.from_name,
+            icon="✖️",
             header_bg="linear-gradient(135deg,#922b21,#c0392b)",
             header_fg="#fff",
             header_title="Financing Application Rejected",
@@ -684,15 +796,20 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Financing Application Rejected",
+            from_name=self.from_name,
+            title="Financing Application Rejected",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_financing_application_revoked_email(self, user_name: str, reason: str,
-                                                    reference: Optional[str] = None,
-                                                    decision_date: Optional[str] = None) -> tuple[str, str]:
+    def render_financing_application_revoked_email(
+        self,
+        user_name: str,
+        reason: str,
+        reference: Optional[str] = None,
+        decision_date: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [("Reason", reason)]
         if reference:
             rows.append(("Reference", reference))
@@ -700,15 +817,16 @@ class EmailService:
             rows.append(("Revoked On", decision_date))
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your financing eligibility has been revoked. You will need to submit a new '
-            f'application before selecting a monthly or installment plan again.</p>'
+            f"Your financing eligibility has been revoked. You will need to submit a new "
+            f"application before selecting a monthly or installment plan again.</p>"
             + _details_card(rows, "#c0392b")
             + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
-            f'To regain eligibility, submit a new application through your account. '
-            f'Contact support if you need help.</p>'
+            f"To regain eligibility, submit a new application through your account. "
+            f"Contact support if you need help.</p>"
         )
         html = _base_html(
-            from_name=self.from_name, icon="⚠️",
+            from_name=self.from_name,
+            icon="⚠️",
             header_bg="linear-gradient(135deg,#922b21,#c0392b)",
             header_fg="#fff",
             header_title="Financing Eligibility Revoked",
@@ -717,16 +835,22 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Financing Eligibility Revoked",
+            from_name=self.from_name,
+            title="Financing Eligibility Revoked",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_installment_reminder_email(self, user_name: str, asset_title: str,
-                                           amount_due: str, due_date: str,
-                                           days_left: int,
-                                           remaining_balance: Optional[str] = None) -> tuple[str, str]:
+    def render_installment_reminder_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        amount_due: str,
+        due_date: str,
+        days_left: int,
+        remaining_balance: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Amount Due", amount_due),
@@ -736,20 +860,23 @@ class EmailService:
         if remaining_balance:
             rows.append(("Remaining Balance After", remaining_balance))
 
-        urgency_color = "#e74c3c" if days_left <= 3 else "#e67e22" if days_left <= 5 else "#f39c12"
+        urgency_color = (
+            "#e74c3c" if days_left <= 3 else "#e67e22" if days_left <= 5 else "#f39c12"
+        )
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your installment payment for <strong>{escape(asset_title)}</strong> is due '
+            f"Your installment payment for <strong>{escape(asset_title)}</strong> is due "
             f'in <strong style="color:{urgency_color}">{days_left} day{"s" if days_left != 1 else ""}</strong>. '
-            f'Please ensure your payment is made on time to keep your agreement active.</p>'
+            f"Please ensure your payment is made on time to keep your agreement active.</p>"
             + _details_card(rows, urgency_color)
             + _alert_box(
                 "Missing payments may result in agreement default and loss of your deposit.",
-                urgency_color
+                urgency_color,
             )
         )
         html = _base_html(
-            from_name=self.from_name, icon="⏰",
+            from_name=self.from_name,
+            icon="⏰",
             header_bg=f"linear-gradient(135deg,#7d3c00,{urgency_color})",
             header_fg="#fff",
             header_title="Installment Payment Reminder",
@@ -758,15 +885,20 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Installment Reminder",
+            from_name=self.from_name,
+            title="Installment Reminder",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_dispute_opened_email(self, user_name: str, dispute_title: str,
-                                     reference: str,
-                                     order_or_agreement_id: Optional[str] = None) -> tuple[str, str]:
+    def render_dispute_opened_email(
+        self,
+        user_name: str,
+        dispute_title: str,
+        reference: str,
+        order_or_agreement_id: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Dispute Title", dispute_title),
             ("Reference", reference),
@@ -776,13 +908,14 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'A dispute has been opened and is now under review by our team. '
-            f'We will investigate and respond within 2–3 business days.</p>'
+            f"A dispute has been opened and is now under review by our team. "
+            f"We will investigate and respond within 2–3 business days.</p>"
             + _details_card(rows, "#e67e22")
             + _info_box("You will be notified when a resolution is reached.", "#e67e22")
         )
         html = _base_html(
-            from_name=self.from_name, icon="⚖️",
+            from_name=self.from_name,
+            icon="⚖️",
             header_bg="linear-gradient(135deg,#784212,#ca6f1e)",
             header_fg="#fff",
             header_title="Dispute Opened",
@@ -791,15 +924,20 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Dispute Opened",
+            from_name=self.from_name,
+            title="Dispute Opened",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_dispute_resolved_email(self, user_name: str, dispute_title: str,
-                                       resolution: str,
-                                       notes: Optional[str] = None) -> tuple[str, str]:
+    def render_dispute_resolved_email(
+        self,
+        user_name: str,
+        dispute_title: str,
+        resolution: str,
+        notes: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Dispute", dispute_title),
             ("Resolution", resolution.replace("_", " ").title()),
@@ -809,12 +947,13 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your dispute has been reviewed and a resolution has been reached.</p>'
+            f"Your dispute has been reviewed and a resolution has been reached.</p>"
             + _details_card(rows, "#27ae60")
             + _info_box("Thank you for your patience during this process.", "#27ae60")
         )
         html = _base_html(
-            from_name=self.from_name, icon="✅",
+            from_name=self.from_name,
+            icon="✅",
             header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
             header_fg="#fff",
             header_title="Dispute Resolved",
@@ -823,16 +962,21 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Dispute Resolved",
+            from_name=self.from_name,
+            title="Dispute Resolved",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_order_shipped_email(self, user_name: str, order_id: str,
-                                    items_summary: str,
-                                    total: str,
-                                    tracking_note: Optional[str] = None) -> tuple[str, str]:
+    def render_order_shipped_email(
+        self,
+        user_name: str,
+        order_id: str,
+        items_summary: str,
+        total: str,
+        tracking_note: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Order ID", f"#{order_id[:8].upper()}"),
             ("Items", items_summary),
@@ -840,15 +984,17 @@ class EmailService:
         ]
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your order has been dispatched and is on its way to you!</p>'
+            f"Your order has been dispatched and is on its way to you!</p>"
             + _details_card(rows, "#3498db")
             + _info_box(
-                tracking_note or "Delivery fees are included in your order total when applicable.",
-                "#3498db"
+                tracking_note
+                or "Delivery fees are included in your order total when applicable.",
+                "#3498db",
             )
         )
         html = _base_html(
-            from_name=self.from_name, icon="🚚",
+            from_name=self.from_name,
+            icon="🚚",
             header_bg="linear-gradient(135deg,#1a5276,#2e86c1)",
             header_fg="#fff",
             header_title="Order Shipped",
@@ -857,27 +1003,29 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Order Shipped",
+            from_name=self.from_name,
+            title="Order Shipped",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_order_delivered_email(self, user_name: str, order_id: str,
-                                      items_summary: str, total: str) -> tuple[str, str]:
+    def render_order_delivered_email(
+        self, user_name: str, order_id: str, items_summary: str, total: str
+    ) -> tuple[str, str]:
         rows = [
             ("Order ID", f"#{order_id[:8].upper()}"),
             ("Items", items_summary),
             ("Total Paid", total),
         ]
-        body = (
-            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your order has been delivered. We hope you\'re happy with your purchase!</p>'
-            + _details_card(rows, "#27ae60")
-            + _info_box("Enjoying your purchase? Leave a review for the seller.", "#27ae60")
+        body = f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">' f"Your order has been delivered. We hope you're happy with your purchase!</p>" + _details_card(
+            rows, "#27ae60"
+        ) + _info_box(
+            "Enjoying your purchase? Leave a review for the seller.", "#27ae60"
         )
         html = _base_html(
-            from_name=self.from_name, icon="📦",
+            from_name=self.from_name,
+            icon="📦",
             header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
             header_fg="#fff",
             header_title="Order Delivered",
@@ -886,29 +1034,38 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Order Delivered",
+            from_name=self.from_name,
+            title="Order Delivered",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_order_confirmed_email(self, user_name: str, order_id: str,
-                                      items_summary: str, total,
-                                      delivery_type: str = "delivery",
-                                      delivery_fee=None,
-                                      estimated_delivery: Optional[str] = None,
-                                      subtotal=None, discount=None,
-                                      delivery_city: Optional[str] = None,
-                                      order_date: Optional[str] = None,
-                                      order_time: Optional[str] = None,
-                                      items: Optional[list] = None) -> tuple[str, str]:
+    def render_order_confirmed_email(
+        self,
+        user_name: str,
+        order_id: str,
+        items_summary: str,
+        total,
+        delivery_type: str = "delivery",
+        delivery_fee=None,
+        estimated_delivery: Optional[str] = None,
+        subtotal=None,
+        discount=None,
+        delivery_city: Optional[str] = None,
+        order_date: Optional[str] = None,
+        order_time: Optional[str] = None,
+        items: Optional[list] = None,
+    ) -> tuple[str, str]:
         order_ref = f"#{order_id[:8].upper()}" if order_id else "N/A"
-        delivery_label = delivery_type.replace("_", " ").title() if delivery_type else "—"
+        delivery_label = (
+            delivery_type.replace("_", " ").title() if delivery_type else "—"
+        )
 
         # ── Success badge ───────────────────────────────────────────────
         badge_html = (
             f'<div style="width:64px;height:64px;border-radius:9999px;background:#dcfce7;'
-            f'border:3px solid {SUCCESS};line-height:58px;text-align:center;'
+            f"border:3px solid {SUCCESS};line-height:58px;text-align:center;"
             f'font-size:28px;color:{SUCCESS};margin:0 auto">✓</div>'
         )
 
@@ -916,7 +1073,7 @@ class EmailService:
         def _row(label, value, value_color=None, weight="600"):
             color = value_color or INK
             return (
-                f'<tr>'
+                f"<tr>"
                 f'<td style="padding:7px 0;color:{FAINT};font-size:14px">{escape(label)}</td>'
                 f'<td style="padding:7px 0;color:{color};font-size:14px;font-weight:{weight};'
                 f'text-align:right">{value}</td></tr>'
@@ -926,7 +1083,9 @@ class EmailService:
         if subtotal is not None:
             summary_rows += _row("Subtotal", _ngn(subtotal))
         delivery_dest = f" ({delivery_city})" if delivery_city else ""
-        summary_rows += _row(f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—")
+        summary_rows += _row(
+            f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—"
+        )
         if discount:
             summary_rows += _row("Spend & save discount", f"-{_ngn(discount)}", SUCCESS)
         total_html = (
@@ -940,9 +1099,9 @@ class EmailService:
             f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:16px;'
             f'padding:18px 20px;margin:0 0 16px">'
             f'<div style="font-size:17px;font-weight:800;color:{INK};margin-bottom:8px">'
-            f'Order summary</div>'
+            f"Order summary</div>"
             f'<table style="width:100%;border-collapse:collapse">{summary_rows}{total_html}</table>'
-            f'</div>'
+            f"</div>"
         )
 
         # ── Order details card ──────────────────────────────────────────
@@ -982,25 +1141,31 @@ class EmailService:
                 image = item.get("image")
                 border = "" if idx == last else f"border-bottom:1px solid {BORDER};"
                 if image and str(image).startswith("http"):
-                    thumb = (f'<img src="{escape(str(image))}" width="56" height="56" '
-                             f'style="border-radius:12px;object-fit:cover;background:{SURFACE}" alt="">')
+                    thumb = (
+                        f'<img src="{escape(str(image))}" width="56" height="56" '
+                        f'style="border-radius:12px;object-fit:cover;background:{SURFACE}" alt="">'
+                    )
                 else:
-                    thumb = (f'<div style="width:56px;height:56px;border-radius:12px;'
-                             f'background:{SURFACE};border:1px solid {BORDER}"></div>')
+                    thumb = (
+                        f'<div style="width:56px;height:56px;border-radius:12px;'
+                        f'background:{SURFACE};border:1px solid {BORDER}"></div>'
+                    )
                 variant_html = (
                     f'<div style="color:{FAINT};font-size:13px;margin:3px 0">{escape(str(variant))}</div>'
-                    if variant else ""
+                    if variant
+                    else ""
                 )
                 price_html = (
                     f'<div style="color:{BRAND};font-size:14px;font-weight:700">{_ngn(price)}</div>'
-                    if price is not None else ""
+                    if price is not None
+                    else ""
                 )
                 rows_html += (
-                    f'<tr>'
+                    f"<tr>"
                     f'<td style="width:56px;padding:14px 0;{border}vertical-align:top">{thumb}</td>'
                     f'<td style="padding:14px 0 14px 12px;{border}vertical-align:top">'
                     f'<div style="color:{INK};font-size:14px;font-weight:600;line-height:1.4">{name}</div>'
-                    f'{variant_html}{price_html}</td></tr>'
+                    f"{variant_html}{price_html}</td></tr>"
                 )
             items_card = (
                 f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:16px;'
@@ -1010,22 +1175,24 @@ class EmailService:
 
         intro = (
             f'<p style="color:{MUTED};font-size:15px;line-height:1.6;margin:0 0 4px">'
-            f'Thank you for shopping with {escape(self.from_name)}.</p>'
+            f"Thank you for shopping with {escape(self.from_name)}.</p>"
             f'<p style="color:{MUTED};font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your order has been received and it\'s being prepared.</p>'
+            f"Your order has been received and it's being prepared.</p>"
         )
 
         body = intro + summary_card + details_card + items_card
 
         cta_html = (
             f'<tr><td style="padding:8px 32px 28px">'
-            f'<a href="#" style="display:block;background:{BRAND};color:#ffffff;text-decoration:none;'
+            f'<a href="{escape(settings.FRONTEND_URL.rstrip("/"))}/orders/{escape(order_id)}" '
+            f'style="display:block;background:{BRAND};color:#ffffff;text-decoration:none;'
             f'text-align:center;font-size:16px;font-weight:700;padding:15px 0;border-radius:9999px">'
-            f'View Order</a></td></tr>'
+            f"View Order</a></td></tr>"
         )
 
         html = _base_html(
-            from_name=self.from_name, icon="✓",
+            from_name=self.from_name,
+            icon="✓",
             header_bg=f"linear-gradient(135deg,{BRAND},{BRAND_DARK})",
             header_title="Your Order is on the Way",
             header_subtitle="",
@@ -1038,7 +1205,9 @@ class EmailService:
         summary_text_rows = []
         if subtotal is not None:
             summary_text_rows.append(("Subtotal", _ngn(subtotal)))
-        summary_text_rows.append((f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—"))
+        summary_text_rows.append(
+            (f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—")
+        )
         if discount:
             summary_text_rows.append(("Discount", f"-{_ngn(discount)}"))
         summary_text_rows.append(("Total", _ngn(total)))
@@ -1048,24 +1217,35 @@ class EmailService:
         if order_time:
             summary_text_rows.append(("Order Time", order_time))
         for item in item_list:
-            summary_text_rows.append((str(item.get("name") or "Item"),
-                                      _ngn(item.get("price")) if item.get("price") is not None else ""))
+            summary_text_rows.append(
+                (
+                    str(item.get("name") or "Item"),
+                    _ngn(item.get("price")) if item.get("price") is not None else "",
+                )
+            )
         text_body = "\n".join(f"{k}: {v}" for k, v in summary_text_rows)
         if not summary_text_rows:
             text_body = items_summary
         text = _base_text(
-            from_name=self.from_name, title="Your Order is on the Way",
+            from_name=self.from_name,
+            title="Your Order is on the Way",
             greeting=f"Hi {user_name},",
             body=text_body,
         )
         return html, text
 
-    def render_payment_confirmed_email(self, user_name: str, title: str, reference: str,
-                                        amount_paid: str, total_paid: Optional[str] = None,
-                                        remaining: Optional[str] = None,
-                                        balance_label: str = "Remaining Balance",
-                                        next_due: Optional[str] = None,
-                                        note: Optional[str] = None) -> tuple[str, str]:
+    def render_payment_confirmed_email(
+        self,
+        user_name: str,
+        title: str,
+        reference: str,
+        amount_paid: str,
+        total_paid: Optional[str] = None,
+        remaining: Optional[str] = None,
+        balance_label: str = "Remaining Balance",
+        next_due: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [("Amount Paid", amount_paid)]
         if reference:
             rows.append(("Reference", reference))
@@ -1076,14 +1256,14 @@ class EmailService:
         if next_due:
             rows.append(("Next Payment Due", next_due))
 
-        body = (
-            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'{escape(note) if note else "Your payment has been confirmed. Thank you!"}</p>'
-            + _details_card(rows, "#27ae60")
-            + _info_box("Your payment was received successfully.", "#27ae60")
+        body = f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">' f'{escape(note) if note else "Your payment has been confirmed. Thank you!"}</p>' + _details_card(
+            rows, "#27ae60"
+        ) + _info_box(
+            "Your payment was received successfully.", "#27ae60"
         )
         html = _base_html(
-            from_name=self.from_name, icon="💰",
+            from_name=self.from_name,
+            icon="💰",
             header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
             header_fg="#fff",
             header_title=title or "Payment Confirmed",
@@ -1092,27 +1272,30 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title=title or "Payment Confirmed",
+            from_name=self.from_name,
+            title=title or "Payment Confirmed",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_payment_refunded_email(self, user_name: str, amount: str, reason: str,
-                                       reference: Optional[str] = None) -> tuple[str, str]:
+    def render_payment_refunded_email(
+        self, user_name: str, amount: str, reason: str, reference: Optional[str] = None
+    ) -> tuple[str, str]:
         rows = [("Amount Refunded", amount), ("Reason", reason)]
         if reference:
             rows.append(("Reference", reference))
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your payment has been refunded. Depending on your bank, it may take a few '
-            f'business days to reflect.</p>'
+            f"Your payment has been refunded. Depending on your bank, it may take a few "
+            f"business days to reflect.</p>"
             + _details_card(rows, "#3498db")
             + _info_box("Refund processed successfully.", "#3498db")
         )
         html = _base_html(
-            from_name=self.from_name, icon="↩️",
+            from_name=self.from_name,
+            icon="↩️",
             header_bg="linear-gradient(135deg,#1a5276,#3498db)",
             header_fg="#fff",
             header_title="Payment Refunded",
@@ -1121,16 +1304,23 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Payment Refunded",
+            from_name=self.from_name,
+            title="Payment Refunded",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_payment_failed_email(self, user_name: str, asset_title: str, reference: str,
-                                     amount: str, reason: Optional[str] = None,
-                                     next_attempt: Optional[str] = None,
-                                     note: Optional[str] = None) -> tuple[str, str]:
+    def render_payment_failed_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        reference: str,
+        amount: str,
+        reason: Optional[str] = None,
+        next_attempt: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [("Asset", asset_title), ("Amount", amount)]
         if reference:
             rows.append(("Reference", reference))
@@ -1139,14 +1329,14 @@ class EmailService:
         if next_attempt:
             rows.append(("Next Attempt", next_attempt))
 
-        body = (
-            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'{escape(note) if note else "We could not process your recurring payment. Please ensure your account is funded."}</p>'
-            + _details_card(rows, "#e74c3c")
-            + _alert_box("Missing payments may result in your agreement defaulting.", "#e74c3c")
+        body = f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">' f'{escape(note) if note else "We could not process your recurring payment. Please ensure your account is funded."}</p>' + _details_card(
+            rows, "#e74c3c"
+        ) + _alert_box(
+            "Missing payments may result in your agreement defaulting.", "#e74c3c"
         )
         html = _base_html(
-            from_name=self.from_name, icon="❌",
+            from_name=self.from_name,
+            icon="❌",
             header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
             header_fg="#fff",
             header_title="Recurring Payment Failed",
@@ -1155,33 +1345,48 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Recurring Payment Failed",
+            from_name=self.from_name,
+            title="Recurring Payment Failed",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_installment_defaulted_email(self, user_name: str, asset_title: str, reference: str,
-                                            overdue_amount: str, due_date: str, grace_days,
-                                            note: Optional[str] = None) -> tuple[str, str]:
+    def render_installment_defaulted_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        reference: str,
+        overdue_amount: str,
+        due_date: str,
+        grace_days,
+        note: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Overdue Amount", overdue_amount),
             ("Due Date", due_date),
-            ("Grace Period", f"{grace_days} day{'s' if str(grace_days) != '1' else ''}"),
+            (
+                "Grace Period",
+                f"{grace_days} day{'s' if str(grace_days) != '1' else ''}",
+            ),
         ]
         if reference:
             rows.append(("Reference", reference))
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your agreement has been defaulted because the payment above was not received '
-            f'within the grace period.</p>'
+            f"Your agreement has been defaulted because the payment above was not received "
+            f"within the grace period.</p>"
             + _details_card(rows, "#e74c3c")
-            + _alert_box(note or "Please contact support to discuss reinstating your agreement.", "#e74c3c")
+            + _alert_box(
+                note or "Please contact support to discuss reinstating your agreement.",
+                "#e74c3c",
+            )
         )
         html = _base_html(
-            from_name=self.from_name, icon="⚠️",
+            from_name=self.from_name,
+            icon="⚠️",
             header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
             header_fg="#fff",
             header_title="Agreement Defaulted",
@@ -1190,15 +1395,22 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Agreement Defaulted",
+            from_name=self.from_name,
+            title="Agreement Defaulted",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_agreement_completed_email(self, user_name: str, asset_title: str, reference: str,
-                                          total_paid: str, completed_date: str,
-                                          asset_noun: str = "Asset") -> tuple[str, str]:
+    def render_agreement_completed_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        reference: str,
+        total_paid: str,
+        completed_date: str,
+        asset_noun: str = "Asset",
+    ) -> tuple[str, str]:
         rows = [
             ("Asset", asset_title),
             ("Amount Paid", total_paid),
@@ -1210,13 +1422,14 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Congratulations! Your agreement has been fully paid and you are now the full '
-            f'owner of this {escape(asset_noun.lower())}.</p>'
+            f"Congratulations! Your agreement has been fully paid and you are now the full "
+            f"owner of this {escape(asset_noun.lower())}.</p>"
             + _details_card(rows, "#27ae60")
             + _info_box("Thank you for choosing " + self.from_name + "!", "#27ae60")
         )
         html = _base_html(
-            from_name=self.from_name, icon="🎉",
+            from_name=self.from_name,
+            icon="🎉",
             header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
             header_fg="#fff",
             header_title="You Own It!",
@@ -1225,31 +1438,39 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Agreement Completed",
+            from_name=self.from_name,
+            title="Agreement Completed",
             greeting=f"Hello {user_name},",
-            body=("\n".join(f"{k}: {v}" for k, v in rows)
-                  + f"\n\nYou are now the full owner of this {asset_noun.lower()}."),
+            body=(
+                "\n".join(f"{k}: {v}" for k, v in rows)
+                + f"\n\nYou are now the full owner of this {asset_noun.lower()}."
+            ),
         )
         return html, text
 
-    def render_inspection_rejected_email(self, user_name: str, asset_title: str,
-                                          inspection_date: Optional[str] = None,
-                                          reason: Optional[str] = None,
-                                          note: Optional[str] = None) -> tuple[str, str]:
+    def render_inspection_rejected_email(
+        self,
+        user_name: str,
+        asset_title: str,
+        inspection_date: Optional[str] = None,
+        reason: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [("Asset", asset_title)]
         if inspection_date:
             rows.append(("Inspection Date", inspection_date))
         if reason:
             rows.append(("Reason", reason))
 
-        body = (
-            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Your inspection request could not proceed. Schedule a new inspection to continue.</p>'
-            + _details_card(rows, "#e74c3c")
-            + _alert_box(note or "You can schedule another inspection from the asset page.", "#e74c3c")
+        body = f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">' f"Your inspection request could not proceed. Schedule a new inspection to continue.</p>" + _details_card(
+            rows, "#e74c3c"
+        ) + _alert_box(
+            note or "You can schedule another inspection from the asset page.",
+            "#e74c3c",
         )
         html = _base_html(
-            from_name=self.from_name, icon="🚫",
+            from_name=self.from_name,
+            icon="🚫",
             header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
             header_fg="#fff",
             header_title="Inspection Rejected",
@@ -1258,17 +1479,27 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title="Inspection Rejected",
+            from_name=self.from_name,
+            title="Inspection Rejected",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_order_status_email(self, user_name: str, order_id: str, status_label: str,
-                                   total: Optional[str] = None, reason: Optional[str] = None,
-                                   note: Optional[str] = None) -> tuple[str, str]:
+    def render_order_status_email(
+        self,
+        user_name: str,
+        order_id: str,
+        status_label: str,
+        total: Optional[str] = None,
+        reason: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> tuple[str, str]:
         rows = [
-            ("Order ID", f"#{order_id[:8].upper()}" if order_id and order_id != "N/A" else "N/A"),
+            (
+                "Order ID",
+                f"#{order_id[:8].upper()}" if order_id and order_id != "N/A" else "N/A",
+            ),
             ("Status", status_label),
         ]
         if total:
@@ -1282,7 +1513,8 @@ class EmailService:
             + _details_card(rows, "#f39c12")
         )
         html = _base_html(
-            from_name=self.from_name, icon="⚙️",
+            from_name=self.from_name,
+            icon="⚙️",
             header_bg="linear-gradient(135deg,#7d3c00,#f39c12)",
             header_fg="#fff",
             header_title=f"Order {status_label}",
@@ -1291,15 +1523,21 @@ class EmailService:
             body_html=body,
         )
         text = _base_text(
-            from_name=self.from_name, title=f"Order {status_label}",
+            from_name=self.from_name,
+            title=f"Order {status_label}",
             greeting=f"Hello {user_name},",
             body="\n".join(f"{k}: {v}" for k, v in rows),
         )
         return html, text
 
-    def render_notification_email(self, notification_type: str, title: str,
-                                   message: str, user_name: str,
-                                   data: Optional[dict] = None) -> tuple[str, str]:
+    def render_notification_email(
+        self,
+        notification_type: str,
+        title: str,
+        message: str,
+        user_name: str,
+        data: Optional[dict] = None,
+    ) -> tuple[str, str]:
         """
         Smart dispatcher: routes to a specific template when possible, falling
         back to a generic one. A failure inside a specific template never drops
@@ -1323,9 +1561,9 @@ class EmailService:
             notification_type, title, message, user_name, d
         )
 
-    def _render_specific_notification_email(self, notification_type: str, title: str,
-                                            message: str, user_name: str,
-                                            d: dict) -> Optional[tuple[str, str]]:
+    def _render_specific_notification_email(
+        self, notification_type: str, title: str, message: str, user_name: str, d: dict
+    ) -> Optional[tuple[str, str]]:
         """Return a specific template render, or None to use the generic fallback."""
         if notification_type == "inspection_confirmed":
             return self.render_inspection_confirmed_email(
@@ -1354,12 +1592,16 @@ class EmailService:
                 user_name=user_name,
                 asset_title=d.get("asset_title") or "Asset",
                 reference=d.get("reference") or _ref(d.get("agreement_id")),
-                total_paid=_ngn(d.get("total_paid") or d.get("total_amount") or d.get("total_price")),
+                total_paid=_ngn(
+                    d.get("total_paid") or d.get("total_amount") or d.get("total_price")
+                ),
                 completed_date=d.get("completed_date") or d.get("completed_on") or "",
                 asset_noun=d.get("asset_noun") or "Asset",
             )
 
-        if notification_type in ("agreement_approved", "agreement_update") and d.get("asset_title"):
+        if notification_type in ("agreement_approved", "agreement_update") and d.get(
+            "asset_title"
+        ):
             return self.render_agreement_approved_email(
                 user_name=user_name,
                 asset_title=d.get("asset_title"),
@@ -1370,45 +1612,53 @@ class EmailService:
                 reference=d.get("reference") or _ref(d.get("agreement_id")),
             )
 
-        if notification_type == "agreement_created" and d.get("asset_title"):
-            return self.render_agreement_created_email(
-                seller_name=user_name,
-                buyer_name=d.get("buyer_name") or "Buyer",
-                asset_title=d.get("asset_title"),
-                total_price=d.get("total_price") or "",
-                deposit=d.get("deposit") or "",
-                plan_type=d.get("plan_type") or "structured",
-                monthly=d.get("monthly_installment"),
-                duration=d.get("duration_months"),
-            )
-
-        if notification_type in ("installment_due", "payment_reminder") and d.get("amount_due"):
+        if notification_type in ("installment_due", "payment_reminder") and d.get(
+            "amount_due"
+        ):
+            try:
+                days_left = int(d.get("days_left", 3))
+            except (TypeError, ValueError):
+                days_left = 3
             return self.render_installment_reminder_email(
                 user_name=user_name,
                 asset_title=d.get("asset_title") or "Asset",
                 amount_due=_ngn(d.get("amount_due")),
                 due_date=d.get("due_date") or "",
-                days_left=int(d.get("days_left", 3)),
-                remaining_balance=_ngn(d.get("remaining_balance")) if d.get("remaining_balance") is not None else None,
+                days_left=days_left,
+                remaining_balance=(
+                    _ngn(d.get("remaining_balance"))
+                    if d.get("remaining_balance") is not None
+                    else None
+                ),
             )
 
         if notification_type in ("payment_successful", "installment_paid") and (
             d.get("amount") is not None or d.get("amount_paid") is not None
         ):
             context = (d.get("context") or "").lower()
-            amount_this = d.get("amount") if d.get("amount") is not None else d.get("amount_paid")
+            amount_this = (
+                d.get("amount") if d.get("amount") is not None else d.get("amount_paid")
+            )
             total_paid_val = d.get("amount_paid")
             amount_paid_str = _ngn(amount_this)
-            total_paid_str = _ngn(total_paid_val) if total_paid_val is not None else None
+            total_paid_str = (
+                _ngn(total_paid_val) if total_paid_val is not None else None
+            )
             if total_paid_str and total_paid_str == amount_paid_str:
                 total_paid_str = None
             return self.render_payment_confirmed_email(
                 user_name=user_name,
                 title=title or "Payment Confirmed",
-                reference=d.get("reference") or _ref(d.get("order_id")) or _ref(d.get("agreement_id")),
+                reference=d.get("reference")
+                or _ref(d.get("order_id"))
+                or _ref(d.get("agreement_id")),
                 amount_paid=amount_paid_str,
                 total_paid=total_paid_str,
-                remaining=_ngn(d.get("remaining_balance")) if d.get("remaining_balance") is not None else None,
+                remaining=(
+                    _ngn(d.get("remaining_balance"))
+                    if d.get("remaining_balance") is not None
+                    else None
+                ),
                 balance_label="Remaining Balance",
                 next_due=d.get("next_due_date"),
                 note=d.get("note"),
@@ -1426,8 +1676,14 @@ class EmailService:
             return self.render_payment_failed_email(
                 user_name=user_name,
                 asset_title=d.get("asset_title") or "Asset",
-                reference=d.get("reference") or _ref(d.get("agreement_id")) or _ref(d.get("order_id")),
-                amount=_ngn(d.get("amount") if d.get("amount") is not None else d.get("amount_due")),
+                reference=d.get("reference")
+                or _ref(d.get("agreement_id"))
+                or _ref(d.get("order_id")),
+                amount=_ngn(
+                    d.get("amount")
+                    if d.get("amount") is not None
+                    else d.get("amount_due")
+                ),
                 reason=d.get("reason"),
                 next_attempt=d.get("next_attempt"),
                 note=d.get("note") or message,
@@ -1438,7 +1694,11 @@ class EmailService:
                 user_name=user_name,
                 asset_title=d.get("asset_title") or "Asset",
                 reference=d.get("reference") or _ref(d.get("agreement_id")),
-                overdue_amount=_ngn(d.get("overdue_amount") or d.get("amount") or d.get("monthly_installment")),
+                overdue_amount=_ngn(
+                    d.get("overdue_amount")
+                    or d.get("amount")
+                    or d.get("monthly_installment")
+                ),
                 due_date=d.get("due_date") or "—",
                 grace_days=d.get("grace_days", 0),
                 note=d.get("note"),
@@ -1458,7 +1718,11 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
-                total=d.get("total_amount") if d.get("total_amount") is not None else d.get("amount"),
+                total=(
+                    d.get("total_amount")
+                    if d.get("total_amount") is not None
+                    else d.get("amount")
+                ),
                 delivery_type=d.get("delivery_type") or "delivery",
                 delivery_fee=d.get("delivery_fee"),
                 estimated_delivery=d.get("estimated_delivery"),
@@ -1475,7 +1739,11 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 status_label="Processing",
-                total=_ngn(d.get("total_amount")) if d.get("total_amount") is not None else None,
+                total=(
+                    _ngn(d.get("total_amount"))
+                    if d.get("total_amount") is not None
+                    else None
+                ),
                 note=d.get("notes"),
             )
 
@@ -1484,7 +1752,11 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 status_label="Cancelled",
-                total=_ngn(d.get("total_amount")) if d.get("total_amount") is not None else None,
+                total=(
+                    _ngn(d.get("total_amount"))
+                    if d.get("total_amount") is not None
+                    else None
+                ),
                 reason=d.get("reason") or d.get("notes"),
             )
 
@@ -1493,7 +1765,11 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
-                total=_ngn(d.get("amount") if d.get("amount") is not None else d.get("total_amount")),
+                total=_ngn(
+                    d.get("amount")
+                    if d.get("amount") is not None
+                    else d.get("total_amount")
+                ),
                 tracking_note=d.get("tracking_note"),
             )
 
@@ -1502,7 +1778,11 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
-                total=_ngn(d.get("amount") if d.get("amount") is not None else d.get("total_amount")),
+                total=_ngn(
+                    d.get("amount")
+                    if d.get("amount") is not None
+                    else d.get("total_amount")
+                ),
             )
 
         if d.get("dispute_id"):
@@ -1526,9 +1806,14 @@ class EmailService:
         # No specific template matched — use the generic fallback.
         return None
 
-    def _render_generic_notification_email(self, notification_type: str, title: str,
-                                            message: str, user_name: str,
-                                            data: dict) -> tuple[str, str]:
+    def _render_generic_notification_email(
+        self,
+        notification_type: str,
+        title: str,
+        message: str,
+        user_name: str,
+        data: dict,
+    ) -> tuple[str, str]:
         color_map = {
             "payment_successful": ("#27ae60", "💰"),
             "payment_failed": ("#e74c3c", "❌"),
@@ -1562,11 +1847,11 @@ class EmailService:
 
         body = (
             f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'{escape(message)}</p>'
-            + details_html
+            f"{escape(message)}</p>" + details_html
         )
         html = _base_html(
-            from_name=self.from_name, icon=icon,
+            from_name=self.from_name,
+            icon=icon,
             header_bg=accent,
             header_fg="#fff",
             header_title=title,
@@ -1576,7 +1861,8 @@ class EmailService:
         )
         detail_text = "\n".join(f"{k}: {v}" for k, v in detail_rows)
         text = _base_text(
-            from_name=self.from_name, title=title,
+            from_name=self.from_name,
+            title=title,
             greeting=f"Hello {user_name},",
             body=message + (f"\n\n{detail_text}" if detail_text else ""),
         )

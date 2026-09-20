@@ -5,23 +5,40 @@ from datetime import timedelta
 from pydantic import BaseModel
 
 from core.config import settings
-from core.auth import create_access_token, create_refresh_token, decode_token, get_current_user
+from core.auth import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_current_user,
+)
 from core.auth_service import auth_service
 from core.model import User
 from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
 from core.system_settings_service import system_settings_service
 from db.session import get_db
 from schemas.auth import (
-    LoginRequest, RegisterRequest, TokenResponse, RefreshRequest,
-    ChangePasswordRequest, UpdateProfileRequest, FullUserProfileResponse,
-    VerifyEmailRequest, ResendVerificationRequest, VerifyPasswordResetRequest,
-    EmailVerificationResponse, PasswordResetResponse, LoginRequest, SendVerificationRequest, RequestPasswordResetRequest,
-    GoogleAuthRequest
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    RefreshRequest,
+    ChangePasswordRequest,
+    UpdateProfileRequest,
+    FullUserProfileResponse,
+    VerifyEmailRequest,
+    ResendVerificationRequest,
+    VerifyPasswordResetRequest,
+    EmailVerificationResponse,
+    PasswordResetResponse,
+    LoginRequest,
+    SendVerificationRequest,
+    RequestPasswordResetRequest,
+    GoogleAuthRequest,
 )
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from sqlalchemy.exc import IntegrityError
 from core.logging_config import get_logger, log_auth_event, log_error
+
 # Get logger for auth routes
 auth_logger = get_logger("auth")
 
@@ -32,26 +49,32 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 def generate_tokens(db: Session, user_id: str, role: str):
     """Generate access and refresh tokens for user"""
     user_data = {"sub": user_id, "role": role}
-    access_token_lifetime_minutes = system_settings_service.get_access_token_lifetime_minutes(db)
-    access_token = create_access_token(user_data, timedelta(
-        minutes=access_token_lifetime_minutes))
+    access_token_lifetime_minutes = (
+        system_settings_service.get_access_token_lifetime_minutes(db)
+    )
+    access_token = create_access_token(
+        user_data, timedelta(minutes=access_token_lifetime_minutes)
+    )
     refresh_token = create_refresh_token(
-        user_data, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+        user_data, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    )
     return access_token, refresh_token
 
 
 # ---------------- AUTHENTICATION ---------------- #
+
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_tokens(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
     """Refresh access token using refresh token"""
     try:
         payload = decode_token(
-            refresh_request.refresh_token, settings.REFRESH_SECRET_KEY)
+            refresh_request.refresh_token, settings.REFRESH_SECRET_KEY
+        )
     except HTTPException:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token"
+            detail="Invalid or expired refresh token",
         )
 
     user_id, role = payload.get("sub"), payload.get("role")
@@ -67,61 +90,70 @@ def login(request: Request, form_data: LoginRequest, db: Session = Depends(get_d
     """Authenticate user and return tokens"""
     try:
         auth_logger.info(f"Login attempt for user: {form_data.email}")
-        
+
         user, _ = auth_service.authenticate_user(
-            db, form_data.email, form_data.password)
-        
+            db, form_data.email, form_data.password
+        )
+
         # Log successful login
         log_auth_event(
-            auth_logger, 
-            "user_login", 
+            auth_logger,
+            "user_login",
             email=form_data.email,
             user_id=str(user.id),
             success=True,
-            user_role=user.role
+            user_role=user.role,
         )
-        
+
         access_token, refresh_token = generate_tokens(db, str(user.id), user.role)
 
-        # Fire-and-forget login security email
-        try:
-            from core.tasks import send_login_email
-            from datetime import datetime, timezone
-            from core.model import Profile
-            profile = db.query(Profile).filter(Profile.id == user.id).first()
-            display_name = profile.name if profile else user.email
-            login_time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
-            # Extract real IP (respects X-Forwarded-For from reverse proxies)
-            forwarded_for = request.headers.get("x-forwarded-for")
-            ip_address = forwarded_for.split(",")[0].strip() if forwarded_for else (
-                request.client.host if request.client else None
-            )
-            # Parse a short device string from User-Agent
-            ua = request.headers.get("user-agent", "")
-            if "iPhone" in ua or "iPad" in ua:
-                device = "iOS Device"
-            elif "Android" in ua:
-                device = "Android Device"
-            elif "Windows" in ua:
-                device = "Windows"
-            elif "Macintosh" in ua or "Mac OS" in ua:
-                device = "macOS"
-            elif "Linux" in ua:
-                device = "Linux"
-            else:
-                device = "Unknown Device"
-            # Append browser if detectable
-            if "Chrome" in ua and "Edg" not in ua and "OPR" not in ua:
-                device += " / Chrome"
-            elif "Firefox" in ua:
-                device += " / Firefox"
-            elif "Safari" in ua and "Chrome" not in ua:
-                device += " / Safari"
-            elif "Edg" in ua:
-                device += " / Edge"
-            send_login_email.delay(user.email, display_name, login_time, ip_address, device)
-        except Exception:
-            pass  # Never block login due to email failure
+        # Fire-and-forget login security email (controlled by settings.SEND_LOGIN_EMAIL)
+        if settings.SEND_LOGIN_EMAIL:
+            try:
+                from core.tasks import send_login_email
+                from datetime import datetime, timezone
+                from core.model import Profile
+
+                profile = db.query(Profile).filter(Profile.id == user.id).first()
+                display_name = profile.name if profile else user.email
+                login_time = datetime.now(timezone.utc).strftime(
+                    "%d %b %Y, %I:%M %p UTC"
+                )
+                # Extract real IP (respects X-Forwarded-For from reverse proxies)
+                forwarded_for = request.headers.get("x-forwarded-for")
+                ip_address = (
+                    forwarded_for.split(",")[0].strip()
+                    if forwarded_for
+                    else (request.client.host if request.client else None)
+                )
+                # Parse a short device string from User-Agent
+                ua = request.headers.get("user-agent", "")
+                if "iPhone" in ua or "iPad" in ua:
+                    device = "iOS Device"
+                elif "Android" in ua:
+                    device = "Android Device"
+                elif "Windows" in ua:
+                    device = "Windows"
+                elif "Macintosh" in ua or "Mac OS" in ua:
+                    device = "macOS"
+                elif "Linux" in ua:
+                    device = "Linux"
+                else:
+                    device = "Unknown Device"
+                # Append browser if detectable
+                if "Chrome" in ua and "Edg" not in ua and "OPR" not in ua:
+                    device += " / Chrome"
+                elif "Firefox" in ua:
+                    device += " / Firefox"
+                elif "Safari" in ua and "Chrome" not in ua:
+                    device += " / Safari"
+                elif "Edg" in ua:
+                    device += " / Edge"
+                send_login_email.delay(
+                    user.email, display_name, login_time, ip_address, device
+                )
+            except Exception:
+                pass  # Never block login due to email failure
 
         return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
@@ -133,11 +165,16 @@ def login(request: Request, form_data: LoginRequest, db: Session = Depends(get_d
             email=form_data.email,
             success=False,
             reason=str(e.detail),
-            status_code=e.status_code
+            status_code=e.status_code,
         )
         raise
     except Exception as e:
-        log_error(auth_logger, f"Unexpected error during login for {form_data.email}", e, email=form_data.email)
+        log_error(
+            auth_logger,
+            f"Unexpected error during login for {form_data.email}",
+            e,
+            email=form_data.email,
+        )
         raise HTTPException(status_code=500, detail="Login failed")
 
 
@@ -160,7 +197,9 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
     google_sub = claims.get("sub")
     email = claims.get("email")
     if not google_sub or not email:
-        raise HTTPException(status_code=401, detail="Google account did not provide a usable identity")
+        raise HTTPException(
+            status_code=401, detail="Google account did not provide a usable identity"
+        )
 
     try:
         user = auth_service.authenticate_or_create_google_user(
@@ -196,16 +235,23 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
 
 # ---------------- REGISTRATION ---------------- #
 
+
 @router.post("/register/customer", response_model=TokenResponse, status_code=201)
 def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new customer and return authentication tokens"""
     try:
         auth_logger.info(f"Customer registration attempt: {body.email}")
-        
+
         user_id = auth_service.create_user(
-            db, body.email, body.password, "customer", body.full_name, body.phone, body.bio
+            db,
+            body.email,
+            body.password,
+            "customer",
+            body.full_name,
+            body.phone,
+            body.bio,
         )
-        
+
         # Log successful registration
         log_auth_event(
             auth_logger,
@@ -213,13 +259,13 @@ def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
             email=body.email,
             user_id=user_id,
             success=True,
-            user_role="customer"
+            user_role="customer",
         )
-        
+
         # Generate tokens for immediate login after registration
         access_token, refresh_token = generate_tokens(db, user_id, "customer")
         return TokenResponse(access_token=access_token, refresh_token=refresh_token)
-        
+
     except IntegrityError as e:
         db.rollback()
         log_auth_event(
@@ -227,51 +273,60 @@ def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
             "customer_registration_failed",
             email=body.email,
             success=False,
-            reason="Email already registered"
+            reason="Email already registered",
         )
         raise HTTPException(status_code=400, detail="Email already registered")
     except HTTPException as e:
         log_auth_event(
             auth_logger,
-            "customer_registration_failed", 
+            "customer_registration_failed",
             email=body.email,
             success=False,
-            reason=str(e.detail)
+            reason=str(e.detail),
         )
         raise
     except Exception as e:
         db.rollback()
-        log_error(auth_logger, f"Customer registration failed for {body.email}", e, email=body.email)
+        log_error(
+            auth_logger,
+            f"Customer registration failed for {body.email}",
+            e,
+            email=body.email,
+        )
         raise HTTPException(status_code=500, detail="Registration failed")
 
 
 # ---------------- PROFILE MANAGEMENT ---------------- #
 
+
 @router.get("/me", response_model=FullUserProfileResponse)
 def get_current_user_profile(
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """Get current authenticated user's profile"""
     try:
         auth_logger.debug(f"Profile fetch request for user: {current_user['id']}")
-        
+
         profile_data = auth_service.get_user_profile(db, current_user["id"])
-        
+
         auth_logger.info(f"Profile fetched successfully for user: {current_user['id']}")
         return FullUserProfileResponse(**profile_data)
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        log_error(auth_logger, f"Failed to fetch profile for user {current_user['id']}", e, user_id=current_user['id'])
+        log_error(
+            auth_logger,
+            f"Failed to fetch profile for user {current_user['id']}",
+            e,
+            user_id=current_user["id"],
+        )
         raise HTTPException(status_code=500, detail="Failed to fetch profile")
 
 
 @router.delete("/me", status_code=200)
 def delete_current_user_account(
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
     Soft-delete the authenticated user's account.
@@ -279,6 +334,7 @@ def delete_current_user_account(
     The user will no longer be able to log in.
     """
     from core.model import User as UserModel
+
     try:
         user = db.query(UserModel).filter(UserModel.id == current_user["id"]).first()
         if not user:
@@ -288,13 +344,21 @@ def delete_current_user_account(
         db.commit()
 
         auth_logger.info(f"Account soft-deleted for user: {current_user['id']}")
-        return {"success": True, "message": "Account has been deactivated successfully."}
+        return {
+            "success": True,
+            "message": "Account has been deactivated successfully.",
+        }
 
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        log_error(auth_logger, f"Failed to delete account for user {current_user['id']}", e, user_id=current_user['id'])
+        log_error(
+            auth_logger,
+            f"Failed to delete account for user {current_user['id']}",
+            e,
+            user_id=current_user["id"],
+        )
         raise HTTPException(status_code=500, detail="Failed to deactivate account")
 
 
@@ -302,30 +366,39 @@ def delete_current_user_account(
 def update_current_user_profile(
     payload: UpdateProfileRequest,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Update current authenticated user's profile"""
     try:
         update_data = payload.model_dump(exclude_unset=True)
-        
-        auth_logger.info(f"Profile update request for user: {current_user['id']}", extra={
-            "user_id": current_user['id'],
-            "update_fields": list(update_data.keys())
-        })
+
+        auth_logger.info(
+            f"Profile update request for user: {current_user['id']}",
+            extra={
+                "user_id": current_user["id"],
+                "update_fields": list(update_data.keys()),
+            },
+        )
 
         print(update_data)
-        
+
         profile_data = auth_service.update_user_profile(
-            db, current_user["id"], update_data)
-        
+            db, current_user["id"], update_data
+        )
+
         auth_logger.info(f"Profile updated successfully for user: {current_user['id']}")
         return FullUserProfileResponse(**profile_data)
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        log_error(auth_logger, f"Failed to update profile for user {current_user['id']}", e, 
-                  user_id=current_user['id'], update_fields=list(update_data.keys()) if 'update_data' in locals() else [])
+        log_error(
+            auth_logger,
+            f"Failed to update profile for user {current_user['id']}",
+            e,
+            user_id=current_user["id"],
+            update_fields=list(update_data.keys()) if "update_data" in locals() else [],
+        )
         raise HTTPException(status_code=500, detail="Failed to update profile")
 
 
@@ -333,46 +406,49 @@ def update_current_user_profile(
 def change_password(
     payload: ChangePasswordRequest,
     current_user=Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Change user's password"""
     try:
         auth_logger.info(f"Password change request for user: {current_user['id']}")
-        
+
         password_data = auth_service.change_user_password(
             db, current_user["id"], payload.current_password, payload.new_password
         )
-        
+
         # Log successful password change
         log_auth_event(
-            auth_logger,
-            "password_change",
-            user_id=current_user['id'],
-            success=True
+            auth_logger, "password_change", user_id=current_user["id"], success=True
         )
-        
+
         return {
             "success": True,
             "message": "Password changed successfully",
-            "data": password_data
+            "data": password_data,
         }
-        
+
     except HTTPException as e:
         # Log failed password change
         log_auth_event(
             auth_logger,
             "password_change_failed",
-            user_id=current_user['id'],
+            user_id=current_user["id"],
             success=False,
-            reason=str(e.detail)
+            reason=str(e.detail),
         )
         raise
     except Exception as e:
-        log_error(auth_logger, f"Password change failed for user {current_user['id']}", e, user_id=current_user['id'])
+        log_error(
+            auth_logger,
+            f"Password change failed for user {current_user['id']}",
+            e,
+            user_id=current_user["id"],
+        )
         raise HTTPException(status_code=500, detail="Password change failed")
 
 
 # ---------------- PASSWORD POLICY ---------------- #
+
 
 class PasswordStrengthRequest(BaseModel):
     password: str
@@ -384,7 +460,7 @@ def get_password_policy():
     return {
         "success": True,
         "message": "Password policy requirements",
-        "data": PASSWORD_REQUIREMENTS
+        "data": PASSWORD_REQUIREMENTS,
     }
 
 
@@ -401,20 +477,23 @@ def check_password_strength(payload: PasswordStrengthRequest):
             "data": {
                 "strength": strength_info,
                 "errors": errors,
-                "is_valid": len(errors) == 0
-            }
+                "is_valid": len(errors) == 0,
+            },
         }
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to analyze password strength"
+            detail="Failed to analyze password strength",
         )
 
 
 # ---------------- EMAIL VERIFICATION ---------------- #
 
+
 @router.post("/send-verification", response_model=EmailVerificationResponse)
-def send_verification_email(payload: SendVerificationRequest, db: Session = Depends(get_db)):
+def send_verification_email(
+    payload: SendVerificationRequest, db: Session = Depends(get_db)
+):
     """Send email verification code to user"""
     try:
         result = auth_service.send_verification_email(db, payload.email)
@@ -423,15 +502,15 @@ def send_verification_email(payload: SendVerificationRequest, db: Session = Depe
             message=result["message"],
             data={
                 "task_id": result["task_id"],
-                "expires_in_minutes": result["expires_in_minutes"]
-            }
+                "expires_in_minutes": result["expires_in_minutes"],
+            },
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send verification email"
+            detail="Failed to send verification email",
         )
 
 
@@ -443,21 +522,21 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
         return EmailVerificationResponse(
             success=True,
             message=result["message"],
-            data={
-                "verified_at": result["verified_at"]
-            }
+            data={"verified_at": result["verified_at"]},
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to verify email"
+            detail="Failed to verify email",
         )
 
 
 @router.post("/resend-verification", response_model=EmailVerificationResponse)
-def resend_verification_email(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
+def resend_verification_email(
+    payload: ResendVerificationRequest, db: Session = Depends(get_db)
+):
     """Resend email verification code"""
     try:
         result = auth_service.send_verification_email(db, payload.email)
@@ -466,15 +545,15 @@ def resend_verification_email(payload: ResendVerificationRequest, db: Session = 
             message=result["message"],
             data={
                 "task_id": result["task_id"],
-                "expires_in_minutes": result["expires_in_minutes"]
-            }
+                "expires_in_minutes": result["expires_in_minutes"],
+            },
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to resend verification email"
+            detail="Failed to resend verification email",
         )
 
 
@@ -484,32 +563,31 @@ def get_verification_status(email: str, db: Session = Depends(get_db)):
     try:
         result = auth_service.get_verification_status(db, email)
         return EmailVerificationResponse(
-            success=True,
-            message="Verification status retrieved",
-            data=result
+            success=True, message="Verification status retrieved", data=result
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get verification status"
+            detail="Failed to get verification status",
         )
 
 
 # ---------------- PASSWORD RESET ---------------- #
 
+
 @router.post("/request-password-reset", response_model=PasswordResetResponse)
-def request_password_reset(payload: RequestPasswordResetRequest, db: Session = Depends(get_db)):
+def request_password_reset(
+    payload: RequestPasswordResetRequest, db: Session = Depends(get_db)
+):
     """Request password reset email"""
     try:
         result = auth_service.request_password_reset(db, payload.email)
         return PasswordResetResponse(
             success=True,
             message=result["message"],
-            data={
-                "expires_in_minutes": result["expires_in_minutes"]
-            }
+            data={"expires_in_minutes": result["expires_in_minutes"]},
         )
     except HTTPException:
         raise
@@ -518,14 +596,14 @@ def request_password_reset(payload: RequestPasswordResetRequest, db: Session = D
         return PasswordResetResponse(
             success=True,
             message=f"If an account with {payload.email} exists, a password reset email has been sent",
-            data={
-                "expires_in_minutes": 30
-            }
+            data={"expires_in_minutes": 30},
         )
 
 
 @router.post("/reset-password", response_model=PasswordResetResponse)
-def reset_password_with_code(payload: VerifyPasswordResetRequest, db: Session = Depends(get_db)):
+def reset_password_with_code(
+    payload: VerifyPasswordResetRequest, db: Session = Depends(get_db)
+):
     """Reset password using verification code"""
     try:
         result = auth_service.reset_password_with_code(
@@ -534,14 +612,12 @@ def reset_password_with_code(payload: VerifyPasswordResetRequest, db: Session = 
         return PasswordResetResponse(
             success=True,
             message=result["message"],
-            data={
-                "password_changed_at": result["password_changed_at"]
-            }
+            data={"password_changed_at": result["password_changed_at"]},
         )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset password"
+            detail="Failed to reset password",
         )

@@ -10,9 +10,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 from core.model import (
-    Car, CarUnit, Property, PropertyUnit,
-    GeneralInspection, GeneralAgreement, Payment, AssetImage,
-    Profile, User, StoreProfile, PaymentMandate
+    Car,
+    CarUnit,
+    Property,
+    PropertyUnit,
+    GeneralInspection,
+    GeneralAgreement,
+    Payment,
+    AssetImage,
+    Profile,
+    User,
+    StoreProfile,
+    PaymentMandate,
 )
 from core.notifications_service import create_notification
 from core.email_service import _ref
@@ -32,16 +41,24 @@ from schemas.assets import (
     AssetAgreementBase,
     AssetMini,
     AgreementPaymentInitialize,
-    MandateInitiateRequest
+    MandateInitiateRequest,
 )
 
-class AssetService():
+
+class AssetService:
     def _to_naive_utc(self, value: datetime) -> datetime:
         if value.tzinfo is None:
             return value
         return value.astimezone(timezone.utc).replace(tzinfo=None)
 
-    def update_unit_status(self, db: Session, asset_type: str, status: str, unit_id: Optional[UUID] = None, asset_id: Optional[UUID] = None):
+    def update_unit_status(
+        self,
+        db: Session,
+        asset_type: str,
+        status: str,
+        unit_id: Optional[UUID] = None,
+        asset_id: Optional[UUID] = None,
+    ):
         """
         Unified method to update unit or asset status based on inspection/agreement stage.
         Handles CarUnit and PropertyUnit consistently.
@@ -57,18 +74,20 @@ class AssetService():
             "pending_deposit": "awaiting_payment",
             "paid": "sold",
             "active": "sold",
-            "completed_agreement": "sold"
+            "completed_agreement": "sold",
         }
 
         # Override for property specific naming
         if asset_type == "property":
             unit_status_map["completed"] = "property_inspected"
             unit_status_map["agreement_pending"] = "property_inspected"
-            unit_status_map["active"] = "under_financing" # Properties under financing
+            unit_status_map["active"] = "under_financing"  # Properties under financing
 
         new_status = unit_status_map.get(status)
         if not new_status:
-            logger.warning(f"update_unit_status: no mapping for status='{status}' (asset_type={asset_type}) - nothing updated.")
+            logger.warning(
+                f"update_unit_status: no mapping for status='{status}' (asset_type={asset_type}) - nothing updated."
+            )
             return
 
         if asset_type == "automotive":
@@ -81,7 +100,9 @@ class AssetService():
 
             unit = db.query(CarUnit).filter(CarUnit.id == unit_id).first()
             if not unit:
-                logger.warning(f"update_unit_status: CarUnit {unit_id} not found - nothing updated.")
+                logger.warning(
+                    f"update_unit_status: CarUnit {unit_id} not found - nothing updated."
+                )
                 return
 
             # CarUnit doesn't have pending_inspection, skip if that's the status
@@ -91,20 +112,28 @@ class AssetService():
 
             # If sold/awaiting_payment, check if main listing should be out of stock
             if new_status in ["sold", "awaiting_payment"]:
-                available_count = db.query(CarUnit).filter(
-                    CarUnit.car_id == unit.car_id,
-                    CarUnit.status.in_(["available", "inspected"]),
-                    CarUnit.id != unit.id
-                ).count()
+                available_count = (
+                    db.query(CarUnit)
+                    .filter(
+                        CarUnit.car_id == unit.car_id,
+                        CarUnit.status.in_(["available", "inspected"]),
+                        CarUnit.id != unit.id,
+                    )
+                    .count()
+                )
                 if available_count == 0:
                     car = db.query(Car).filter(Car.id == unit.car_id).first()
                     if car:
                         car.status = "out_of_stock"
-                        logger.info(f"update_unit_status: Car {car.id} -> out_of_stock (no available units left)")
+                        logger.info(
+                            f"update_unit_status: Car {car.id} -> out_of_stock (no available units left)"
+                        )
 
         elif asset_type == "property":
             if not unit_id and not asset_id:
-                logger.warning(f"update_unit_status: property call with no unit_id and no asset_id (status='{status}') - nothing updated.")
+                logger.warning(
+                    f"update_unit_status: property call with no unit_id and no asset_id (status='{status}') - nothing updated."
+                )
                 return
 
             # If unit_id is provided, update specific unit
@@ -112,9 +141,13 @@ class AssetService():
                 unit = db.query(PropertyUnit).filter(PropertyUnit.id == unit_id).first()
                 if unit:
                     unit.status = new_status
-                    logger.info(f"update_unit_status: PropertyUnit {unit.id} -> {new_status}")
+                    logger.info(
+                        f"update_unit_status: PropertyUnit {unit.id} -> {new_status}"
+                    )
                 else:
-                    logger.warning(f"update_unit_status: PropertyUnit {unit_id} not found.")
+                    logger.warning(
+                        f"update_unit_status: PropertyUnit {unit_id} not found."
+                    )
 
             # If asset_id is provided, update main property status or all units if acquisitions
             if asset_id:
@@ -122,22 +155,40 @@ class AssetService():
                 if prop:
                     # If sold/awaiting_payment, check if main listing should update status
                     if new_status in ["sold", "awaiting_payment", "under_financing"]:
-                        available_count = db.query(PropertyUnit).filter(
-                            PropertyUnit.property_id == asset_id,
-                            PropertyUnit.status.in_(["available", "property_inspected", "pending_inspection"]),
-                            PropertyUnit.id != unit_id if unit_id else True
-                        ).count()
+                        available_count = (
+                            db.query(PropertyUnit)
+                            .filter(
+                                PropertyUnit.property_id == asset_id,
+                                PropertyUnit.status.in_(
+                                    [
+                                        "available",
+                                        "property_inspected",
+                                        "pending_inspection",
+                                    ]
+                                ),
+                                PropertyUnit.id != unit_id if unit_id else True,
+                            )
+                            .count()
+                        )
 
                         if available_count == 0:
                             prop.status = new_status
-                            logger.info(f"update_unit_status: Property {prop.id} -> {new_status} (no available units left)")
+                            logger.info(
+                                f"update_unit_status: Property {prop.id} -> {new_status} (no available units left)"
+                            )
                         else:
-                            logger.info(f"update_unit_status: Property {prop.id} left as-is ({available_count} unit(s) still available)")
+                            logger.info(
+                                f"update_unit_status: Property {prop.id} left as-is ({available_count} unit(s) still available)"
+                            )
                     else:
                         prop.status = new_status
-                        logger.info(f"update_unit_status: Property {prop.id} -> {new_status}")
+                        logger.info(
+                            f"update_unit_status: Property {prop.id} -> {new_status}"
+                        )
                 else:
-                    logger.warning(f"update_unit_status: Property {asset_id} not found.")
+                    logger.warning(
+                        f"update_unit_status: Property {asset_id} not found."
+                    )
 
     def _get_asset_row(self, db: Session, asset_type: str, asset_id: UUID):
         """Helper to fetch the underlying Car/Property row (not the AssetMini DTO)."""
@@ -147,7 +198,9 @@ class AssetService():
             return db.query(Property).filter(Property.id == asset_id).first()
         return None
 
-    def _resolve_payment_plan(self, db: Session, asset, total_price: Decimal, payment_plan: str) -> str:
+    def _resolve_payment_plan(
+        self, db: Session, asset, total_price: Decimal, payment_plan: str
+    ) -> str:
         """
         Validates the requested payment_plan (monthly/full_payment/installment) against
         admin-configured rules and returns the legacy plan_type ("structured"/"flexible")
@@ -160,7 +213,10 @@ class AssetService():
         """
         if payment_plan == "monthly":
             if not getattr(asset, "monthly_allowed", True):
-                raise HTTPException(status_code=400, detail="Monthly payment is not available for this listing.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Monthly payment is not available for this listing.",
+                )
             return "structured"
 
         if payment_plan == "installment":
@@ -169,20 +225,22 @@ class AssetService():
             if Decimal(total_price) < price_floor:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Installment is only available for purchases of ₦{price_floor:,.2f} or more."
+                    detail=f"Installment is only available for purchases of ₦{price_floor:,.2f} or more.",
                 )
             return "flexible"
 
         # full_payment - always allowed
         return "flexible"
 
-    def _get_asset_details(self, db: Session, asset_type: str, asset_id: UUID) -> AssetMini:
+    def _get_asset_details(
+        self, db: Session, asset_type: str, asset_id: UUID
+    ) -> AssetMini:
         """Helper to fetch basic asset details for nested response"""
         title = ""
         price = Decimal(0)
         min_deposit = Decimal(10)
         image_url = None
-        
+
         monthly_allowed = True
         if asset_type == "automotive":
             asset = db.query(Car).filter(Car.id == asset_id).first()
@@ -199,21 +257,37 @@ class AssetService():
                 min_deposit = asset.min_deposit_percentage
                 monthly_allowed = asset.monthly_allowed
         # Get first image
-        img = db.query(AssetImage).filter(
-            or_(
-                AssetImage.car_id == asset_id,
-                AssetImage.property_id == asset_id,
-                AssetImage.product_id == asset_id
+        img = (
+            db.query(AssetImage)
+            .filter(
+                or_(
+                    AssetImage.car_id == asset_id,
+                    AssetImage.property_id == asset_id,
+                    AssetImage.product_id == asset_id,
+                )
             )
-        ).first()
+            .first()
+        )
         if img:
             image_url = img.image_url
-            
-        return AssetMini(id=asset_id, type=asset_type, title=title, price=price, min_deposit_percentage=min_deposit, monthly_allowed=monthly_allowed, image_url=image_url)
 
-    def schedule_inspection(self, db: Session, user_id: UUID, data: AssetInspectionSchedule) -> GeneralInspection:
+        return AssetMini(
+            id=asset_id,
+            type=asset_type,
+            title=title,
+            price=price,
+            min_deposit_percentage=min_deposit,
+            monthly_allowed=monthly_allowed,
+            image_url=image_url,
+        )
+
+    def schedule_inspection(
+        self, db: Session, user_id: UUID, data: AssetInspectionSchedule
+    ) -> GeneralInspection:
         inspection_date = self._to_naive_utc(data.inspection_date)
-        minimum_notice_hours = system_settings_service.get_minimum_inspection_notice_hours(db)
+        minimum_notice_hours = (
+            system_settings_service.get_minimum_inspection_notice_hours(db)
+        )
         earliest_allowed = datetime.utcnow() + timedelta(hours=minimum_notice_hours)
         if inspection_date < earliest_allowed:
             raise HTTPException(
@@ -233,10 +307,19 @@ class AssetService():
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        unavailable_statuses = ["sold", "awaiting_payment", "under_financing", "pending", "archived"]
+        unavailable_statuses = [
+            "sold",
+            "awaiting_payment",
+            "under_financing",
+            "pending",
+            "archived",
+        ]
         if getattr(asset, "status", None) in unavailable_statuses:
-            raise HTTPException(status_code=400, detail="Cannot schedule inspection. This asset is currently unavailable.")
-        
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot schedule inspection. This asset is currently unavailable.",
+            )
+
         seller_id = asset.seller_id
 
         new_inspection = GeneralInspection(
@@ -246,7 +329,7 @@ class AssetService():
             asset_id=data.asset_id,
             unit_id=data.unit_id,
             inspection_date=inspection_date,
-            status="scheduled"
+            status="scheduled",
         )
         db.add(new_inspection)
         db.commit()
@@ -258,18 +341,32 @@ class AssetService():
             event_key="system_alert",
             title="New Inspection Request",
             message=f"A customer wants to inspect the {data.asset_type} listing.",
-            data={"inspection_id": str(new_inspection.id), "asset_type": data.asset_type, "asset_id": str(data.asset_id)},
+            data={
+                "inspection_id": str(new_inspection.id),
+                "asset_type": data.asset_type,
+                "asset_id": str(data.asset_id),
+            },
             priority="medium",
         )
 
         return new_inspection
 
-    def review_inspection(self, db: Session, seller_id: UUID, inspection_id: UUID, data: AssetInspectionReview) -> GeneralInspection:
-        inspection = db.query(GeneralInspection).filter(
-            GeneralInspection.id == inspection_id, 
-            GeneralInspection.seller_id == seller_id
-        ).first()
-        
+    def review_inspection(
+        self,
+        db: Session,
+        seller_id: UUID,
+        inspection_id: UUID,
+        data: AssetInspectionReview,
+    ) -> GeneralInspection:
+        inspection = (
+            db.query(GeneralInspection)
+            .filter(
+                GeneralInspection.id == inspection_id,
+                GeneralInspection.seller_id == seller_id,
+            )
+            .first()
+        )
+
         if not inspection:
             raise HTTPException(status_code=404, detail="Inspection not found")
 
@@ -284,10 +381,20 @@ class AssetService():
             inspection.status = "confirmed"
             if data.inspection_date:
                 # Basic check for date string or datetime
-                new_date = data.inspection_date if isinstance(data.inspection_date, datetime) else datetime.fromisoformat(data.inspection_date.replace('Z', '+00:00'))
+                new_date = (
+                    data.inspection_date
+                    if isinstance(data.inspection_date, datetime)
+                    else datetime.fromisoformat(
+                        data.inspection_date.replace("Z", "+00:00")
+                    )
+                )
                 new_date = self._to_naive_utc(new_date)
-                minimum_notice_hours = system_settings_service.get_minimum_inspection_notice_hours(db)
-                earliest_allowed = datetime.utcnow() + timedelta(hours=minimum_notice_hours)
+                minimum_notice_hours = (
+                    system_settings_service.get_minimum_inspection_notice_hours(db)
+                )
+                earliest_allowed = datetime.utcnow() + timedelta(
+                    hours=minimum_notice_hours
+                )
                 if new_date < earliest_allowed:
                     raise HTTPException(
                         status_code=400,
@@ -296,13 +403,13 @@ class AssetService():
                 if old_date.replace(tzinfo=None) != new_date.replace(tzinfo=None):
                     inspection.inspection_date = new_date
                     date_changed = True
-            
+
             title = "Inspection Confirmed"
             if date_changed:
                 message = f"The seller has confirmed your inspection but changed the date to {inspection.inspection_date.strftime('%B %d, %Y at %I:%M %p')}. Please check if this works for you."
             else:
                 message = f"The seller has confirmed your inspection request for {inspection.inspection_date.strftime('%B %d, %Y at %I:%M %p')}."
-        
+
         db.commit()
         db.refresh(inspection)
 
@@ -310,18 +417,22 @@ class AssetService():
         # dedicated confirmation email below.
         asset = None
         try:
-            asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
+            asset = self._get_asset_details(
+                db, inspection.asset_type, inspection.asset_id
+            )
         except Exception:
             pass  # non-critical
 
         notification_data = {
             "asset_title": (
-                asset.title if asset and asset.title
+                asset.title
+                if asset and asset.title
                 else f"{inspection.asset_type.title()} asset"
             ),
             "inspection_date": (
                 inspection.inspection_date.strftime("%B %d, %Y at %I:%M %p")
-                if inspection.inspection_date else None
+                if inspection.inspection_date
+                else None
             ),
         }
         if data.action != "approve":
@@ -330,21 +441,32 @@ class AssetService():
         # Notify User. Confirmation also sends a dedicated email below, so the
         # notification copy is in-app only in that case; rejections keep their
         # notification email and use the rejection template.
-        create_notification(db, {
-            "user_id": str(inspection.user_id),
-            "type": "inspection_confirmed" if data.action == "approve" else "inspection_rejected",
-            "title": title,
-            "message": message,
-            "priority": "high",
-            "channels": ["in_app", "email"],
-            "skip_email": data.action == "approve",
-            "data": notification_data,
-        })
+        create_notification(
+            db,
+            {
+                "user_id": str(inspection.user_id),
+                "type": (
+                    "inspection_confirmed"
+                    if data.action == "approve"
+                    else "inspection_rejected"
+                ),
+                "title": title,
+                "message": message,
+                "priority": "high",
+                "channels": ["in_app", "email"],
+                "skip_email": data.action == "approve",
+                "data": notification_data,
+            },
+        )
 
         if data.action == "approve":
             try:
                 user = db.query(User).filter(User.id == inspection.user_id).first()
-                seller = db.query(StoreProfile).filter(StoreProfile.id == inspection.seller_id).first()
+                seller = (
+                    db.query(StoreProfile)
+                    .filter(StoreProfile.id == inspection.seller_id)
+                    .first()
+                )
                 if user and seller and asset:
                     send_inspection_confirmed_email.delay(
                         user.email,
@@ -361,9 +483,16 @@ class AssetService():
         return inspection
 
     def list_seller_inspections(
-        self, db: Session, seller_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+        self,
+        db: Session,
+        seller_id: UUID,
+        page: int = 1,
+        limit: int = 10,
+        status: Optional[str] = None,
     ) -> Tuple[List[GeneralInspection], int]:
-        query = db.query(GeneralInspection).filter(GeneralInspection.seller_id == seller_id)
+        query = db.query(GeneralInspection).filter(
+            GeneralInspection.seller_id == seller_id
+        )
         if status:
             query = query.filter(GeneralInspection.status == status)
         query = query.order_by(GeneralInspection.created_at.desc())
@@ -374,7 +503,12 @@ class AssetService():
         return inspections, count
 
     def list_user_inspections(
-        self, db: Session, user_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+        self,
+        db: Session,
+        user_id: UUID,
+        page: int = 1,
+        limit: int = 10,
+        status: Optional[str] = None,
     ) -> Tuple[List[GeneralInspection], int]:
         query = db.query(GeneralInspection).filter(GeneralInspection.user_id == user_id)
         if status:
@@ -386,37 +520,69 @@ class AssetService():
             ins.asset = self._get_asset_details(db, ins.asset_type, ins.asset_id)
         return inspections, count
 
-    def get_inspection(self, db: Session, user_id: UUID, inspection_id: UUID) -> Optional[GeneralInspection]:
-        inspection = db.query(GeneralInspection).filter(
-            GeneralInspection.id == inspection_id,
-            or_(GeneralInspection.user_id == user_id, GeneralInspection.seller_id == user_id)
-        ).first()
+    def get_inspection(
+        self, db: Session, user_id: UUID, inspection_id: UUID
+    ) -> Optional[GeneralInspection]:
+        inspection = (
+            db.query(GeneralInspection)
+            .filter(
+                GeneralInspection.id == inspection_id,
+                or_(
+                    GeneralInspection.user_id == user_id,
+                    GeneralInspection.seller_id == user_id,
+                ),
+            )
+            .first()
+        )
         if inspection:
-            inspection.asset = self._get_asset_details(db, inspection.asset_type, inspection.asset_id)
+            inspection.asset = self._get_asset_details(
+                db, inspection.asset_type, inspection.asset_id
+            )
         return inspection
 
-    def _attach_agreement_financials(self, db: Session, agreement: GeneralAgreement) -> None:
+    def _attach_agreement_financials(
+        self, db: Session, agreement: GeneralAgreement
+    ) -> None:
         """Attach the running total paid so far. There is no platform-fee/seller-net
         split in the single-vendor model — the full payment amount is the business's
         revenue, so no fee breakdown is computed or shown."""
         total_price = Decimal(str(agreement.total_price or 0))
-        remaining_balance = Decimal(str(agreement.remaining_balance if agreement.remaining_balance is not None else agreement.total_price or 0))
-        completed_payments = db.query(Payment).filter(
-            Payment.agreement_id == agreement.id,
-            Payment.status == "completed",
-        ).all()
+        remaining_balance = Decimal(
+            str(
+                agreement.remaining_balance
+                if agreement.remaining_balance is not None
+                else agreement.total_price or 0
+            )
+        )
+        completed_payments = (
+            db.query(Payment)
+            .filter(
+                Payment.agreement_id == agreement.id,
+                Payment.status == "completed",
+            )
+            .all()
+        )
 
         total_paid = sum(
             (Decimal(str(payment.amount or 0)) for payment in completed_payments),
             Decimal("0.00"),
         )
 
-        agreement.total_paid = max(total_paid, max(total_price - remaining_balance, Decimal("0.00")))
+        agreement.total_paid = max(
+            total_paid, max(total_price - remaining_balance, Decimal("0.00"))
+        )
 
     def list_seller_agreements(
-        self, db: Session, seller_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+        self,
+        db: Session,
+        seller_id: UUID,
+        page: int = 1,
+        limit: int = 10,
+        status: Optional[str] = None,
     ) -> Tuple[List[GeneralAgreement], int]:
-        query = db.query(GeneralAgreement).filter(GeneralAgreement.seller_id == seller_id)
+        query = db.query(GeneralAgreement).filter(
+            GeneralAgreement.seller_id == seller_id
+        )
         if status:
             query = query.filter(GeneralAgreement.status == status)
         query = query.order_by(GeneralAgreement.created_at.desc())
@@ -428,7 +594,12 @@ class AssetService():
         return agreements, count
 
     def list_user_agreements(
-        self, db: Session, user_id: UUID, page: int = 1, limit: int = 10, status: Optional[str] = None
+        self,
+        db: Session,
+        user_id: UUID,
+        page: int = 1,
+        limit: int = 10,
+        status: Optional[str] = None,
     ) -> Tuple[List[GeneralAgreement], int]:
         query = db.query(GeneralAgreement).filter(GeneralAgreement.user_id == user_id)
         if status:
@@ -441,49 +612,86 @@ class AssetService():
             self._attach_agreement_financials(db, ag)
         return agreements, count
 
-    def get_agreement(self, db: Session, user_id: UUID, agreement_id: UUID) -> Optional[GeneralAgreement]:
-        agreement = db.query(GeneralAgreement).filter(
-            GeneralAgreement.id == agreement_id,
-            or_(GeneralAgreement.user_id == user_id, GeneralAgreement.seller_id == user_id)
-        ).first()
+    def get_agreement(
+        self, db: Session, user_id: UUID, agreement_id: UUID
+    ) -> Optional[GeneralAgreement]:
+        agreement = (
+            db.query(GeneralAgreement)
+            .filter(
+                GeneralAgreement.id == agreement_id,
+                or_(
+                    GeneralAgreement.user_id == user_id,
+                    GeneralAgreement.seller_id == user_id,
+                ),
+            )
+            .first()
+        )
         if agreement:
-            agreement.asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+            agreement.asset = self._get_asset_details(
+                db, agreement.asset_type, agreement.asset_id
+            )
             self._attach_agreement_financials(db, agreement)
         return agreement
 
     def list_seller_payments(self, db: Session, seller_id: UUID) -> List[Payment]:
-        return db.query(Payment).filter(Payment.seller_id == seller_id, Payment.agreement_id != None).order_by(Payment.created_at.desc()).all()
+        return (
+            db.query(Payment)
+            .filter(Payment.seller_id == seller_id, Payment.agreement_id != None)
+            .order_by(Payment.created_at.desc())
+            .all()
+        )
 
     def list_user_payments(self, db: Session, user_id: UUID) -> List[Payment]:
-        return db.query(Payment).filter(Payment.buyer_id == user_id, Payment.agreement_id != None).order_by(Payment.created_at.desc()).all()
+        return (
+            db.query(Payment)
+            .filter(Payment.buyer_id == user_id, Payment.agreement_id != None)
+            .order_by(Payment.created_at.desc())
+            .all()
+        )
 
     def get_payment(self, db: Session, user_id: UUID, payment_id: UUID) -> Payment:
-        payment = db.query(Payment).filter(
-            Payment.id == payment_id,
-            or_(
-                Payment.buyer_id == user_id,
-                Payment.seller_id == user_id
+        payment = (
+            db.query(Payment)
+            .filter(
+                Payment.id == payment_id,
+                or_(Payment.buyer_id == user_id, Payment.seller_id == user_id),
             )
-        ).first()
-        
+            .first()
+        )
+
         if payment and payment.agreement:
-             payment.agreement.asset = self._get_asset_details(db, payment.agreement.asset_type, payment.agreement.asset_id)
-             
+            payment.agreement.asset = self._get_asset_details(
+                db, payment.agreement.asset_type, payment.agreement.asset_id
+            )
+
         return payment
 
-    def complete_inspection(self, db: Session, user_id: UUID, inspection_id: UUID, data: AssetInspectionComplete) -> GeneralInspection:
-        inspection = db.query(GeneralInspection).filter(
-            GeneralInspection.id == inspection_id, 
-            GeneralInspection.user_id == user_id
-        ).first()
-        
+    def complete_inspection(
+        self,
+        db: Session,
+        user_id: UUID,
+        inspection_id: UUID,
+        data: AssetInspectionComplete,
+    ) -> GeneralInspection:
+        inspection = (
+            db.query(GeneralInspection)
+            .filter(
+                GeneralInspection.id == inspection_id,
+                GeneralInspection.user_id == user_id,
+            )
+            .first()
+        )
+
         if not inspection:
             raise HTTPException(status_code=404, detail="Inspection not found")
 
         # Check if inspection date has arrived
         current_date = datetime.now().date()
         if current_date < inspection.inspection_date.date():
-            raise HTTPException(status_code=400, detail="Cannot finalize offer before the scheduled inspection date.")
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot finalize offer before the scheduled inspection date.",
+            )
 
         # 1. Update Inspection
         inspection.status = "agreement_pending"
@@ -491,19 +699,31 @@ class AssetService():
         inspection.notes = data.notes or inspection.notes
         if data.unit_id:
             inspection.unit_id = data.unit_id
-        
+
         # 2. Update physical asset status
-        self.update_unit_status(db, inspection.asset_type, "completed", unit_id=inspection.unit_id, asset_id=inspection.asset_id)
+        self.update_unit_status(
+            db,
+            inspection.asset_type,
+            "completed",
+            unit_id=inspection.unit_id,
+            asset_id=inspection.asset_id,
+        )
 
         # 3. Validate the requested payment plan against admin-configured rules
         asset_row = self._get_asset_row(db, inspection.asset_type, inspection.asset_id)
         if not asset_row:
             raise HTTPException(status_code=404, detail="Asset not found")
-        plan_type = self._resolve_payment_plan(db, asset_row, data.agreed_price, data.payment_plan)
+        plan_type = self._resolve_payment_plan(
+            db, asset_row, data.agreed_price, data.payment_plan
+        )
         financing_service.check_eligible(db, inspection.user_id, data.payment_plan)
 
         # 4. Create or Update Agreement automatically in pending_review
-        existing = db.query(GeneralAgreement).filter(GeneralAgreement.inspection_id == inspection_id).first()
+        existing = (
+            db.query(GeneralAgreement)
+            .filter(GeneralAgreement.inspection_id == inspection_id)
+            .first()
+        )
         if not existing:
             new_agreement = GeneralAgreement(
                 seller_id=inspection.seller_id,
@@ -541,13 +761,22 @@ class AssetService():
             event_key="system_alert",
             title="Inspection Completed",
             message=f"A customer has completed the inspection for a {inspection.asset_type} listing. An agreement is now pending review.",
-            data={"inspection_id": str(inspection.id), "asset_type": inspection.asset_type},
+            data={
+                "inspection_id": str(inspection.id),
+                "asset_type": inspection.asset_type,
+            },
             priority="medium",
         )
 
         return inspection
 
-    def create_agreement(self, db: Session, user_id: UUID, data: AssetAgreementBase, is_seller: bool = True) -> GeneralAgreement:
+    def create_agreement(
+        self,
+        db: Session,
+        user_id: UUID,
+        data: AssetAgreementBase,
+        is_seller: bool = True,
+    ) -> GeneralAgreement:
         # Get asset to verify details
         asset = self._get_asset_row(db, data.asset_type, data.asset_id)
 
@@ -561,23 +790,38 @@ class AssetService():
             seller_id = user_id
             buyer_id = None
             if data.inspection_id:
-                inspection = db.query(GeneralInspection).filter(GeneralInspection.id == data.inspection_id).first()
+                inspection = (
+                    db.query(GeneralInspection)
+                    .filter(GeneralInspection.id == data.inspection_id)
+                    .first()
+                )
                 if inspection:
                     buyer_id = inspection.user_id
             if not buyer_id:
-                 raise HTTPException(status_code=400, detail="Buyer ID could not be resolved from inspection")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Buyer ID could not be resolved from inspection",
+                )
         else:
             # Customer initiated (e.g. the no-inspection "Buy Now" flow) - block on assets
             # that are already spoken for, since this path has no seller/admin review gate.
             if data.asset_type == "automotive" and asset.status == "out_of_stock":
-                raise HTTPException(status_code=400, detail="This vehicle is no longer available for purchase.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="This vehicle is no longer available for purchase.",
+                )
             if data.asset_type == "property" and asset.status not in ["available"]:
-                raise HTTPException(status_code=400, detail="This property is no longer available for purchase.")
+                raise HTTPException(
+                    status_code=400,
+                    detail="This property is no longer available for purchase.",
+                )
 
             seller_id = asset.seller_id
             buyer_id = user_id
 
-        plan_type = self._resolve_payment_plan(db, asset, data.total_price, data.payment_plan)
+        plan_type = self._resolve_payment_plan(
+            db, asset, data.total_price, data.payment_plan
+        )
         financing_service.check_eligible(db, buyer_id, data.payment_plan)
 
         remaining_balance = data.total_price - (data.deposit_paid or 0)
@@ -598,32 +842,47 @@ class AssetService():
             monthly_installment=data.monthly_installment,
             status="pending_review",  # Start in review
         )
-        
+
         db.add(new_agreement)
-        
+
         # update inspection status if exists
         if data.inspection_id:
-            inspection = db.query(GeneralInspection).filter(GeneralInspection.id == data.inspection_id).first()
+            inspection = (
+                db.query(GeneralInspection)
+                .filter(GeneralInspection.id == data.inspection_id)
+                .first()
+            )
             if inspection:
                 inspection.status = "agreement_pending"
 
         db.commit()
         db.refresh(new_agreement)
 
-        # Notify Buyer
-        create_notification(db, {
-            "user_id": str(new_agreement.user_id),
-            "type": "agreement_created",
-            "title": "Agreement Created",
-            "message": f"Your agreement for the {new_agreement.asset_type} has been created and is now pending seller review.",
-            "priority": "medium",
-            "channels": ["in_app", "email"]
-        })
+        # Notify Buyer (in-app only — the dedicated seller email is queued below;
+        # a meaningful buyer email fires later when the agreement is activated).
+        create_notification(
+            db,
+            {
+                "user_id": str(new_agreement.user_id),
+                "type": "agreement_created",
+                "title": "Agreement Created",
+                "message": f"Your agreement for the {new_agreement.asset_type} has been created and is now pending seller review.",
+                "priority": "medium",
+                "channels": ["in_app", "email"],
+                "skip_email": True,  # dedicated seller email is queued below
+            },
+        )
 
         try:
-            seller = db.query(StoreProfile).filter(StoreProfile.id == new_agreement.seller_id).first()
+            seller = (
+                db.query(StoreProfile)
+                .filter(StoreProfile.id == new_agreement.seller_id)
+                .first()
+            )
             buyer = db.query(User).filter(User.id == new_agreement.user_id).first()
-            asset = self._get_asset_details(db, new_agreement.asset_type, new_agreement.asset_id)
+            asset = self._get_asset_details(
+                db, new_agreement.asset_type, new_agreement.asset_id
+            )
             if seller and buyer and asset:
                 send_agreement_created_email.delay(
                     seller.contact_email,
@@ -633,63 +892,104 @@ class AssetService():
                     f"₦{new_agreement.total_price:,.2f}",
                     f"₦{new_agreement.deposit_paid:,.2f}",
                     new_agreement.plan_type,
-                    f"₦{new_agreement.monthly_installment:,.2f}" if new_agreement.monthly_installment else None,
-                    f"{new_agreement.duration_months} months" if new_agreement.duration_months else None,
+                    (
+                        f"₦{new_agreement.monthly_installment:,.2f}"
+                        if new_agreement.monthly_installment
+                        else None
+                    ),
+                    (
+                        f"{new_agreement.duration_months} months"
+                        if new_agreement.duration_months
+                        else None
+                    ),
                 )
         except Exception as e:
             pass  # non-critical
 
         return new_agreement
 
-    def approve_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID, unit_id: Optional[UUID] = None) -> GeneralAgreement:
-        agreement = db.query(GeneralAgreement).filter(
-            GeneralAgreement.id == agreement_id,
-            GeneralAgreement.seller_id == seller_id
-        ).first()
+    def approve_agreement(
+        self,
+        db: Session,
+        seller_id: UUID,
+        agreement_id: UUID,
+        unit_id: Optional[UUID] = None,
+    ) -> GeneralAgreement:
+        agreement = (
+            db.query(GeneralAgreement)
+            .filter(
+                GeneralAgreement.id == agreement_id,
+                GeneralAgreement.seller_id == seller_id,
+            )
+            .first()
+        )
 
         if not agreement:
-            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
-        
+            raise HTTPException(
+                status_code=404, detail="Agreement not found or unauthorized"
+            )
+
         if agreement.status != "pending_review":
-            raise HTTPException(status_code=400, detail="Agreement is not in pending_review status")
+            raise HTTPException(
+                status_code=400, detail="Agreement is not in pending_review status"
+            )
 
         # Update unit_id if provided by seller at approval time
         if unit_id:
             agreement.unit_id = unit_id
             if agreement.inspection_id:
-                inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
+                inspection = (
+                    db.query(GeneralInspection)
+                    .filter(GeneralInspection.id == agreement.inspection_id)
+                    .first()
+                )
                 if inspection:
                     inspection.unit_id = unit_id
 
         # Update Agreement status
         agreement.status = "pending_deposit"
-        
+
         # Update Inspection status
         if agreement.inspection_id:
-            inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
+            inspection = (
+                db.query(GeneralInspection)
+                .filter(GeneralInspection.id == agreement.inspection_id)
+                .first()
+            )
             if inspection:
                 inspection.status = "agreement_accepted"
 
         # Update asset unit status
-        self.update_unit_status(db, agreement.asset_type, "awaiting_payment", unit_id=agreement.unit_id, asset_id=agreement.asset_id)
+        self.update_unit_status(
+            db,
+            agreement.asset_type,
+            "awaiting_payment",
+            unit_id=agreement.unit_id,
+            asset_id=agreement.asset_id,
+        )
 
         db.commit()
         db.refresh(agreement)
 
         # Notify Buyer
-        create_notification(db, {
-            "user_id": str(agreement.user_id),
-            "type": "agreement_approved",
-            "title": "Agreement Approved!",
-            "message": f"Your agreement for the {agreement.asset_type} has been approved by the seller. Please proceed to pay your deposit to activate it.",
-            "priority": "high",
-            "channels": ["in_app", "email"],
-            "skip_email": True,  # dedicated agreement-approved email is queued below
-        })
+        create_notification(
+            db,
+            {
+                "user_id": str(agreement.user_id),
+                "type": "agreement_approved",
+                "title": "Agreement Approved!",
+                "message": f"Your agreement for the {agreement.asset_type} has been approved by the seller. Please proceed to pay your deposit to activate it.",
+                "priority": "high",
+                "channels": ["in_app", "email"],
+                "skip_email": True,  # dedicated agreement-approved email is queued below
+            },
+        )
 
         try:
             buyer = db.query(User).filter(User.id == agreement.user_id).first()
-            asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+            asset = self._get_asset_details(
+                db, agreement.asset_type, agreement.asset_id
+            )
             if buyer and asset:
                 send_agreement_approved_email.delay(
                     buyer.email,
@@ -697,8 +997,16 @@ class AssetService():
                     asset.title,
                     f"₦{agreement.total_price:,.2f}",
                     f"₦{agreement.remaining_balance:,.2f}",
-                    agreement.next_due_date.strftime("%B %d, %Y") if agreement.next_due_date else None,
-                    f"₦{agreement.monthly_installment:,.2f}" if agreement.monthly_installment else None,
+                    (
+                        agreement.next_due_date.strftime("%B %d, %Y")
+                        if agreement.next_due_date
+                        else None
+                    ),
+                    (
+                        f"₦{agreement.monthly_installment:,.2f}"
+                        if agreement.monthly_installment
+                        else None
+                    ),
                     _ref(agreement.id),
                 )
         except Exception as e:
@@ -706,14 +1014,25 @@ class AssetService():
 
         return agreement
 
-    def delete_inspection(self, db: Session, user_id: UUID, inspection_id: UUID) -> bool:
-        inspection = db.query(GeneralInspection).filter(
-            GeneralInspection.id == inspection_id,
-            or_(GeneralInspection.user_id == user_id, GeneralInspection.seller_id == user_id)
-        ).first()
-        
+    def delete_inspection(
+        self, db: Session, user_id: UUID, inspection_id: UUID
+    ) -> bool:
+        inspection = (
+            db.query(GeneralInspection)
+            .filter(
+                GeneralInspection.id == inspection_id,
+                or_(
+                    GeneralInspection.user_id == user_id,
+                    GeneralInspection.seller_id == user_id,
+                ),
+            )
+            .first()
+        )
+
         if not inspection:
-            raise HTTPException(status_code=404, detail="Inspection not found or unauthorized")
+            raise HTTPException(
+                status_code=404, detail="Inspection not found or unauthorized"
+            )
 
         if inspection.status not in ["scheduled", "confirmed"]:
             raise HTTPException(
@@ -721,7 +1040,9 @@ class AssetService():
                 detail="Only scheduled or confirmed inspections can be cancelled.",
             )
 
-        cutoff_hours = system_settings_service.get_inspection_cancellation_cutoff_hours(db)
+        cutoff_hours = system_settings_service.get_inspection_cancellation_cutoff_hours(
+            db
+        )
         inspection_date = self._to_naive_utc(inspection.inspection_date)
         cutoff_time = inspection_date - timedelta(hours=cutoff_hours)
         if datetime.utcnow() >= cutoff_time:
@@ -729,28 +1050,43 @@ class AssetService():
                 status_code=400,
                 detail=f"Inspection cancellations must happen at least {cutoff_hours} hours before the scheduled time.",
             )
-        
+
         db.delete(inspection)
         db.commit()
         return True
-    def reject_agreement(self, db: Session, seller_id: UUID, agreement_id: UUID) -> GeneralAgreement:
-        agreement = db.query(GeneralAgreement).filter(
-            GeneralAgreement.id == agreement_id,
-            GeneralAgreement.seller_id == seller_id
-        ).first()
+
+    def reject_agreement(
+        self, db: Session, seller_id: UUID, agreement_id: UUID
+    ) -> GeneralAgreement:
+        agreement = (
+            db.query(GeneralAgreement)
+            .filter(
+                GeneralAgreement.id == agreement_id,
+                GeneralAgreement.seller_id == seller_id,
+            )
+            .first()
+        )
 
         if not agreement:
-            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
-        
+            raise HTTPException(
+                status_code=404, detail="Agreement not found or unauthorized"
+            )
+
         if agreement.status != "pending_review":
-            raise HTTPException(status_code=400, detail="Agreement is not in pending_review status")
+            raise HTTPException(
+                status_code=400, detail="Agreement is not in pending_review status"
+            )
 
         # Update Agreement status - Using 'cancelled' as 'rejected' is not in the Enum yet
         agreement.status = "cancelled"
-        
+
         # Reset Inspection status so customer can try again
         if agreement.inspection_id:
-            inspection = db.query(GeneralInspection).filter(GeneralInspection.id == agreement.inspection_id).first()
+            inspection = (
+                db.query(GeneralInspection)
+                .filter(GeneralInspection.id == agreement.inspection_id)
+                .first()
+            )
             if inspection:
                 inspection.status = "confirmed"
 
@@ -758,26 +1094,38 @@ class AssetService():
         db.refresh(agreement)
 
         # Notify Buyer
-        create_notification(db, {
-            "user_id": str(agreement.user_id),
-            "type": "agreement_rejected",
-            "title": "Agreement Declined",
-            "message": f"The seller has declined the agreement terms for the {agreement.asset_type}. You can try scheduling another inspection to renegotiate.",
-            "priority": "high",
-            "channels": ["in_app", "email"]
-        })
+        create_notification(
+            db,
+            {
+                "user_id": str(agreement.user_id),
+                "type": "agreement_rejected",
+                "title": "Agreement Declined",
+                "message": f"The seller has declined the agreement terms for the {agreement.asset_type}. You can try scheduling another inspection to renegotiate.",
+                "priority": "high",
+                "channels": ["in_app", "email"],
+            },
+        )
 
         return agreement
 
-    def initialize_agreement_payment(self, db: Session, user_id: UUID, agreement_id: UUID, data: AgreementPaymentInitialize) -> Dict[str, Any]:
-        agreement = db.query(GeneralAgreement).filter(
-            GeneralAgreement.id == agreement_id,
-            GeneralAgreement.user_id == user_id
-        ).first()
+    def initialize_agreement_payment(
+        self,
+        db: Session,
+        user_id: UUID,
+        agreement_id: UUID,
+        data: AgreementPaymentInitialize,
+    ) -> Dict[str, Any]:
+        agreement = (
+            db.query(GeneralAgreement)
+            .filter(
+                GeneralAgreement.id == agreement_id, GeneralAgreement.user_id == user_id
+            )
+            .first()
+        )
 
         if not agreement:
             raise HTTPException(status_code=404, detail="Agreement not found")
-        
+
         # Check if it's the first payment (deposit) - simplified check
         is_deposit = (agreement.deposit_paid or 0) == 0
         payment_type = "deposit" if is_deposit else "installment"
@@ -785,19 +1133,21 @@ class AssetService():
         # Check for minimum deposit if it's a deposit payment
         if is_deposit:
             # Get asset min deposit info
-            asset = self._get_asset_details(db, agreement.asset_type, agreement.asset_id)
+            asset = self._get_asset_details(
+                db, agreement.asset_type, agreement.asset_id
+            )
             min_percent = asset.min_deposit_percentage if asset else 10
             min_amount = agreement.total_price * (Decimal(str(min_percent)) / 100)
-            
+
             if data.amount < min_amount:
                 raise HTTPException(
-                    status_code=400, 
-                    detail=f"Initial deposit must be at least {min_percent}% (₦{min_amount:,.2f})"
+                    status_code=400,
+                    detail=f"Initial deposit must be at least {min_percent}% (₦{min_amount:,.2f})",
                 )
-        
+
         # Use unified PaymentService for initialization
         category = "asset_deposit" if payment_type == "deposit" else "asset_installment"
-        
+
         return payment_service.initialize_payment(
             db=db,
             user_id=str(user_id),
@@ -805,30 +1155,49 @@ class AssetService():
             amount_kobo=int(data.amount * 100),
             category=category,
             agreement_id=str(agreement_id),
-            metadata={"payment_type": payment_type}
+            metadata={"payment_type": payment_type},
         )
 
     def verify_agreement_payment(self, db: Session, reference: str) -> Dict[str, Any]:
         """Verify an agreement payment using the unified payment service"""
         return payment_service.verify_transaction(db, reference)
 
-    def initiate_mandate(self, db: Session, user_id: UUID, agreement_id: UUID, data: MandateInitiateRequest) -> Dict[str, Any]:
+    def initiate_mandate(
+        self,
+        db: Session,
+        user_id: UUID,
+        agreement_id: UUID,
+        data: MandateInitiateRequest,
+    ) -> Dict[str, Any]:
         """Start recurring bank-debit authorization for a structured (monthly) agreement.
         Returns a redirect_url the customer must visit to consent to the mandate."""
-        agreement = db.query(GeneralAgreement).filter(
-            GeneralAgreement.id == agreement_id,
-            GeneralAgreement.user_id == user_id
-        ).first()
+        agreement = (
+            db.query(GeneralAgreement)
+            .filter(
+                GeneralAgreement.id == agreement_id, GeneralAgreement.user_id == user_id
+            )
+            .first()
+        )
 
         if not agreement:
             raise HTTPException(status_code=404, detail="Agreement not found")
 
         if agreement.plan_type != "structured":
-            raise HTTPException(status_code=400, detail="Recurring debit is only available for structured (monthly) payment plans")
+            raise HTTPException(
+                status_code=400,
+                detail="Recurring debit is only available for structured (monthly) payment plans",
+            )
 
-        mandate = db.query(PaymentMandate).filter(PaymentMandate.agreement_id == agreement_id).first()
+        mandate = (
+            db.query(PaymentMandate)
+            .filter(PaymentMandate.agreement_id == agreement_id)
+            .first()
+        )
         if mandate and mandate.status == "active":
-            raise HTTPException(status_code=400, detail="A recurring mandate is already active for this agreement")
+            raise HTTPException(
+                status_code=400,
+                detail="A recurring mandate is already active for this agreement",
+            )
 
         reference = f"LEL_MANDATE_{uuid4().hex[:10].upper()}"
         ps_res = paystack_service.initialize_authorization(
@@ -839,7 +1208,9 @@ class AssetService():
         )
 
         if not ps_res.get("status"):
-            raise HTTPException(status_code=400, detail="Could not start mandate authorization")
+            raise HTTPException(
+                status_code=400, detail="Could not start mandate authorization"
+            )
 
         if mandate:
             mandate.email = data.email
@@ -864,29 +1235,48 @@ class AssetService():
             "reference": reference,
         }
 
-    def get_mandate(self, db: Session, user_id: UUID, agreement_id: UUID) -> Optional[PaymentMandate]:
-        return db.query(PaymentMandate).join(
-            GeneralAgreement, GeneralAgreement.id == PaymentMandate.agreement_id
-        ).filter(
-            PaymentMandate.agreement_id == agreement_id,
-            or_(GeneralAgreement.user_id == user_id, GeneralAgreement.seller_id == user_id)
-        ).first()
+    def get_mandate(
+        self, db: Session, user_id: UUID, agreement_id: UUID
+    ) -> Optional[PaymentMandate]:
+        return (
+            db.query(PaymentMandate)
+            .join(GeneralAgreement, GeneralAgreement.id == PaymentMandate.agreement_id)
+            .filter(
+                PaymentMandate.agreement_id == agreement_id,
+                or_(
+                    GeneralAgreement.user_id == user_id,
+                    GeneralAgreement.seller_id == user_id,
+                ),
+            )
+            .first()
+        )
 
-    def cancel_agreement(self, db: Session, user_id: UUID, agreement_id: UUID) -> GeneralAgreement:
+    def cancel_agreement(
+        self, db: Session, user_id: UUID, agreement_id: UUID
+    ) -> GeneralAgreement:
         """Allow a buyer to cancel their agreement if they haven't made a deposit yet"""
-        agreement = db.query(GeneralAgreement).filter(
-            GeneralAgreement.id == agreement_id,
-            GeneralAgreement.buyer_id == user_id
-        ).first()
+        agreement = (
+            db.query(GeneralAgreement)
+            .filter(
+                GeneralAgreement.id == agreement_id,
+                GeneralAgreement.buyer_id == user_id,
+            )
+            .first()
+        )
 
         if not agreement:
-            raise HTTPException(status_code=404, detail="Agreement not found or unauthorized")
-            
+            raise HTTPException(
+                status_code=404, detail="Agreement not found or unauthorized"
+            )
+
         if agreement.status != "pending_deposit":
-            raise HTTPException(status_code=400, detail="Can only cancel agreements that are waiting for a deposit.")
-            
+            raise HTTPException(
+                status_code=400,
+                detail="Can only cancel agreements that are waiting for a deposit.",
+            )
+
         agreement.status = "cancelled"
-        
+
         db.commit()
         db.refresh(agreement)
 
@@ -896,10 +1286,14 @@ class AssetService():
             event_key="system_alert",
             title="Agreement Cancelled By Buyer",
             message=f"A buyer has cancelled their agreement for a {agreement.asset_type} listing.",
-            data={"agreement_id": str(agreement.id), "asset_type": agreement.asset_type},
+            data={
+                "agreement_id": str(agreement.id),
+                "asset_type": agreement.asset_type,
+            },
             priority="medium",
         )
 
         return agreement
+
 
 asset_service = AssetService()

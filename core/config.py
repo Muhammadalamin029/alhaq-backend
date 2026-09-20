@@ -24,11 +24,11 @@ class Settings(BaseSettings):
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_PASSWORD: str = ""
-    
+
     # Celery Configuration - Use REDIS_URL for both broker and backend
     CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
-    
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Set Celery URLs from REDIS_URL if not explicitly provided
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
             self.CELERY_BROKER_URL = self.REDIS_URL
         if not self.CELERY_RESULT_BACKEND:
             self.CELERY_RESULT_BACKEND = self.REDIS_URL
-    
+
     # Email Configuration
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
@@ -46,16 +46,24 @@ class Settings(BaseSettings):
     SMTP_USE_SSL: bool = False
     FROM_EMAIL: str = ""
     FROM_NAME: str = "LEL Store"
-    
+
     # Email verification settings
     EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 15
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
-    
+
     # Paystack Configuration
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_PUBLIC_KEY: str = ""
     PAYSTACK_WEBHOOK_SECRET: str = ""
-    
+
+    # Frontend URL — used for deep links in emails (e.g. "View Order" CTA)
+    # and as the base for the email logo image.
+    FRONTEND_URL: str = "https://alhaq-frontend.vercel.app"
+
+    # Security email — set to False to stop sending a "New Sign-In" email on
+    # every login (useful when users authenticate frequently from mobile).
+    SEND_LOGIN_EMAIL: bool = True
+
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
     JSON_LOGS: bool = False
