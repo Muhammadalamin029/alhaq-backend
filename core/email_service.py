@@ -173,12 +173,20 @@ def _brand_row(from_name: str, text_color: str = INK) -> str:
     )
 
 
+
+def _cta_button(url: str, text: str) -> str:
+    return (
+        f'<tr><td style="padding:8px 32px 28px">'
+        f'<a href="{escape(url)}" '
+        f'style="display:block;background:{BRAND};color:#ffffff;text-decoration:none;'
+        f'text-align:center;font-size:16px;font-weight:700;padding:15px 0;border-radius:9999px">'
+        f"{escape(text)}</a></td></tr>"
+    )
+
 def _base_html(
     *,
     from_name: str,
     icon: str,
-    header_bg: str,
-    header_fg: str = "",
     header_title: str,
     header_subtitle: str = "",
     greeting: str,
@@ -215,7 +223,6 @@ def _base_html(
         <!-- HEADER -->
         <tr>
           <td style="padding:30px 32px 0;text-align:center">
-            {badge}
             <div style="margin-bottom:12px">{_brand_row(from_name, INK)}</div>
             <div style="font-size:22px;font-weight:800;color:{INK};letter-spacing:-.4px">
               {escape(header_title)}</div>
@@ -375,12 +382,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✉️",
-            header_bg="linear-gradient(135deg,#FFD700,#FFA500)",
-            header_fg="#000",
             header_title="Email Verification",
             header_subtitle="Confirm your email address",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/auth/verify-email", "Verify Account"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -420,12 +426,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🔑",
-            header_bg="linear-gradient(135deg,#c0392b,#e74c3c)",
-            header_fg="#fff",
             header_title="Password Reset",
             header_subtitle="Reset your account password",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/auth/reset-password", "Reset Password"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -452,12 +457,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🌟",
-            header_bg="linear-gradient(135deg,#FFD700,#FFA500)",
-            header_fg="#000",
             header_title="Welcome Aboard!",
             header_subtitle="Your account is verified and ready",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}", "Explore Marketplace"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -493,12 +497,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🔐",
-            header_bg="linear-gradient(135deg,#1a1a2e,#16213e)",
-            header_fg="#4a9eff",
             header_title="New Sign-In Detected",
             header_subtitle="Someone just signed in to your account",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/customer/settings", "Secure Account"),
             footer_note="This email was sent for your security. We never ask for your password.",
         )
         detail_text = "\n".join(f"{k}: {v}" for k, v in rows)
@@ -545,12 +548,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="📅",
-            header_bg="linear-gradient(135deg,#1a5276,#2e86c1)",
-            header_fg="#fff",
             header_title="Inspection Confirmed",
             header_subtitle="Your physical inspection is scheduled",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-inspections", "View Inspection"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -596,12 +598,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="📄",
-            header_bg="linear-gradient(135deg,#6c3483,#8e44ad)",
-            header_fg="#fff",
             header_title="Agreement Created",
             header_subtitle="New purchase agreement pending deposit",
             greeting=f"Hello {seller_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements", "View Agreement"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -645,12 +646,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🤝",
-            header_bg="linear-gradient(135deg,#7d3c00,#f39c12)",
-            header_fg="#fff",
             header_title="Agreement Approved",
             header_subtitle="Deposit required to activate",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements/{reference}" if reference else f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements", "Pay Deposit"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -700,12 +700,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✅",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
-            header_fg="#fff",
             header_title="Agreement Activated",
             header_subtitle="Your installment plan has started",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements/{reference}" if reference else f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements", "View Agreement"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -743,12 +742,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✅",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
-            header_fg="#fff",
             header_title="Financing Application Approved",
             header_subtitle="You're eligible for monthly and installment plans",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}", "Shop Now"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -788,12 +786,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✖️",
-            header_bg="linear-gradient(135deg,#922b21,#c0392b)",
-            header_fg="#fff",
             header_title="Financing Application Rejected",
             header_subtitle="Your application was not approved",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-financing-application", "View Financing"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -827,12 +824,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="⚠️",
-            header_bg="linear-gradient(135deg,#922b21,#c0392b)",
-            header_fg="#fff",
             header_title="Financing Eligibility Revoked",
             header_subtitle="Your financing eligibility has changed",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-financing-application", "View Financing"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -877,12 +873,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="⏰",
-            header_bg=f"linear-gradient(135deg,#7d3c00,{urgency_color})",
-            header_fg="#fff",
             header_title="Installment Payment Reminder",
             header_subtitle=f"Payment due in {days_left} day{'s' if days_left != 1 else ''}",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements", "Pay Now"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -916,12 +911,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="⚖️",
-            header_bg="linear-gradient(135deg,#784212,#ca6f1e)",
-            header_fg="#fff",
             header_title="Dispute Opened",
             header_subtitle="Under review — we'll resolve this for you",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/customer/disputes", "View Dispute"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -954,12 +948,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✅",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
-            header_fg="#fff",
             header_title="Dispute Resolved",
             header_subtitle="A resolution has been reached",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/customer/disputes", "View Dispute"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -995,12 +988,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🚚",
-            header_bg="linear-gradient(135deg,#1a5276,#2e86c1)",
-            header_fg="#fff",
             header_title="Order Shipped",
             header_subtitle="Your order is on its way",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/orders/{order_id}", "Track Order"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1026,12 +1018,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="📦",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
-            header_fg="#fff",
             header_title="Order Delivered",
             header_subtitle="Your purchase has arrived",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/orders/{order_id}", "Review Order"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1193,7 +1184,6 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✓",
-            header_bg=f"linear-gradient(135deg,{BRAND},{BRAND_DARK})",
             header_title="Your Order is on the Way",
             header_subtitle="",
             greeting=f"Hi {user_name},",
@@ -1264,12 +1254,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="💰",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
-            header_fg="#fff",
             header_title=title or "Payment Confirmed",
             header_subtitle="Payment received",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-payments", "View Payment"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1296,8 +1285,6 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="↩️",
-            header_bg="linear-gradient(135deg,#1a5276,#3498db)",
-            header_fg="#fff",
             header_title="Payment Refunded",
             header_subtitle="Your refund is on the way",
             greeting=f"Hello {user_name},",
@@ -1337,12 +1324,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="❌",
-            header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
-            header_fg="#fff",
             header_title="Recurring Payment Failed",
             header_subtitle="Action may be required",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-payments", "Update Payment Method"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1387,12 +1373,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="⚠️",
-            header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
-            header_fg="#fff",
             header_title="Agreement Defaulted",
             header_subtitle="Missed payment past grace period",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements", "View Agreement"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1430,12 +1415,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🎉",
-            header_bg="linear-gradient(135deg,#1e8449,#27ae60)",
-            header_fg="#fff",
             header_title="You Own It!",
             header_subtitle=f"Your {asset_noun.lower()} is fully paid",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-agreements", "View Agreement"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1471,12 +1455,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="🚫",
-            header_bg="linear-gradient(135deg,#7d1a1a,#e74c3c)",
-            header_fg="#fff",
             header_title="Inspection Rejected",
             header_subtitle="Your inspection request was declined",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-inspections", "Schedule New Inspection"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1515,12 +1498,11 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="⚙️",
-            header_bg="linear-gradient(135deg,#7d3c00,#f39c12)",
-            header_fg="#fff",
             header_title=f"Order {status_label}",
             header_subtitle="Order status update",
             greeting=f"Hello {user_name},",
             body_html=body,
+            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/orders/{order_id}", "View Order"),
         )
         text = _base_text(
             from_name=self.from_name,
@@ -1852,8 +1834,7 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon=icon,
-            header_bg=accent,
-            header_fg="#fff",
+            
             header_title=title,
             header_subtitle="Notification from " + self.from_name,
             greeting=f"Hello {user_name},",
