@@ -41,47 +41,97 @@ _MONEY_KEY_HINTS = ("amount", "price", "balance", "fee", "total")
 
 
 # ---------------------------------------------------------------------------
+# Theme — the single source of truth for the email look.
+# Edit these values (and _base_html / the shared boxes below) to restyle every
+# email at once.
+# ---------------------------------------------------------------------------
+
+PAGE_BG = "#f9fafb"        # page background (gray-50)
+CARD_BG = "#ffffff"        # main card
+SURFACE = "#f9fafb"        # inner surfaces
+BORDER = "#f3f4f6"         # hairlines (gray-100)
+INK = "#111827"            # headings / strong text (gray-900)
+BODY_TEXT = "#374151"      # body copy (gray-700)
+MUTED = "#6b7280"          # secondary text (gray-500)
+FAINT = "#9ca3af"          # labels / captions (gray-400)
+
+BRAND = "#f97316"          # primary orange (orange-500)
+BRAND_DARK = "#ea580c"     # orange-600
+BRAND_SOFT = "#fff7ed"     # orange-50
+BRAND_BORDER = "#fdba74"   # orange-300
+
+SUCCESS = "#16a34a"        # green-600
+DANGER = "#dc2626"         # red-600
+WARNING = "#d97706"        # amber-600
+INFO = "#2563eb"           # blue-600
+PURPLE = "#7c3aed"         # violet-600
+RADIUS = "16px"
+
+
+# ---------------------------------------------------------------------------
 # Shared HTML building blocks
 # ---------------------------------------------------------------------------
 
-def _detail_row(label: str, value: str, value_color: str = "#e0e0e0") -> str:
+def _detail_row(label: str, value: str, value_color: str = "") -> str:
     safe_val = escape(str(value)) if value else "—"
+    color = value_color or INK
     return (
         f'<tr>'
-        f'<td style="padding:8px 16px 8px 0;color:#888;font-size:13px;'
+        f'<td style="padding:9px 16px 9px 0;color:{FAINT};font-size:14px;'
         f'white-space:nowrap;vertical-align:top">{escape(label)}</td>'
-        f'<td style="padding:8px 0;color:{value_color};font-size:14px;'
-        f'font-weight:600">{safe_val}</td>'
+        f'<td style="padding:9px 0;color:{color};font-size:14px;'
+        f'font-weight:600;text-align:right">{safe_val}</td>'
         f'</tr>'
     )
 
 
-def _details_card(rows: list[tuple[str, str]], accent: str = "#FFD700") -> str:
+def _details_card(rows: list[tuple[str, str]], accent: str = BRAND) -> str:
     rows_html = "".join(_detail_row(k, v) for k, v in rows if v)
     return (
-        f'<div style="background:#1a1a1a;border-left:4px solid {accent};'
-        f'border-radius:8px;padding:20px 24px;margin:24px 0">'
+        f'<div style="background:{CARD_BG};border:1px solid {BORDER};'
+        f'border-left:4px solid {accent};border-radius:14px;padding:14px 20px;margin:20px 0">'
         f'<table style="width:100%;border-collapse:collapse">'
         f'{rows_html}'
         f'</table></div>'
     )
 
 
-def _alert_box(text: str, color: str = "#ff6b6b") -> str:
+def _alert_box(text: str, color: str = DANGER) -> str:
     return (
-        f'<div style="background:{color}1a;border-left:4px solid {color};'
-        f'border-radius:8px;padding:16px 20px;margin:20px 0">'
-        f'<p style="color:{color};margin:0;font-size:14px;line-height:1.5">'
+        f'<div style="background:{color}14;border-left:4px solid {color};'
+        f'border-radius:12px;padding:14px 18px;margin:18px 0">'
+        f'<p style="color:{INK};margin:0;font-size:14px;line-height:1.55">'
         f'{escape(text)}</p></div>'
     )
 
 
-def _info_box(text: str, color: str = "#FFD700") -> str:
+def _info_box(text: str, color: str = BRAND) -> str:
     return (
-        f'<div style="background:{color}15;border:1px solid {color}40;'
-        f'border-radius:8px;padding:16px 20px;margin:20px 0;text-align:center">'
-        f'<p style="color:{color};margin:0;font-size:15px;font-weight:600">'
+        f'<div style="background:{color}12;border:1px solid {color}40;'
+        f'border-radius:12px;padding:16px 18px;margin:18px 0;text-align:center">'
+        f'<p style="color:{INK};margin:0;font-size:15px;font-weight:600">'
         f'{escape(text)}</p></div>'
+    )
+
+
+def _badge_html(icon: str, header_bg: str) -> str:
+    """Default circular icon badge used in the header, tinted per event."""
+    return (
+        f'<div style="width:64px;height:64px;border-radius:9999px;background:{header_bg};'
+        f'line-height:64px;font-size:28px;text-align:center;margin:0 auto;'
+        f'box-shadow:0 8px 20px rgba(249,115,22,.16)">{icon}</div>'
+    )
+
+
+def _brand_row(from_name: str) -> str:
+    letter = escape((from_name or "L").strip()[:1].upper())
+    return (
+        f'<table cellpadding="0" cellspacing="0" role="presentation"><tr>'
+        f'<td style="width:36px;height:36px;background:{BRAND};border-radius:12px;'
+        f'text-align:center;vertical-align:middle;color:#ffffff;font-size:17px;'
+        f'font-weight:800">{letter}</td>'
+        f'<td style="padding-left:10px;font-size:16px;font-weight:700;color:{INK}">'
+        f'{escape(from_name)}</td></tr></table>'
     )
 
 
@@ -90,17 +140,25 @@ def _base_html(
     from_name: str,
     icon: str,
     header_bg: str,
-    header_fg: str,
+    header_fg: str = "",
     header_title: str,
-    header_subtitle: str,
+    header_subtitle: str = "",
     greeting: str,
     body_html: str,
     footer_note: str = "",
+    badge_html: str = "",
+    cta_html: str = "",
 ) -> str:
     footer_note_html = (
-        f'<p style="color:#666;font-size:12px;margin:8px 0">'
+        f'<p style="color:{FAINT};font-size:12px;margin:8px 0 0">'
         f'{escape(footer_note)}</p>'
         if footer_note else ""
+    )
+    badge = badge_html or _badge_html(icon, header_bg)
+    subtitle_html = (
+        f'<div style="font-size:14px;color:{MUTED};margin-top:6px">'
+        f'{escape(header_subtitle)}</div>'
+        if header_subtitle else ""
     )
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -109,40 +167,44 @@ def _base_html(
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>{escape(header_title)}</title>
 </head>
-<body style="margin:0;padding:0;background:#111;font-family:'Segoe UI',Arial,sans-serif">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;padding:32px 0">
+<body style="margin:0;padding:0;background:{PAGE_BG};font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:{PAGE_BG};padding:28px 12px">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0"
-             style="max-width:600px;width:100%;background:#0d0d0d;border-radius:16px;
-                    overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.6)">
+             style="max-width:600px;width:100%;background:{CARD_BG};border-radius:20px;
+                    overflow:hidden;border:1px solid {BORDER};
+                    box-shadow:0 1px 3px rgba(17,24,39,.08)">
 
-        <!-- HEADER -->
+        <!-- BRAND -->
         <tr>
-          <td style="background:{header_bg};padding:36px 32px;text-align:center">
-            <div style="font-size:42px;margin-bottom:12px">{icon}</div>
-            <div style="font-size:24px;font-weight:800;color:{header_fg};
-                        letter-spacing:-.5px;margin-bottom:4px">{escape(from_name)}</div>
-            <div style="font-size:16px;font-weight:700;color:{header_fg};opacity:.9">
-              {escape(header_title)}</div>
-            <div style="font-size:13px;color:{header_fg};opacity:.7;margin-top:4px">
-              {escape(header_subtitle)}</div>
+          <td style="padding:20px 24px 0">{_brand_row(from_name)}</td>
+        </tr>
+
+        <!-- HEADER BADGE + TITLE -->
+        <tr>
+          <td style="padding:22px 32px 0;text-align:center">
+            {badge}
+            <div style="font-size:22px;font-weight:800;color:{INK};letter-spacing:-.4px;
+                        margin-top:16px">{escape(header_title)}</div>
+            {subtitle_html}
           </td>
         </tr>
 
         <!-- BODY -->
         <tr>
-          <td style="padding:36px 40px">
-            <p style="color:#e0e0e0;font-size:16px;margin:0 0 24px;font-weight:600">
+          <td style="padding:20px 32px 8px">
+            <p style="color:{INK};font-size:16px;margin:0 0 16px;font-weight:600">
               {escape(greeting)}</p>
             {body_html}
           </td>
         </tr>
 
+        {cta_html}
+
         <!-- FOOTER -->
         <tr>
-          <td style="background:#080808;padding:24px 40px;text-align:center;
-                     border-top:1px solid #222">
-            <p style="color:#555;font-size:13px;margin:0 0 4px">
+          <td style="padding:24px 32px 28px;text-align:center;border-top:1px solid {BORDER}">
+            <p style="color:{FAINT};font-size:12px;margin:0">
               © {escape(from_name)} &nbsp;·&nbsp; All rights reserved</p>
             {footer_note_html}
           </td>
@@ -244,17 +306,17 @@ class EmailService:
     def render_verification_email(self, user_name: str, verification_code: str) -> tuple[str, str]:
         expire = settings.EMAIL_VERIFICATION_EXPIRE_MINUTES
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Thank you for joining <strong>{escape(self.from_name)}</strong>! '
             f'Enter the code below to verify your email address and activate your account.</p>'
-            f'<div style="background:#1a1a1a;border:2px solid #FFD700;border-radius:12px;'
+            f'<div style="background:#fff7ed;border:2px solid #f97316;border-radius:16px;'
             f'padding:32px;text-align:center;margin:24px 0;'
-            f'box-shadow:0 0 30px rgba(255,215,0,.15)">'
-            f'<p style="color:#888;font-size:12px;text-transform:uppercase;'
+            f'box-shadow:0 8px 24px rgba(249,115,22,.12)">'
+            f'<p style="color:#9ca3af;font-size:12px;text-transform:uppercase;'
             f'letter-spacing:2px;margin:0 0 12px">Verification Code</p>'
-            f'<div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#FFD700;'
+            f'<div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#ea580c;'
             f'font-family:monospace">{escape(verification_code)}</div>'
-            f'<p style="color:#666;font-size:13px;margin:12px 0 0">Expires in {expire} minutes</p>'
+            f'<p style="color:#9ca3af;font-size:13px;margin:12px 0 0">Expires in {expire} minutes</p>'
             f'</div>'
             + _alert_box("Do not share this code with anyone. "
                          "If you didn't request this, please ignore this email.")
@@ -280,17 +342,17 @@ class EmailService:
     def render_password_reset_email(self, user_name: str, reset_code: str) -> tuple[str, str]:
         expire = settings.PASSWORD_RESET_EXPIRE_MINUTES
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'We received a request to reset your password. '
             f'Use the code below to create a new password.</p>'
-            f'<div style="background:#1a0a0a;border:2px solid #ff6b6b;border-radius:12px;'
+            f'<div style="background:#fef2f2;border:2px solid #ef4444;border-radius:16px;'
             f'padding:32px;text-align:center;margin:24px 0;'
-            f'box-shadow:0 0 30px rgba(255,107,107,.15)">'
-            f'<p style="color:#888;font-size:12px;text-transform:uppercase;'
+            f'box-shadow:0 8px 24px rgba(239,68,68,.12)">'
+            f'<p style="color:#9ca3af;font-size:12px;text-transform:uppercase;'
             f'letter-spacing:2px;margin:0 0 12px">Reset Code</p>'
-            f'<div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#ff6b6b;'
+            f'<div style="font-size:40px;font-weight:900;letter-spacing:12px;color:#dc2626;'
             f'font-family:monospace">{escape(reset_code)}</div>'
-            f'<p style="color:#666;font-size:13px;margin:12px 0 0">Expires in {expire} minutes</p>'
+            f'<p style="color:#9ca3af;font-size:13px;margin:12px 0 0">Expires in {expire} minutes</p>'
             f'</div>'
             + _alert_box("If you didn't request a password reset, "
                          "your account is safe — just ignore this email.", "#ff6b6b")
@@ -315,11 +377,11 @@ class EmailService:
 
     def render_welcome_email(self, user_name: str) -> tuple[str, str]:
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 16px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 16px">'
             f'Welcome to <strong>{escape(self.from_name)}</strong>! '
             f'Your email has been verified and your account is ready to use.</p>'
             + _info_box("🎉 Your account is now active!")
-            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
             f'Explore the marketplace to buy and sell vehicles, properties, and more. '
             f'If you have any questions, our support team is always here to help.</p>'
         )
@@ -350,7 +412,7 @@ class EmailService:
             rows.append(("Device", device))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'A new sign-in was detected on your <strong>{escape(self.from_name)}</strong> account.</p>'
             + _details_card(rows, "#4a9eff")
             + _alert_box(
@@ -393,7 +455,7 @@ class EmailService:
             rows.append(("Seller Contact", seller_contact))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your inspection request has been confirmed by the seller. '
             f'Please be present at the agreed time.</p>'
             + _details_card(rows, "#3498db")
@@ -433,7 +495,7 @@ class EmailService:
             rows.append(("Duration", duration))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'A new purchase agreement has been created for <strong>{escape(asset_title)}</strong>. '
             f'The buyer needs to pay the deposit to activate the agreement.</p>'
             + _details_card(rows, "#8e44ad")
@@ -473,7 +535,7 @@ class EmailService:
             rows.append(("Reference", reference))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your purchase agreement for <strong>{escape(asset_title)}</strong> has been '
             f'approved. Pay your deposit to activate it.</p>'
             + _details_card(rows, "#f39c12")
@@ -515,7 +577,7 @@ class EmailService:
             rows.append(("Reference", reference))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your deposit for <strong>{escape(asset_title)}</strong> has been confirmed and '
             f'your agreement is now active.</p>'
             + _details_card(rows, "#27ae60")
@@ -547,12 +609,12 @@ class EmailService:
             rows.append(("Reviewed On", reviewed_on))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Good news - your financing application has been reviewed and approved. '
             f'You can now select a monthly or installment plan on any purchase.</p>'
             + (_details_card(rows, "#27ae60") if rows else "")
             + _info_box("Head back to your purchase and choose your preferred plan at checkout.", "#27ae60")
-            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
             f'Next steps: open the asset you inspected, select Monthly or Installment, and '
             f'pay the deposit (or first installment) to activate your plan.</p>'
         )
@@ -585,11 +647,11 @@ class EmailService:
         if decision_date:
             rows.append(("Decision Date", decision_date))
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your financing application was not approved this time.</p>'
             + _details_card(rows, "#c0392b")
             + _info_box("You may submit a new application at any time.", "#c0392b")
-            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
             f'You can reapply with updated documents or contact support if you believe this '
             f'decision was made in error.</p>'
         )
@@ -618,11 +680,11 @@ class EmailService:
         if decision_date:
             rows.append(("Revoked On", decision_date))
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your financing eligibility has been revoked. You will need to submit a new '
             f'application before selecting a monthly or installment plan again.</p>'
             + _details_card(rows, "#c0392b")
-            + f'<p style="color:#aaa;font-size:14px;line-height:1.6;margin:16px 0 0">'
+            + f'<p style="color:#6b7280;font-size:14px;line-height:1.6;margin:16px 0 0">'
             f'To regain eligibility, submit a new application through your account. '
             f'Contact support if you need help.</p>'
         )
@@ -657,7 +719,7 @@ class EmailService:
 
         urgency_color = "#e74c3c" if days_left <= 3 else "#e67e22" if days_left <= 5 else "#f39c12"
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your installment payment for <strong>{escape(asset_title)}</strong> is due '
             f'in <strong style="color:{urgency_color}">{days_left} day{"s" if days_left != 1 else ""}</strong>. '
             f'Please ensure your payment is made on time to keep your agreement active.</p>'
@@ -694,7 +756,7 @@ class EmailService:
             rows.append(("Order/Agreement", order_or_agreement_id[:8].upper()))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'A dispute has been opened and is now under review by our team. '
             f'We will investigate and respond within 2–3 business days.</p>'
             + _details_card(rows, "#e67e22")
@@ -727,7 +789,7 @@ class EmailService:
             rows.append(("Notes", notes))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your dispute has been reviewed and a resolution has been reached.</p>'
             + _details_card(rows, "#27ae60")
             + _info_box("Thank you for your patience during this process.", "#27ae60")
@@ -758,7 +820,7 @@ class EmailService:
             ("Total", total),
         ]
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your order has been dispatched and is on its way to you!</p>'
             + _details_card(rows, "#3498db")
             + _info_box(
@@ -790,7 +852,7 @@ class EmailService:
             ("Total Paid", total),
         ]
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your order has been delivered. We hope you\'re happy with your purchase!</p>'
             + _details_card(rows, "#27ae60")
             + _info_box("Enjoying your purchase? Leave a review for the seller.", "#27ae60")
@@ -812,41 +874,170 @@ class EmailService:
         return html, text
 
     def render_order_confirmed_email(self, user_name: str, order_id: str,
-                                      items_summary: str, total: str,
-                                      delivery_type: str,
-                                      delivery_fee: Optional[str] = None,
-                                      estimated_delivery: Optional[str] = None) -> tuple[str, str]:
-        rows = [
-            ("Order ID", f"#{order_id[:8].upper()}"),
-            ("Items", items_summary),
-            ("Delivery", delivery_type.replace("_", " ").title() if delivery_type else "—"),
-        ]
-        if total:
-            rows.append(("Total", total))
-        if delivery_fee:
-            rows.append(("Delivery Fee", delivery_fee))
-        if estimated_delivery:
-            rows.append(("Estimated Delivery", estimated_delivery))
+                                      items_summary: str, total,
+                                      delivery_type: str = "delivery",
+                                      delivery_fee=None,
+                                      estimated_delivery: Optional[str] = None,
+                                      subtotal=None, discount=None,
+                                      delivery_city: Optional[str] = None,
+                                      order_date: Optional[str] = None,
+                                      order_time: Optional[str] = None,
+                                      items: Optional[list] = None) -> tuple[str, str]:
+        order_ref = f"#{order_id[:8].upper()}" if order_id else "N/A"
+        delivery_label = delivery_type.replace("_", " ").title() if delivery_type else "—"
 
-        body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
-            f'Thank you! Your order has been confirmed. Complete payment to start processing.</p>'
-            + _details_card(rows, "#FFD700")
-            + _info_box("We'll notify you as soon as your order moves to processing.", "#FFD700")
+        # ── Success badge ───────────────────────────────────────────────
+        badge_html = (
+            f'<div style="width:64px;height:64px;border-radius:9999px;background:#dcfce7;'
+            f'border:3px solid {SUCCESS};line-height:58px;text-align:center;'
+            f'font-size:28px;color:{SUCCESS};margin:0 auto">✓</div>'
         )
+
+        # ── Order summary card ──────────────────────────────────────────
+        def _row(label, value, value_color=None, weight="600"):
+            color = value_color or INK
+            return (
+                f'<tr>'
+                f'<td style="padding:7px 0;color:{FAINT};font-size:14px">{escape(label)}</td>'
+                f'<td style="padding:7px 0;color:{color};font-size:14px;font-weight:{weight};'
+                f'text-align:right">{value}</td></tr>'
+            )
+
+        summary_rows = ""
+        if subtotal is not None:
+            summary_rows += _row("Subtotal", _ngn(subtotal))
+        delivery_dest = f" ({delivery_city})" if delivery_city else ""
+        summary_rows += _row(f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—")
+        if discount:
+            summary_rows += _row("Spend & save discount", f"-{_ngn(discount)}", SUCCESS)
+        total_html = (
+            f'<tr><td colspan="2" style="padding:0"><div style="border-top:1px solid {BORDER};'
+            f'margin:8px 0"></div></td></tr>'
+            f'<tr><td style="padding:7px 0;color:{INK};font-size:16px;font-weight:700">Total</td>'
+            f'<td style="padding:7px 0;color:{BRAND};font-size:16px;font-weight:800;'
+            f'text-align:right">{_ngn(total)}</td></tr>'
+        )
+        summary_card = (
+            f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:16px;'
+            f'padding:18px 20px;margin:0 0 16px">'
+            f'<div style="font-size:17px;font-weight:800;color:{INK};margin-bottom:8px">'
+            f'Order summary</div>'
+            f'<table style="width:100%;border-collapse:collapse">{summary_rows}{total_html}</table>'
+            f'</div>'
+        )
+
+        # ── Order details card ──────────────────────────────────────────
+        def _detail(label, value, value_color=None):
+            color = value_color or INK
+            return (
+                f'<tr><td style="padding:6px 0;color:{FAINT};font-size:14px">{escape(label)}</td>'
+                f'<td style="padding:6px 0;color:{color};font-size:14px;font-weight:600;'
+                f'text-align:right">{value}</td></tr>'
+            )
+
+        details_rows = _detail("Order Number", escape(order_ref))
+        if order_date:
+            details_rows += _detail("Order Date", escape(order_date))
+        if order_time:
+            details_rows += _detail("Order Time", escape(order_time), SUCCESS)
+        if estimated_delivery:
+            details_rows += _detail("Estimated Delivery", escape(estimated_delivery))
+        if not (items or []) and items_summary:
+            details_rows += _detail("Items", escape(items_summary))
+        details_card = (
+            f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:16px;'
+            f'padding:18px 20px;margin:0 0 16px">'
+            f'<table style="width:100%;border-collapse:collapse">{details_rows}</table></div>'
+        )
+
+        # ── Items card ──────────────────────────────────────────────────
+        items_card = ""
+        item_list = items or []
+        if item_list:
+            rows_html = ""
+            last = len(item_list) - 1
+            for idx, item in enumerate(item_list):
+                name = escape(str(item.get("name") or "Item"))
+                variant = item.get("variant")
+                price = item.get("price")
+                image = item.get("image")
+                border = "" if idx == last else f"border-bottom:1px solid {BORDER};"
+                if image and str(image).startswith("http"):
+                    thumb = (f'<img src="{escape(str(image))}" width="56" height="56" '
+                             f'style="border-radius:12px;object-fit:cover;background:{SURFACE}" alt="">')
+                else:
+                    thumb = (f'<div style="width:56px;height:56px;border-radius:12px;'
+                             f'background:{SURFACE};border:1px solid {BORDER}"></div>')
+                variant_html = (
+                    f'<div style="color:{FAINT};font-size:13px;margin:3px 0">{escape(str(variant))}</div>'
+                    if variant else ""
+                )
+                price_html = (
+                    f'<div style="color:{BRAND};font-size:14px;font-weight:700">{_ngn(price)}</div>'
+                    if price is not None else ""
+                )
+                rows_html += (
+                    f'<tr>'
+                    f'<td style="width:56px;padding:14px 0;{border}vertical-align:top">{thumb}</td>'
+                    f'<td style="padding:14px 0 14px 12px;{border}vertical-align:top">'
+                    f'<div style="color:{INK};font-size:14px;font-weight:600;line-height:1.4">{name}</div>'
+                    f'{variant_html}{price_html}</td></tr>'
+                )
+            items_card = (
+                f'<div style="background:{CARD_BG};border:1px solid {BORDER};border-radius:16px;'
+                f'padding:4px 20px;margin:0 0 16px">'
+                f'<table style="width:100%;border-collapse:collapse">{rows_html}</table></div>'
+            )
+
+        intro = (
+            f'<p style="color:{MUTED};font-size:15px;line-height:1.6;margin:0 0 4px">'
+            f'Thank you for shopping with {escape(self.from_name)}.</p>'
+            f'<p style="color:{MUTED};font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'Your order has been received and it\'s being prepared.</p>'
+        )
+
+        body = intro + summary_card + details_card + items_card
+
+        cta_html = (
+            f'<tr><td style="padding:8px 32px 28px">'
+            f'<a href="#" style="display:block;background:{BRAND};color:#ffffff;text-decoration:none;'
+            f'text-align:center;font-size:16px;font-weight:700;padding:15px 0;border-radius:9999px">'
+            f'View Order</a></td></tr>'
+        )
+
         html = _base_html(
-            from_name=self.from_name, icon="📋",
-            header_bg="linear-gradient(135deg,#7d6a00,#FFD700)",
-            header_fg="#000",
-            header_title="Order Confirmed",
-            header_subtitle="Your order is ready for payment",
-            greeting=f"Hello {escape(user_name)},",
+            from_name=self.from_name, icon="✓",
+            header_bg=f"linear-gradient(135deg,{BRAND},{BRAND_DARK})",
+            header_title="Your Order is on the Way",
+            header_subtitle="",
+            greeting=f"Hi {user_name},",
             body_html=body,
+            badge_html=badge_html,
+            cta_html=cta_html,
         )
+
+        summary_text_rows = []
+        if subtotal is not None:
+            summary_text_rows.append(("Subtotal", _ngn(subtotal)))
+        summary_text_rows.append((f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—"))
+        if discount:
+            summary_text_rows.append(("Discount", f"-{_ngn(discount)}"))
+        summary_text_rows.append(("Total", _ngn(total)))
+        summary_text_rows.append(("Order Number", order_ref))
+        if order_date:
+            summary_text_rows.append(("Order Date", order_date))
+        if order_time:
+            summary_text_rows.append(("Order Time", order_time))
+        for item in item_list:
+            summary_text_rows.append((str(item.get("name") or "Item"),
+                                      _ngn(item.get("price")) if item.get("price") is not None else ""))
+        text_body = "\n".join(f"{k}: {v}" for k, v in summary_text_rows)
+        if not summary_text_rows:
+            text_body = items_summary
         text = _base_text(
-            from_name=self.from_name, title="Order Confirmed",
-            greeting=f"Hello {user_name},",
-            body="\n".join(f"{k}: {v}" for k, v in rows),
+            from_name=self.from_name, title="Your Order is on the Way",
+            greeting=f"Hi {user_name},",
+            body=text_body,
         )
         return html, text
 
@@ -867,7 +1058,7 @@ class EmailService:
             rows.append(("Next Payment Due", next_due))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'{escape(note) if note else "Your payment has been confirmed. Thank you!"}</p>'
             + _details_card(rows, "#27ae60")
             + _info_box("Your payment was received successfully.", "#27ae60")
@@ -895,7 +1086,7 @@ class EmailService:
             rows.append(("Reference", reference))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your payment has been refunded. Depending on your bank, it may take a few '
             f'business days to reflect.</p>'
             + _details_card(rows, "#3498db")
@@ -930,7 +1121,7 @@ class EmailService:
             rows.append(("Next Attempt", next_attempt))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'{escape(note) if note else "We could not process your recurring payment. Please ensure your account is funded."}</p>'
             + _details_card(rows, "#e74c3c")
             + _alert_box("Missing payments may result in your agreement defaulting.", "#e74c3c")
@@ -964,7 +1155,7 @@ class EmailService:
             rows.append(("Reference", reference))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your agreement has been defaulted because the payment above was not received '
             f'within the grace period.</p>'
             + _details_card(rows, "#e74c3c")
@@ -999,7 +1190,7 @@ class EmailService:
             rows.append(("Completed On", completed_date))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Congratulations! Your agreement has been fully paid and you are now the full '
             f'owner of this {escape(asset_noun.lower())}.</p>'
             + _details_card(rows, "#27ae60")
@@ -1033,7 +1224,7 @@ class EmailService:
             rows.append(("Reason", reason))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'Your inspection request could not proceed. Schedule a new inspection to continue.</p>'
             + _details_card(rows, "#e74c3c")
             + _alert_box(note or "You can schedule another inspection from the asset page.", "#e74c3c")
@@ -1067,7 +1258,7 @@ class EmailService:
             rows.append(("Reason", reason))
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'{escape(note) if note else f"Your order status is now {escape(status_label)}."}</p>'
             + _details_card(rows, "#f39c12")
         )
@@ -1248,10 +1439,16 @@ class EmailService:
                 user_name=user_name,
                 order_id=d.get("order_id") or "N/A",
                 items_summary=d.get("items_summary") or "Your items",
-                total=_ngn(d.get("total_amount") if d.get("total_amount") is not None else d.get("amount")),
+                total=d.get("total_amount") if d.get("total_amount") is not None else d.get("amount"),
                 delivery_type=d.get("delivery_type") or "delivery",
-                delivery_fee=_ngn(d.get("delivery_fee")) if d.get("delivery_fee") is not None else None,
+                delivery_fee=d.get("delivery_fee"),
                 estimated_delivery=d.get("estimated_delivery"),
+                subtotal=d.get("subtotal"),
+                discount=d.get("discount"),
+                delivery_city=d.get("delivery_city"),
+                order_date=d.get("order_date"),
+                order_time=d.get("order_time"),
+                items=d.get("items"),
             )
 
         if notification_type == "order_processing":
@@ -1345,7 +1542,7 @@ class EmailService:
         details_html = _details_card(detail_rows, accent) if detail_rows else ""
 
         body = (
-            f'<p style="color:#e0e0e0;font-size:15px;line-height:1.6;margin:0 0 20px">'
+            f'<p style="color:#374151;font-size:15px;line-height:1.6;margin:0 0 20px">'
             f'{escape(message)}</p>'
             + details_html
         )

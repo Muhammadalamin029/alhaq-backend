@@ -6,13 +6,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # CORS
-    ALLOWED_ORIGINS: list[str] = [
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://alhaq-frontend.vercel.app",
-    ]
+    ALLOWED_ORIGINS: list[str]
 
     # Database
     DATABASE_URL: str

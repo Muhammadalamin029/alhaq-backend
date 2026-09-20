@@ -165,10 +165,35 @@ async def process_checkout(
     
     # Create order confirmation notification (non-blocking)
     try:
+        email_items = []
+        for item in (pending_order.order_items or []):
+            name = item.product.name if item.product else "Item"
+            image = None
+            try:
+                images = getattr(item.product, "images", None) or []
+                if images and images[0].image_url:
+                    image = images[0].image_url
+            except Exception:
+                pass  # image is optional
+            email_items.append({
+                "name": name,
+                "price": float(item.price or 0),
+                "image": image,
+            })
+
         items_summary = ", ".join(
             f"{item.quantity}× {item.product.name}" if item.product else f"{item.quantity}× item"
             for item in (pending_order.order_items or [])
         ) or "Your items"
+
+        delivery_city = None
+        if checkout_data.delivery_type == "delivery":
+            try:
+                delivery_city = pending_order.delivery_addr.city if pending_order.delivery_addr else None
+            except Exception:
+                delivery_city = None
+
+        placed_at = getattr(pending_order, "created_at", None) or datetime.now()
 
         create_notification(db, {
             "user_id": str(pending_order.buyer_id),
@@ -180,9 +205,14 @@ async def process_checkout(
             "data": {
                 "order_id": str(pending_order.id),
                 "items_summary": items_summary,
+                "items": email_items,
+                "subtotal": float(items_subtotal),
                 "total_amount": float(pending_order.total_amount),
                 "delivery_type": pending_order.delivery_type,
                 "delivery_fee": float(pending_order.delivery_fee or 0),
+                "delivery_city": delivery_city,
+                "order_date": placed_at.strftime("%d/%m/%Y"),
+                "order_time": placed_at.strftime("%I:%M%p"),
                 "estimated_delivery": estimated_delivery,
                 "tracking_number": tracking_number,
             }
