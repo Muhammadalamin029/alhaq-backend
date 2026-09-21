@@ -58,7 +58,7 @@ class Settings(BaseSettings):
 
     # Frontend URL — used for deep links in emails (e.g. "View Order" CTA)
     # and as the base for the email logo image.
-    FRONTEND_URL: str = "https://alhaq-frontend.vercel.app"
+    FRONTEND_URL: str = "https://lelstore.com"
 
     # Security email — set to False to stop sending a "New Sign-In" email on
     # every login (useful when users authenticate frequently from mobile).
