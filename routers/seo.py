@@ -7,10 +7,10 @@ from sqlalchemy.orm import Session
 
 from core.model import Car, Category, Product, Property
 from db.session import get_db
+from core.config import settings
 
 router = APIRouter()
 
-FRONTEND_URL = "https://lelstore.com"
 
 
 def _url(loc: str, lastmod: datetime | None, changefreq: str, priority: str) -> str:
@@ -31,7 +31,7 @@ def _url(loc: str, lastmod: datetime | None, changefreq: str, priority: str) -> 
 @router.get("/sitemap.xml", include_in_schema=False)
 def sitemap(db: Session = Depends(get_db)):
     urls = [
-        _url(f"{FRONTEND_URL}/", None, "daily", "1.0"),
+        _url(f"{settings.FRONTEND_URL}/", None, "daily", "1.0"),
         _url(f"{FRONTEND_URL}/products", None, "daily", "0.9"),
         _url(f"{FRONTEND_URL}/automotive", None, "daily", "0.9"),
         _url(f"{FRONTEND_URL}/properties", None, "daily", "0.9"),
