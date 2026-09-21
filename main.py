@@ -28,6 +28,7 @@ from core.model import Base
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import Match
 from core.handlers import (
     http_exception_handler,
     validation_exception_handler,
@@ -48,7 +49,11 @@ logger = get_logger("lel_store_backend")
 # ------------------------------------------------------
 # FastAPI app
 # ------------------------------------------------------
-app = FastAPI(title=settings.PROJECT_NAME)
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    # Resolve trailing-slash variants centrally without issuing 307 redirects.
+    redirect_slashes=False,
+)
 
 # Middlewares
 app.add_middleware(UserContextMiddleware)
@@ -135,6 +140,40 @@ app.include_router(
     financing_router.admin_router, prefix="/admin/financing", tags=["Admin"]
 )
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
+
+# ------------------------------------------------------
+# Trailing-slash compatibility
+# ------------------------------------------------------
+@app.middleware("http")
+async def trailing_slash_compatibility_middleware(request, call_next):
+    """Resolve /route and /route/ to the same registered route without redirects."""
+    path = request.scope.get("path", "")
+
+    if path not in ("", "/"):
+
+        def route_matches(candidate_path: str) -> bool:
+            scope = dict(request.scope)
+            scope["path"] = candidate_path
+            scope["raw_path"] = candidate_path.encode("utf-8")
+
+            for registered_route in app.router.routes:
+                match, _ = registered_route.matches(scope)
+                if match is Match.FULL:
+                    return True
+
+            return False
+
+        if not route_matches(path):
+            alternate_path = (
+                path.rstrip("/") if path.endswith("/") else f"{path}/"
+            )
+
+            if route_matches(alternate_path):
+                request.scope["path"] = alternate_path
+                request.scope["raw_path"] = alternate_path.encode("utf-8")
+
+    return await call_next(request)
+
 
 # ------------------------------------------------------
 # Global exception handlers
