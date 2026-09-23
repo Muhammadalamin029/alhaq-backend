@@ -636,15 +636,19 @@ class AssetService:
     def list_seller_payments(self, db: Session, seller_id: UUID) -> List[Payment]:
         return (
             db.query(Payment)
-            .filter(Payment.seller_id == seller_id, Payment.agreement_id != None)
+            .filter(Payment.seller_id == seller_id)
             .order_by(Payment.created_at.desc())
             .all()
         )
 
     def list_user_payments(self, db: Session, user_id: UUID) -> List[Payment]:
+        # Every payment the buyer made, regardless of whether it was an order
+        # payment, an asset deposit/installment or a full payment. Filtering on
+        # agreement_id here previously hid all order payments (which have
+        # agreement_id = NULL) from the customer's payments page.
         return (
             db.query(Payment)
-            .filter(Payment.buyer_id == user_id, Payment.agreement_id != None)
+            .filter(Payment.buyer_id == user_id)
             .order_by(Payment.created_at.desc())
             .all()
         )
