@@ -11,6 +11,7 @@ from core.model import (
     GeneralInspection, Property, PropertyUnit, PaymentMandate, User
 )
 from core.paystack_service import paystack_service
+from core.receipt_service import derive_receipt_number
 from core.notifications_service import create_notification
 from core.email_service import _ref
 from core.redis_client import redis_client
@@ -161,6 +162,8 @@ class PaymentService:
                 payment_method=payment_method
             )
             db.add(payment)
+            db.flush()
+            payment.receipt_number = derive_receipt_number(payment)
         
         # 7. Specific link logic — update order and all its items to "processing"
         if category == "order":
@@ -342,6 +345,8 @@ class PaymentService:
                 payment_method="paystack",
             )
             db.add(payment)
+            db.flush()
+            payment.receipt_number = derive_receipt_number(payment)
 
         # 8. Order-specific side effects — mirror initialize_payment, minus payment_url
         if category == "order":
@@ -791,6 +796,8 @@ class PaymentService:
             payment_method="paystack",
         )
         db.add(payment)
+        db.flush()
+        payment.receipt_number = derive_receipt_number(payment)
         db.commit()
 
         try:

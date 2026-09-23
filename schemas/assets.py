@@ -107,6 +107,7 @@ class AssetPaymentResponse(BaseModel):
     seller_id: Optional[UUID] = None
     amount: Decimal
     reference: str
+    receipt_number: Optional[str] = None
     payment_category: str
     payment_type: Optional[str] = None
     status: str

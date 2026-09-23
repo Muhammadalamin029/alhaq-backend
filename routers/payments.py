@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import HTMLResponse
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import json
@@ -10,7 +11,7 @@ from db.session import get_db
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
 from core import receipt_service
-from core.model import Payment, Order, StoreProfile
+from core.model import Payment, Order, StoreProfile, Profile, User
 from schemas.payment import (
     PaymentInitializeRequest,
     PaymentInitializeResponse,
@@ -238,9 +239,16 @@ async def list_payments(
     user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db),
     page: int = 1,
-    limit: int = 20
+    limit: int = 20,
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    category: Optional[str] = None
 ):
-    """List payments for the current user"""
+    """List payments for the current user.
+
+    Admins see every payment; customers only their own. All filters are applied
+    server-side so they stay accurate beyond the first page of results.
+    """
     try:
         query = db.query(Payment)
 
@@ -248,18 +256,67 @@ async def list_payments(
             query = query.filter(Payment.buyer_id == user["id"])
         # Admin can see all payments
 
+        if status and status != "all":
+            query = query.filter(Payment.status == status)
+        if category and category != "all":
+            query = query.filter(Payment.payment_category == category)
+
+        if search:
+            like = f"%{search.strip()}%"
+            # Profile.id is both the buyer_id and the users.id (shared PK), so a
+            # single round-trip through Profile gives us the buyer's email too.
+            query = query.outerjoin(Profile, Payment.buyer_id == Profile.id)
+            query = query.outerjoin(User, Profile.id == User.id)
+            query = query.filter(
+                or_(
+                    Payment.receipt_number.ilike(like),
+                    Payment.reference.ilike(like),
+                    Payment.transaction_id.ilike(like),
+                    cast(Payment.order_id, String).ilike(like),
+                    cast(Payment.agreement_id, String).ilike(like),
+                    User.email.ilike(like),
+                    Profile.name.ilike(like),
+                )
+            )
+
         total = query.count()
         payments = query.order_by(Payment.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
 
-        # Populate the store name manually (Payment model has seller_id, which
-        # now points at the single store_profiles row).
+        # Batch-load the buyer profile/user and seller for this page's rows so the
+        # response can expose buyer_name/buyer_email/seller_name without an N+1
+        # query per payment.
+        buyer_ids = {p.buyer_id for p in payments if p.buyer_id}
+        profiles = {}
+        buyers = {}
+        if buyer_ids:
+            profiles = {
+                profile.id: profile
+                for profile in db.query(Profile).filter(Profile.id.in_(buyer_ids)).all()
+            }
+            buyers = {
+                buyer.id: buyer
+                for buyer in db.query(User).filter(User.id.in_(buyer_ids)).all()
+            }
+
+        seller_ids = {p.seller_id for p in payments if p.seller_id}
+        sellers = {}
+        if seller_ids:
+            sellers = {
+                seller.id: seller
+                for seller in db.query(StoreProfile).filter(StoreProfile.id.in_(seller_ids)).all()
+            }
+
         data = []
         for p in payments:
             res = PaymentResponse.model_validate(p)
-            if p.seller_id:
-                seller = db.query(StoreProfile).filter(StoreProfile.id == p.seller_id).first()
-                if seller:
-                    res.seller_name = seller.business_name
+            profile = profiles.get(p.buyer_id)
+            if profile:
+                res.buyer_name = profile.name
+            buyer = buyers.get(p.buyer_id)
+            if buyer:
+                res.buyer_email = buyer.email
+            if p.seller_id and p.seller_id in sellers:
+                res.seller_name = sellers[p.seller_id].business_name
             data.append(res)
 
         return PaymentListResponse(
@@ -306,6 +363,43 @@ async def get_payment_receipt_html(
     if not receipt:
         raise HTTPException(status_code=404, detail="Receipt not found or unauthorized")
     return HTMLResponse(content=receipt_service.render_receipt_html(receipt))
+
+
+@router.get("/{id}", response_model=PaymentResponse)
+async def get_payment(
+    id: UUID,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get a single payment. Admins may see any payment; customers only their own."""
+    try:
+        payment = db.query(Payment).filter(Payment.id == id).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+
+        if user["role"] != "admin" and str(payment.buyer_id) != str(user["id"]):
+            raise HTTPException(status_code=404, detail="Payment not found")
+
+        res = PaymentResponse.model_validate(payment)
+        profile = db.query(Profile).filter(Profile.id == payment.buyer_id).first()
+        if profile:
+            res.buyer_name = profile.name
+        buyer = db.query(User).filter(User.id == payment.buyer_id).first()
+        if buyer:
+            res.buyer_email = buyer.email
+        if payment.seller_id:
+            seller = db.query(StoreProfile).filter(StoreProfile.id == payment.seller_id).first()
+            if seller:
+                res.seller_name = seller.business_name
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(payment_logger, f"Failed to get payment {id}", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve payment"
+        )
 
 
 @router.post("/refund/{id}", response_model=PaymentResponse)

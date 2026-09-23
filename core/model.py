@@ -325,6 +325,10 @@ class Payment(Base):
                                name="asset_payment_type"), nullable=True)
     payment_method = Column(String(50), nullable=True, default="paystack")
     transaction_id = Column(String(100), unique=True, nullable=False)
+    # Human-readable receipt identifier (RCPT-YYYYMMDD-XXXXXXXX). Nullable so a
+    # missed creation path degrades to a derived value instead of failing the
+    # insert; tighten to NOT NULL once every creation path is verified.
+    receipt_number = Column(String(50), unique=True, index=True, nullable=True)
     
     # Payment URL fields
     authorization_url = Column(Text, nullable=True)  # Paystack authorization URL

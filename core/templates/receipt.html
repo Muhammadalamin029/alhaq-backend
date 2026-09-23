@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Receipt {{ receipt['receipt_number'] }}</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --ink-soft: #6b7280;
+    --line: #e6e8eb;
+    --orange: #f5760a;
+    --orange-deep: #e2620a;
+    --green: #1a9c53;
+    --amber: #b8790a;
+    --red: #d1342f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 48px 20px;
+    color: var(--ink);
+    background: #f6f7f8;
+  }
+
+  {% set status_l = (receipt['status'] or '')|lower %}
+  {% set is_paid = status_l in ['paid', 'success', 'successful', 'completed'] %}
+  {% set is_pending = status_l in ['pending', 'processing', 'awaiting payment'] %}
+  {% set accent = '#1a9c53' if is_paid else ('#b8790a' if is_pending else '#d1342f') %}
+
+  .panel {
+    max-width: 680px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-top: 4px solid {{ accent }};
+    border-radius: 10px;
+  }
+  .pad { padding: 32px 40px; }
+
+  /* header */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px;
+             padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+  .brand-row { display: flex; align-items: center; gap: 10px; }
+  .brand-logo {
+    width: 36px; height: 36px; flex: none; border-radius: 9px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .brand-logo svg { width: 100%; height: 100%; display: block; }
+  .brand-name { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  .brand-tag { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  .header-meta { text-align: right; font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
+  .header-meta strong { display: block; font-size: 14.5px; color: var(--ink); font-weight: 700; }
+
+  /* status line */
+  .status-line { display: flex; justify-content: space-between; align-items: center; gap: 24px;
+                  padding: 22px 0; border-bottom: 1px solid var(--line); }
+  .status-left { display: flex; align-items: center; gap: 12px; }
+  .status-icon { width: 30px; height: 30px; border-radius: 50%; flex: none;
+                  display: flex; align-items: center; justify-content: center;
+                  background: {{ accent }}1a; }
+  .status-icon svg { width: 16px; height: 16px; }
+  .status-text h1 { font-size: 16px; margin: 0; font-weight: 700; }
+  .status-text p { font-size: 13px; color: var(--ink-soft); margin: 3px 0 0; }
+  .status-text p .who { color: var(--orange-deep); font-weight: 600; }
+  .status-amount { text-align: right; white-space: nowrap; }
+  .status-amount span { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 2px; }
+  .status-amount strong { font-size: 21px; font-weight: 800; color: {{ accent }}; }
+
+  /* items table */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .items { margin: 24px 0 4px; }
+  .items th, .items td { padding: 9px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+  .items th { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); }
+  .items td.name { font-weight: 600; }
+  .items .num { text-align: right; white-space: nowrap; }
+
+  /* totals */
+  .totals-wrap { display: flex; justify-content: flex-end; padding: 4px 0 22px; }
+  .totals { width: 280px; }
+  .totals td { padding: 6px 4px; }
+  .totals td.label { color: var(--ink-soft); }
+  .totals td.value { text-align: right; }
+  .totals tr.discount td.value { color: var(--green); }
+  .totals tr.total td { border-top: 1px solid var(--line); padding-top: 12px; font-weight: 700; }
+  .totals tr.total td.value { color: {{ accent }}; font-size: 16px; }
+
+  /* agreement summary (no items table) */
+  .kv-block { margin: 6px 0 22px; }
+
+  /* details */
+  .details { padding-top: 22px; }
+  .details h2 { font-size: 12.5px; font-weight: 700; margin: 0 0 10px; color: var(--ink-soft); }
+  .kv div { display: flex; justify-content: space-between; padding: 7px 0; font-size: 13.5px;
+             border-bottom: 1px solid var(--line); }
+  .kv div:last-child { border-bottom: 0; }
+  .kv span:first-child { color: var(--ink-soft); }
+  .kv span:last-child { font-weight: 600; text-align: right; }
+
+  .foot { padding: 22px 40px 26px; border-top: 1px solid var(--line);
+           font-size: 11.5px; color: var(--ink-soft); text-align: center; line-height: 1.6; }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .panel { box-shadow: none; border-radius: 0; max-width: none; }
+  }
+
+  @media (max-width: 520px) {
+    .pad, .foot { padding-left: 22px; padding-right: 22px; }
+    .header { flex-direction: column; gap: 12px; }
+    .header-meta { text-align: left; }
+    .status-amount { text-align: left; }
+    .status-line { flex-direction: column; align-items: flex-start; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+  <div class="panel">
+    <div class="pad">
+
+      <div class="header">
+        <div class="brand-row">
+          <div class="brand-logo">{% include "logo-trans.svg" %}</div>
+          <div>
+            <div class="brand-name">{{ payee['name'] }}</div>
+            <div class="brand-tag">Payment receipt</div>
+          </div>
+        </div>
+        <div class="header-meta">
+          <strong>{{ receipt['receipt_number'] }}</strong>
+          Issued {{ receipt['issued_at'].strftime("%d %b %Y, %H:%M") }}
+        </div>
+      </div>
+
+      <div class="status-line">
+        <div class="status-left">
+          <div class="status-icon">
+            {% if is_paid %}
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M5 13 L10 18 L19 7" stroke="{{ accent }}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            {% elif is_pending %}
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="8" stroke="{{ accent }}" stroke-width="2.2"/>
+              <path d="M12 8 V12 L15 14" stroke="{{ accent }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            {% else %}
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M7 7 L17 17 M17 7 L7 17" stroke="{{ accent }}" stroke-width="2.6" stroke-linecap="round"/>
+            </svg>
+            {% endif %}
+          </div>
+          <div class="status-text">
+            <h1>
+              {% if is_paid %}Payment received
+              {% elif is_pending %}Payment pending
+              {% else %}Payment {{ receipt['status'] }}
+              {% endif %}
+            </h1>
+            <p>
+              Hi {% if payer['name'] %}<span class="who">{{ payer['name'] }}</span>{% else %}there{% endif %} &middot; paid to {{ payee['name'] }}
+            </p>
+          </div>
+        </div>
+        <div class="status-amount">
+          <span>Amount</span>
+          <strong>{{ receipt['amount_display'] }}</strong>
+        </div>
+      </div>
+
+      {% if order %}
+      <table class="items">
+        <thead>
+          <tr><th>Item</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr>
+        </thead>
+        <tbody>
+          {% for line in order['items'] %}
+          <tr>
+            <td class="name">{{ line['name'] }}</td>
+            <td class="num">{{ line['quantity'] }}</td>
+            <td class="num">{{ money(line['unit_price']) }}</td>
+            <td class="num">{{ money(line['line_total']) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="totals-wrap">
+        <table class="totals">
+          <tr><td class="label">Subtotal</td><td class="value">{{ money(order['subtotal']) }}</td></tr>
+          <tr><td class="label">Delivery fee</td><td class="value">{{ money(order['delivery_fee']) }}</td></tr>
+          {% if order.get('discount') %}
+          <tr class="discount"><td class="label">Discount</td><td class="value">-{{ money(order['discount']) }}</td></tr>
+          {% endif %}
+          <tr class="total"><td>Total</td><td class="value">{{ receipt['amount_display'] }}</td></tr>
+        </table>
+      </div>
+      {% elif agreement %}
+      <div class="kv-block">
+        <div class="kv">
+          <div><span>Asset</span><span>{{ agreement['asset_name'] or agreement['asset_type'] }}</span></div>
+          <div><span>Payment plan</span><span>{{ agreement['payment_plan']|replace('_', ' ')|capitalize }}</span></div>
+          <div><span>Agreement total</span><span>{{ money(agreement['total_price']) }}</span></div>
+          <div><span>Remaining balance</span><span>{{ money(agreement['remaining_balance']) }}</span></div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="details">
+        <h2>Payment details</h2>
+        <div class="kv">
+          <div><span>Purpose</span><span>{{ receipt['purpose'] }}</span></div>
+          {% if related %}<div><span>Related</span><span>{{ related }}</span></div>{% endif %}
+          {% if receipt['reference'] %}<div><span>Reference</span><span>{{ receipt['reference'] }}</span></div>{% endif %}
+          {% if receipt['transaction_id'] %}<div><span>Transaction ID</span><span>{{ receipt['transaction_id'] }}</span></div>{% endif %}
+          {% if receipt['payment_method'] %}<div><span>Payment method</span><span>{{ receipt['payment_method'] }}</span></div>{% endif %}
+          <div><span>Date paid</span><span>{{ receipt['paid_at'].strftime("%d %b %Y, %H:%M") if receipt['paid_at'] else '-' }}</span></div>
+          <div><span>Paid by</span><span>{{ payer['name'] or '-' }} {% if payer['email'] %}({{ payer['email'] }}){% endif %}</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <p class="foot">
+      This receipt is an acknowledgement of payment received. It is generated
+      electronically and is valid without a signature.
+    </p>
+  </div>
+</body>
+</html>

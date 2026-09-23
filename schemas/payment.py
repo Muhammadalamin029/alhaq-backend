@@ -65,6 +65,9 @@ class PaymentResponse(BaseModel):
     buyer_id: UUID
     seller_id: Optional[UUID] = None
     seller_name: Optional[str] = None
+    buyer_name: Optional[str] = None
+    buyer_email: Optional[str] = None
+    receipt_number: Optional[str] = None
     amount: Decimal
     status: str
     payment_category: str
