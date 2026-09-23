@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import json
@@ -8,6 +9,7 @@ from core.auth import role_required, get_current_user
 from db.session import get_db
 from core.paystack_service import paystack_service
 from core.payment_service import payment_service
+from core import receipt_service
 from core.model import Payment, Order, StoreProfile
 from schemas.payment import (
     PaymentInitializeRequest,
@@ -19,6 +21,7 @@ from schemas.payment import (
     PaymentListResponse,
     BankTransferInitializeRequest,
     BankTransferInitializeResponse,
+    ReceiptResponse,
 )
 from core.logging_config import get_logger, log_error
 from core.notifications_service import create_notification
@@ -277,6 +280,32 @@ async def list_payments(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve payments"
         )
+
+
+@router.get("/{id}/receipt", response_model=ReceiptResponse)
+async def get_payment_receipt(
+    id: UUID,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Get a structured receipt for a single payment."""
+    receipt = receipt_service.get_receipt(db, user, id)
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found or unauthorized")
+    return receipt
+
+
+@router.get("/{id}/receipt/html", response_class=HTMLResponse)
+async def get_payment_receipt_html(
+    id: UUID,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Render a payment receipt as printable HTML (browser print-to-PDF)."""
+    receipt = receipt_service.get_receipt(db, user, id)
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found or unauthorized")
+    return HTMLResponse(content=receipt_service.render_receipt_html(receipt))
 
 
 @router.post("/refund/{id}", response_model=PaymentResponse)

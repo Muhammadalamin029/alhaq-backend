@@ -82,3 +82,27 @@ class PaymentListResponse(BaseModel):
     message: str
     data: list[PaymentResponse]
     pagination: Dict[str, Any]
+
+class ReceiptParty(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+class ReceiptResponse(BaseModel):
+    receipt_number: str
+    issued_at: datetime
+    currency: str
+    amount: Decimal
+    amount_display: str
+    status: str
+    reference: Optional[str] = None
+    transaction_id: Optional[str] = None
+    payment_method: Optional[str] = None
+    payment_category: str
+    payment_type: Optional[str] = None
+    purpose: str
+    paid_at: Optional[datetime] = None
+    payer: ReceiptParty
+    payee: ReceiptParty
+    order: Optional[Dict[str, Any]] = None
+    agreement: Optional[Dict[str, Any]] = None
