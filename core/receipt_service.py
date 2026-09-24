@@ -13,6 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import UUID
+import base64
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
@@ -30,6 +31,17 @@ _receipt_env = Environment(
     autoescape=select_autoescape(["html", "xml"]),
     trim_blocks=True,
     lstrip_blocks=True,
+)
+
+# The brand logo is embedded as a data URI so the receipt is a single,
+# self-contained document. It is an <img> (not inline SVG) on purpose: the
+# frontend rasterises this markup with html2canvas to build the PDF, and
+# html2canvas handles <img> reliably while inline SVG support is patchy.
+_LOGO_PATH = _TEMPLATE_DIR / "logo-trans.svg"
+_LOGO_DATA_URI = (
+    "data:image/svg+xml;base64," + base64.b64encode(_LOGO_PATH.read_bytes()).decode("ascii")
+    if _LOGO_PATH.exists()
+    else ""
 )
 
 PURPOSE_LABELS = {
@@ -214,4 +226,5 @@ def render_receipt_html(receipt: Dict[str, Any]) -> str:
         agreement=agreement,
         related=_related_label(order, agreement),
         money=_money,
+        logo_uri=_LOGO_DATA_URI,
     )

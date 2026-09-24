@@ -28,9 +28,11 @@
   {% set is_paid = status_l in ['paid', 'success', 'successful', 'completed'] %}
   {% set is_pending = status_l in ['pending', 'processing', 'awaiting payment'] %}
   {% set accent = '#1a9c53' if is_paid else ('#b8790a' if is_pending else '#d1342f') %}
+  {% set accent_soft = 'rgba(26,156,83,0.12)' if is_paid else ('rgba(184,121,10,0.12)' if is_pending else 'rgba(209,52,47,0.12)') %}
 
   .panel {
-    max-width: 680px;
+    width: 680px;
+    max-width: 100%;
     margin: 0 auto;
     background: #fff;
     border: 1px solid var(--line);
@@ -39,32 +41,34 @@
   }
   .pad { padding: 32px 40px; }
 
-  /* header */
-  .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px;
+  /* header — table layout (rasteriser-safe; no flexbox/gap) */
+  .header { display: table; width: 100%; table-layout: fixed;
              padding-bottom: 24px; border-bottom: 1px solid var(--line); }
-  .brand-row { display: flex; align-items: center; gap: 10px; }
-  .brand-logo {
-    width: 36px; height: 36px; flex: none; border-radius: 9px; overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .brand-logo svg { width: 100%; height: 100%; display: block; }
-  .brand-name { font-size: 16px; font-weight: 700; line-height: 1.2; }
-  .brand-tag { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
-  .header-meta { text-align: right; font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
+  .brand-row { display: table-cell; vertical-align: top; }
+  .header-meta { display: table-cell; vertical-align: top; text-align: right;
+                 width: 46%; font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
   .header-meta strong { display: block; font-size: 14.5px; color: var(--ink); font-weight: 700; }
 
-  /* status line */
-  .status-line { display: flex; justify-content: space-between; align-items: center; gap: 24px;
+  .brand-logo { display: inline-block; width: 36px; height: 36px; vertical-align: middle;
+                border-radius: 9px; overflow: hidden; }
+  .brand-logo img { width: 100%; height: 100%; display: block; }
+  .brand-text { display: inline-block; vertical-align: middle; margin-left: 10px; }
+  .brand-name { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  .brand-tag { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+
+  /* status line — table layout */
+  .status-line { display: table; width: 100%; table-layout: fixed;
                   padding: 22px 0; border-bottom: 1px solid var(--line); }
-  .status-left { display: flex; align-items: center; gap: 12px; }
-  .status-icon { width: 30px; height: 30px; border-radius: 50%; flex: none;
-                  display: flex; align-items: center; justify-content: center;
-                  background: {{ accent }}1a; }
-  .status-icon svg { width: 16px; height: 16px; }
+  .status-left { display: table-cell; vertical-align: middle; }
+  .status-amount { display: table-cell; vertical-align: middle; text-align: right;
+                    width: 40%; white-space: nowrap; }
+  .status-icon { display: inline-block; vertical-align: middle; width: 30px; height: 30px;
+                  border-radius: 50%; background: {{ accent_soft }}; color: {{ accent }};
+                  text-align: center; line-height: 30px; font-size: 15px; font-weight: 700; }
+  .status-text { display: inline-block; vertical-align: middle; margin-left: 12px; max-width: 78%; }
   .status-text h1 { font-size: 16px; margin: 0; font-weight: 700; }
   .status-text p { font-size: 13px; color: var(--ink-soft); margin: 3px 0 0; }
   .status-text p .who { color: var(--orange-deep); font-weight: 600; }
-  .status-amount { text-align: right; white-space: nowrap; }
   .status-amount span { display: block; font-size: 11px; color: var(--ink-soft); margin-bottom: 2px; }
   .status-amount strong { font-size: 21px; font-weight: 800; color: {{ accent }}; }
 
@@ -76,9 +80,9 @@
   .items td.name { font-weight: 600; }
   .items .num { text-align: right; white-space: nowrap; }
 
-  /* totals */
-  .totals-wrap { display: flex; justify-content: flex-end; padding: 4px 0 22px; }
-  .totals { width: 280px; }
+  /* totals — floated right (rasteriser-safe) */
+  .totals-wrap { padding: 4px 0 22px; overflow: hidden; }
+  .totals { width: 280px; float: right; }
   .totals td { padding: 6px 4px; }
   .totals td.label { color: var(--ink-soft); }
   .totals td.value { text-align: right; }
@@ -86,32 +90,24 @@
   .totals tr.total td { border-top: 1px solid var(--line); padding-top: 12px; font-weight: 700; }
   .totals tr.total td.value { color: {{ accent }}; font-size: 16px; }
 
-  /* agreement summary (no items table) */
+  /* agreement summary / details — table rows */
   .kv-block { margin: 6px 0 22px; }
-
-  /* details */
   .details { padding-top: 22px; }
   .details h2 { font-size: 12.5px; font-weight: 700; margin: 0 0 10px; color: var(--ink-soft); }
-  .kv div { display: flex; justify-content: space-between; padding: 7px 0; font-size: 13.5px;
-             border-bottom: 1px solid var(--line); }
+  .kv div { display: table; width: 100%; table-layout: fixed;
+             padding: 7px 0; font-size: 13.5px; border-bottom: 1px solid var(--line); }
   .kv div:last-child { border-bottom: 0; }
-  .kv span:first-child { color: var(--ink-soft); }
-  .kv span:last-child { font-weight: 600; text-align: right; }
+  .kv span { display: table-cell; vertical-align: top; }
+  .kv span:first-child { color: var(--ink-soft); width: 42%; }
+  .kv span:last-child { font-weight: 600; text-align: right; word-break: break-word; }
 
   .foot { padding: 22px 40px 26px; border-top: 1px solid var(--line);
            font-size: 11.5px; color: var(--ink-soft); text-align: center; line-height: 1.6; }
 
   @media print {
+    @page { size: A4; margin: 12mm; }
     body { background: #fff; padding: 0; }
-    .panel { box-shadow: none; border-radius: 0; max-width: none; }
-  }
-
-  @media (max-width: 520px) {
-    .pad, .foot { padding-left: 22px; padding-right: 22px; }
-    .header { flex-direction: column; gap: 12px; }
-    .header-meta { text-align: left; }
-    .status-amount { text-align: left; }
-    .status-line { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .panel { box-shadow: none; max-width: none; width: 100%; }
   }
 </style>
 </head>
@@ -121,11 +117,10 @@
 
       <div class="header">
         <div class="brand-row">
-          <div class="brand-logo">{% include "logo-trans.svg" %}</div>
-          <div>
-            <div class="brand-name">{{ payee['name'] }}</div>
-            <div class="brand-tag">Payment receipt</div>
-          </div>
+          <span class="brand-logo"><img src="{{ logo_uri }}" alt="" /></span><span class="brand-text">
+            <span class="brand-name">{{ payee['name'] }}</span>
+            <span class="brand-tag">Payment receipt</span>
+          </span>
         </div>
         <div class="header-meta">
           <strong>{{ receipt['receipt_number'] }}</strong>
@@ -135,23 +130,7 @@
 
       <div class="status-line">
         <div class="status-left">
-          <div class="status-icon">
-            {% if is_paid %}
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M5 13 L10 18 L19 7" stroke="{{ accent }}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            {% elif is_pending %}
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="8" stroke="{{ accent }}" stroke-width="2.2"/>
-              <path d="M12 8 V12 L15 14" stroke="{{ accent }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            {% else %}
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M7 7 L17 17 M17 7 L7 17" stroke="{{ accent }}" stroke-width="2.6" stroke-linecap="round"/>
-            </svg>
-            {% endif %}
-          </div>
-          <div class="status-text">
+          <span class="status-icon">{% if is_paid %}&#10003;{% elif is_pending %}&#9679;{% else %}&#10005;{% endif %}</span><span class="status-text">
             <h1>
               {% if is_paid %}Payment received
               {% elif is_pending %}Payment pending
@@ -161,7 +140,7 @@
             <p>
               Hi {% if payer['name'] %}<span class="who">{{ payer['name'] }}</span>{% else %}there{% endif %} &middot; paid to {{ payee['name'] }}
             </p>
-          </div>
+          </span>
         </div>
         <div class="status-amount">
           <span>Amount</span>
