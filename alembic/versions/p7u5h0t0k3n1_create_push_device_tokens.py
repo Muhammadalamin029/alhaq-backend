@@ -17,6 +17,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Idempotent: the table may already exist (created at runtime via
+    # checkfirst on dev databases), so only create it when missing.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if inspector.has_table("push_device_tokens"):
+        return
     op.create_table(
         'push_device_tokens',
         sa.Column('id', sa.UUID(), nullable=False),
