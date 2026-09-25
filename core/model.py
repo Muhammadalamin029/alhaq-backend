@@ -903,3 +903,22 @@ class CampaignBanner(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
                         onupdate=func.current_timestamp())
+
+
+# ---------------- PUSH DEVICE TOKENS (Expo push notifications) ----------------
+
+
+class PushDeviceToken(Base):
+    """Expo push tokens registered by customer devices; one row per token."""
+
+    __tablename__ = "push_device_tokens"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+    expo_push_token = Column(String(255), unique=True, nullable=False, index=True)
+    platform = Column(String(16), nullable=True)  # ios | android
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
+                        onupdate=func.current_timestamp())

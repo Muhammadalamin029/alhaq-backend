@@ -88,41 +88,41 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
 
     # Email dispatch logic
     channels = set(_parse_channels(notification.channels))
+    type_to_group = {
+        'order_confirmed': 'order_updates',
+        'order_processing': 'order_updates',
+        'order_shipped': 'order_updates',
+        'order_delivered': 'order_updates',
+        'order_cancelled': 'order_updates',
+        'payment_successful': 'payment_updates',
+        'payment_failed': 'payment_updates',
+        'payment_refunded': 'payment_updates',
+        'account_verified': 'account_updates',
+        'password_changed': 'account_updates',
+        'profile_updated': 'account_updates',
+        'wishlist_item_back_in_stock': 'promotional_offers',
+        'system_announcement': 'system_announcements',
+        'promotional_offer': 'promotional_offers',
+        'inspection_scheduled': 'order_updates',
+        'inspection_confirmed': 'order_updates',
+        'inspection_rejected': 'order_updates',
+        'inspection_complete': 'order_updates',
+        'agreement_update': 'order_updates',
+        'agreement_created': 'order_updates',
+        'agreement_approved': 'order_updates',
+        'agreement_rejected': 'order_updates',
+        'agreement_completed': 'order_updates',
+        'car_approved': 'order_updates',
+        'car_rejected': 'order_updates',
+        'property_acquired': 'order_updates',
+        'installment_paid': 'payment_updates',
+        'payment_reminder': 'payment_updates',
+        'installment_due': 'payment_updates',
+        'installment_defaulted': 'payment_updates',
+    }
+    group = type_to_group.get(notification.type, 'order_updates')
     if 'email' in channels and not skip_email:
         prefs = get_or_create_preferences(db, str(notification.user_id))
-        type_to_group = {
-            'order_confirmed': 'order_updates',
-            'order_processing': 'order_updates',
-            'order_shipped': 'order_updates',
-            'order_delivered': 'order_updates',
-            'order_cancelled': 'order_updates',
-            'payment_successful': 'payment_updates',
-            'payment_failed': 'payment_updates',
-            'payment_refunded': 'payment_updates',
-            'account_verified': 'account_updates',
-            'password_changed': 'account_updates',
-            'profile_updated': 'account_updates',
-            'wishlist_item_back_in_stock': 'promotional_offers',
-            'system_announcement': 'system_announcements',
-            'promotional_offer': 'promotional_offers',
-            'inspection_scheduled': 'order_updates',
-            'inspection_confirmed': 'order_updates',
-            'inspection_rejected': 'order_updates',
-            'inspection_complete': 'order_updates',
-            'agreement_update': 'order_updates',
-            'agreement_created': 'order_updates',
-            'agreement_approved': 'order_updates',
-            'agreement_rejected': 'order_updates',
-            'agreement_completed': 'order_updates',
-            'car_approved': 'order_updates',
-            'car_rejected': 'order_updates',
-            'property_acquired': 'order_updates',
-            'installment_paid': 'payment_updates',
-            'payment_reminder': 'payment_updates',
-            'installment_due': 'payment_updates',
-            'installment_defaulted': 'payment_updates',
-        }
-        group = type_to_group.get(notification.type, 'order_updates')
         allowed = bool(getattr(prefs, f"email_{group}", True)) # Default to True
 
         if allowed:
@@ -154,6 +154,27 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
                     logger.info(f"Notification email queued for {to_email} via Celery")
                 except Exception as e:
                     logger.error(f"Error queuing email for {to_email}: {e}")
+
+    # Push dispatch: Expo push to the user's devices, respecting push_*
+    # preferences. Fire-and-forget via Celery; never breaks notification save.
+    try:
+        push_prefs = get_or_create_preferences(db, str(notification.user_id))
+        push_allowed = bool(getattr(push_prefs, f"push_{group}", True))
+        if push_allowed:
+            from core.tasks import send_push_notification
+            send_push_notification.delay(
+                user_id=str(notification.user_id),
+                title=notification.title,
+                message=notification.message,
+                data={
+                    "notification_id": str(notification.id),
+                    "type": notification.type,
+                    **(_parse_data(notification.data) or {}),
+                },
+            )
+    except Exception as e:
+        logger.error(f"Error queuing push for user {notification.user_id}: {e}")
+
     return notification
 
 
@@ -352,3 +373,32 @@ def compute_stats(db: Session, user_id: str) -> Dict[str, Any]:
     }
 
 
+
+
+def register_push_token(db: Session, user_id: str, expo_push_token: str, platform: Optional[str] = None) -> None:
+    """Upsert a device's Expo push token; re-activate if seen before."""
+    from core.model import PushDeviceToken
+
+    token = (expo_push_token or "").strip()
+    if not token.startswith("ExponentPushToken["):
+        raise ValueError("Invalid Expo push token")
+    row = db.query(PushDeviceToken).filter(PushDeviceToken.expo_push_token == token).first()
+    if row:
+        row.user_id = user_id
+        row.platform = platform or row.platform
+        row.is_active = True
+    else:
+        row = PushDeviceToken(user_id=user_id, expo_push_token=token, platform=platform, is_active=True)
+        db.add(row)
+    db.commit()
+
+
+def remove_push_token(db: Session, user_id: str, expo_push_token: str) -> None:
+    """Deactivate a token on logout (keeps the row for diagnostics)."""
+    from core.model import PushDeviceToken
+
+    db.query(PushDeviceToken).filter(
+        PushDeviceToken.user_id == user_id,
+        PushDeviceToken.expo_push_token == (expo_push_token or "").strip(),
+    ).update({"is_active": False}, synchronize_session=False)
+    db.commit()

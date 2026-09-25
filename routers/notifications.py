@@ -15,6 +15,8 @@ from core.notifications_service import (
     get_or_create_preferences,
     create_notification,
     compute_stats,
+    register_push_token,
+    remove_push_token,
     _parse_data,
 )
 from schemas.notification import (
@@ -26,6 +28,7 @@ from schemas.notification import (
     NotificationPreferencesUpdate,
     NotificationStats,
     NotificationCreate,
+    PushTokenRegister,
 )
 
 router = APIRouter()
@@ -173,3 +176,33 @@ def _prefs_to_out(p):
     }
 
 
+
+
+@router.post("/push-token", response_model=dict)
+def register_device_push_token(
+    payload: PushTokenRegister,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Register (or re-activate) this device's Expo push token."""
+    try:
+        register_push_token(db, current_user["id"], payload.expo_push_token, payload.platform)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Expo push token")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not register push token")
+    return {"success": True, "message": "Push token registered"}
+
+
+@router.delete("/push-token", response_model=dict)
+def remove_device_push_token(
+    expo_push_token: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Deactivate a device token on logout."""
+    try:
+        remove_push_token(db, current_user["id"], expo_push_token)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not remove push token")
+    return {"success": True, "message": "Push token removed"}

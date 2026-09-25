@@ -97,3 +97,8 @@ class NotificationStats(BaseModel):
     recent_activity: Dict[str, int]
 
 
+
+
+class PushTokenRegister(BaseModel):
+    expo_push_token: str
+    platform: Optional[str] = None  # ios | android

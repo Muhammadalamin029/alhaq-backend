@@ -912,3 +912,31 @@ def send_weekly_admin_report():
     except Exception as e:
         logger.error(f"Error sending weekly admin report: {e}")
         return {"success": False, "error": str(e)}
+
+
+@celery_app.task(bind=True, name='core.tasks.send_push_notification')
+def send_push_notification(self, user_id: str, title: str, message: str, data: dict = None):
+    """Deliver an Expo push to all active device tokens of a user."""
+    try:
+        from db.session import SessionLocal
+        from core.model import PushDeviceToken
+        from core.push_service import send_expo_push
+
+        db = SessionLocal()
+        try:
+            rows = db.query(PushDeviceToken).filter(
+                PushDeviceToken.user_id == user_id,
+                PushDeviceToken.is_active.is_(True),
+            ).all()
+            tokens = [r.expo_push_token for r in rows]
+        finally:
+            db.close()
+
+        if not tokens:
+            return {"success": True, "sent": 0}
+        result = send_expo_push(tokens, title, message, data or {})
+        logger.info(f"Push to user {user_id}: {result}")
+        return {"success": True, **result}
+    except Exception as exc:
+        logger.error(f"Error sending push to user {user_id}: {str(exc)}")
+        raise self.retry(exc=exc, countdown=60, max_retries=3)
