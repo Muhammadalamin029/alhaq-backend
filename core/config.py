@@ -5,6 +5,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "LEL Store"
     API_V1_STR: str = "/api/v1"
 
+    # Runtime environment: "development" | "staging" | "production".
+    # Security-sensitive fallbacks (mock payments, unsigned webhooks, test
+    # endpoints) are only permitted outside production.
+    ENVIRONMENT: str = "development"
+
     # CORS
     ALLOWED_ORIGINS: list[str]
 

@@ -214,7 +214,13 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/webhook/test")
 async def test_webhook(request: Request, db: Session = Depends(get_db)):
-    """Test webhook endpoint for development"""
+    """Test webhook endpoint for development — disabled in production."""
+    from core.config import settings as app_settings
+    if str(getattr(app_settings, "ENVIRONMENT", "development")).lower() == "production":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found"
+        )
     try:
         body = await request.body()
         webhook_data = json.loads(body)

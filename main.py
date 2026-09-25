@@ -38,6 +38,7 @@ from core.handlers import (
 )
 from core.logging_config import setup_logging, get_logger
 from core.middleware import LoggingMiddleware, UserContextMiddleware
+from core.rate_limit import RateLimitMiddleware
 
 # ------------------------------------------------------
 # Logging setup
@@ -60,6 +61,7 @@ app = FastAPI(
 # Middlewares
 app.add_middleware(UserContextMiddleware)
 app.add_middleware(LoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 # Log startup
 logger.info(
@@ -75,36 +77,16 @@ logger.info(
 # ------------------------------------------------------
 logger.info("Database schema managed by Alembic")
 
-# Add CORS middleware with more permissive settings for development
+# CORS: explicit origins from settings (env), explicit headers. Credentials
+# are required (cookie-less Bearer auth still needs preflight for
+# Authorization), so origins must never be "*".
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"],
 )
-
-
-# Add CORS debugging middleware
-@app.middleware("http")
-async def cors_debug_middleware(request, call_next):
-    # Log CORS-related headers
-    origin = request.headers.get("origin")
-    method = request.method
-
-    logger.info(
-        f"CORS Debug - Origin: {origin}, Method: {method}, Path: {request.url.path}"
-    )
-
-    response = await call_next(request)
-
-    # Add CORS headers to response for debugging
-    if origin and origin in settings.ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-
-    return response
 
 
 # ------------------------------------------------------

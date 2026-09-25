@@ -17,12 +17,19 @@ class PaystackService:
             "Authorization": f"Bearer {self.secret_key}",
             "Content-Type": "application/json"
         }
-        
+        self.is_production = str(getattr(settings, "ENVIRONMENT", "development")).lower() == "production"
+
         # Check if keys are configured
         if not self.secret_key or not self.public_key:
             logger.warning("Paystack keys not configured. Payment functionality will not work.")
-        
+
         self.webhook_secret = settings.PAYSTACK_WEBHOOK_SECRET
+
+    def _require_keys(self, operation: str) -> None:
+        """Fail closed in production when keys are missing (never mock money)."""
+        if self.is_production and (not self.secret_key or not self.public_key):
+            logger.error(f"Paystack keys missing in production during {operation}. Refusing mock.")
+            raise RuntimeError("Payment provider is not configured")
 
     def initialize_transaction(self, email: str, amount: int, reference: str, metadata: Optional[Dict] = None, callback_url: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -39,6 +46,7 @@ class PaystackService:
         """
         # Check if keys are configured
         if not self.secret_key or not self.public_key:
+            self._require_keys("paystack operation")
             logger.warning("Paystack keys not configured. Using mock payment for development.")
             # Return mock response for development
             return {
@@ -86,6 +94,7 @@ class PaystackService:
         """
         # Check if keys are configured
         if not self.secret_key or not self.public_key:
+            self._require_keys("paystack operation")
             logger.warning("Paystack keys not configured. Using mock verification for development.")
             # Return mock successful verification for development
             return {
@@ -177,6 +186,7 @@ class PaystackService:
             the account number, bank name and account name to display to the customer
         """
         if not self.secret_key or not self.public_key:
+            self._require_keys("paystack operation")
             logger.warning("Paystack keys not configured. Using mock bank transfer charge for development.")
             if not account_expires_at:
                 expires_dt = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -236,6 +246,7 @@ class PaystackService:
         docs site could not be reached while writing this integration.
         """
         if not self.secret_key or not self.public_key:
+            self._require_keys("paystack operation")
             logger.warning("Paystack keys not configured. Using mock authorization init for development.")
             return {
                 "status": True,
@@ -275,6 +286,7 @@ class PaystackService:
         installment charges once a PaymentMandate is active.
         """
         if not self.secret_key or not self.public_key:
+            self._require_keys("paystack operation")
             logger.warning("Paystack keys not configured. Using mock authorization charge for development.")
             return {
                 "status": True,
@@ -364,6 +376,7 @@ class PaystackService:
             Dict containing refund details
         """
         if not self.secret_key or not self.public_key:
+            self._require_keys("paystack operation")
             logger.warning("Paystack keys not configured. Using mock refund for development.")
             return {
                 "status": True,
@@ -420,6 +433,9 @@ class PaystackService:
             bool: True if signature is valid
         """
         if not self.webhook_secret:
+            if getattr(self, "is_production", False):
+                logger.error("Webhook secret missing in production. Rejecting webhook.")
+                return False
             logger.warning("Webhook secret not configured. Skipping signature verification.")
             return True  # Allow in development
         
