@@ -19,6 +19,7 @@ from routers import (
     system_settings,
     public as public_router,
     legal_documents as legal_documents_router,
+    campaign_banners as campaign_banners_router,
     financing as financing_router,
     delivery as delivery_router,
     seo as seo_router,
@@ -136,6 +137,10 @@ app.include_router(
     legal_documents_router.public_router, prefix="/public", tags=["Public"]
 )
 app.include_router(legal_documents_router.admin_router, prefix="/admin", tags=["Admin"])
+app.include_router(
+    campaign_banners_router.public_router, prefix="/public", tags=["Public"]
+)
+app.include_router(campaign_banners_router.admin_router, prefix="/admin", tags=["Admin"])
 app.include_router(financing_router.router, prefix="/financing", tags=["Financing"])
 app.include_router(
     financing_router.admin_router, prefix="/admin/financing", tags=["Admin"]

@@ -881,3 +881,25 @@ class LegalDocument(Base):
         server_default=func.current_timestamp(),
         onupdate=func.current_timestamp(),
     )
+
+
+# ---------------- CAMPAIGN BANNERS (admin-managed home carousel) ----------------
+
+
+class CampaignBanner(Base):
+    """Home hero carousel slides managed by admins; public read of active ones."""
+
+    __tablename__ = "campaign_banners"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    title = Column(String(255), nullable=False, default="")
+    subtitle = Column(String(500), nullable=True)
+    image_url = Column(Text, nullable=False)
+    cta_text = Column(String(100), nullable=True)
+    cta_link = Column(String(500), nullable=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
+                        onupdate=func.current_timestamp())
