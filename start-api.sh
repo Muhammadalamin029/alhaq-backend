@@ -6,7 +6,9 @@ echo "LEL Store API starting..."
 echo "========================================"
 
 echo "Running database migrations..."
-alembic upgrade head
+# "heads" (plural): the repo has multiple migration heads, "head" would abort
+# with "Multiple head revisions are present".
+alembic upgrade heads
 
 echo "Database migrations completed."
 

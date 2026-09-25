@@ -35,6 +35,9 @@ def get_url():
     url = settings.DATABASE_URL
     if url.startswith("postgresql+asyncpg"):
         url = url.replace("postgresql+asyncpg", "postgresql")
+    # Heroku-style scheme that SQLAlchemy can't parse
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
     return url
 
 

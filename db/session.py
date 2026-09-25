@@ -17,8 +17,17 @@ def _preload_models():
 # Preload models
 _preload_models()
 
+
+def _normalize_db_url(url: str) -> str:
+    # Heroku-style scheme that SQLAlchemy can't parse; psycopg v3 URLs
+    # (postgresql+psycopg://) work as-is since psycopg[binary] is installed.
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
 engine = create_engine(
-    settings.DATABASE_URL,
+    _normalize_db_url(settings.DATABASE_URL),
     echo=False,  # Disable SQL logging in production
     future=True,
     pool_size=20,  # Increase connection pool
