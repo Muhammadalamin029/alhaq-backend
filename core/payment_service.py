@@ -23,6 +23,28 @@ logger = logging.getLogger(__name__)
 BANK_TRANSFER_EXPIRY_PREFIX = "bank_transfer_expiry:"
 
 
+def _safe_notify(db: Session, payload: Dict[str, Any]):
+    """Best-effort notification that can never break payment completion.
+
+    A notification failure (e.g. a type missing from the DB enum) must never
+    turn a successful Paystack charge into a 500 / lost payment state.
+    Core payment/agreement state is committed by the caller BEFORE
+    notifications, so a rollback here only drops the notification itself.
+    """
+    try:
+        return create_notification(db, payload)
+    except Exception:
+        logger.exception(
+            f"Non-fatal: failed to create '{payload.get('type')}' "
+            f"notification for user {payload.get('user_id')}"
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return None
+
+
 class PaymentService:
     def __init__(self):
         self.paystack = paystack_service
@@ -431,7 +453,7 @@ class PaymentService:
         mandate.account_number_last4 = authorization.get("last4")
         db.commit()
 
-        create_notification(db, {
+        _safe_notify(db, {
             "user_id": str(payment.buyer_id),
             "type": "agreement_update",
             "title": "Recurring Payment Authorized",
@@ -602,6 +624,16 @@ class PaymentService:
                     from datetime import timedelta
                     agreement.next_due_date = datetime.utcnow() + timedelta(days=30)
 
+                # Persist core payment/agreement state BEFORE any notification.
+                # Notifications are best-effort: if one fails (e.g. a type
+                # missing from the DB enum), _safe_notify rolls back only the
+                # notification while the payment itself stays completed.
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+
                 # Resolve asset title for richer email content (non-critical).
                 asset_title = None
                 try:
@@ -631,7 +663,7 @@ class PaymentService:
                 )
 
                 if is_activation:
-                    create_notification(db, {
+                    _safe_notify(db, {
                         "user_id": str(payment.buyer_id),
                         "type": "agreement_activated",
                         "title": "Agreement Activated",
@@ -652,7 +684,7 @@ class PaymentService:
                         },
                     })
                 else:
-                    create_notification(db, {
+                    _safe_notify(db, {
                         "user_id": str(payment.buyer_id),
                         "type": "payment_successful",
                         "title": "Agreement Payment Confirmed",
@@ -690,7 +722,7 @@ class PaymentService:
                 # Special "Ownership" notification if agreement is now fully paid
                 if agreement.status == "completed":
                     asset_noun = "Property" if agreement.asset_type == "property" else ("Car" if agreement.asset_type == "automotive" else "Phone")
-                    create_notification(db, {
+                    _safe_notify(db, {
                         "user_id": str(payment.buyer_id),
                         "type": "agreement_completed",
                         "title": f"🎉 Congratulations! You now own this {asset_noun}!",
@@ -856,9 +888,16 @@ class PaymentService:
             if refund_res.get("status"):
                 payment.status = "refunded"
                 payment.transaction_metadata = {**(payment.transaction_metadata or {}), "refund_reason": reason, "refunded_by": str(admin_id), "refund_data": refund_res.get("data")}
-                
-                # Notify Buyer
-                create_notification(db, {
+                # Persist refund state before the best-effort notification so a
+                # notification failure can never lose a completed Paystack refund.
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+
+                # Notify Buyer (best-effort)
+                _safe_notify(db, {
                     "user_id": str(payment.buyer_id),
                     "type": "payment_refunded",
                     "title": "Payment Refunded",

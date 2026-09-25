@@ -12,6 +12,66 @@ from core.email_service import email_service
 logger = logging.getLogger(__name__)
 
 
+# Canonical set of notification types that exist in the Postgres
+# `notification_type` enum (see core/model.py + alembic migrations).
+# Unknown types are mapped to a safe fallback BEFORE insert so a typo or a
+# code-first type that missed its migration can never 500 a payment/order
+# flow with InvalidTextRepresentation again.
+VALID_NOTIFICATION_TYPES = frozenset({
+    "order_confirmed",
+    "order_processing",
+    "order_shipped",
+    "order_delivered",
+    "order_cancelled",
+    "payment_successful",
+    "payment_failed",
+    "payment_refunded",
+    "account_verified",
+    "password_changed",
+    "profile_updated",
+    "wishlist_item_back_in_stock",
+    "system_announcement",
+    "promotional_offer",
+    "car_approved",
+    "car_rejected",
+    "inspection_scheduled",
+    "inspection_confirmed",
+    "inspection_rejected",
+    "inspection_complete",
+    "property_acquired",
+    "agreement_created",
+    "agreement_approved",
+    "agreement_rejected",
+    "agreement_activated",
+    "agreement_completed",
+    "agreement_update",
+    "installment_paid",
+    "payment_reminder",
+    "installment_due",
+    "installment_defaulted",
+    "financing_application_submitted",
+    "financing_application_approved",
+    "financing_application_rejected",
+    "financing_application_revoked",
+})
+
+# Best-effort fallback for types that predate their DB enum migration.
+_NOTIFICATION_TYPE_FALLBACKS = {
+    "agreement_activated": "agreement_update",
+    "payment_refunded": "payment_failed",
+}
+
+
+def _coerce_notification_type(notification_type: str) -> str:
+    if notification_type in VALID_NOTIFICATION_TYPES:
+        return notification_type
+    fallback = _NOTIFICATION_TYPE_FALLBACKS.get(notification_type, "system_announcement")
+    logger.warning(
+        f"Unknown notification type '{notification_type}' — falling back to '{fallback}'"
+    )
+    return fallback
+
+
 def _get_user_contact_info(db: Session, user_id: str) -> tuple[Optional[str], str]:
     """Get user email address and name by user ID"""
     try:
@@ -63,6 +123,11 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
     # callers set skip_email to keep this notification in-app only.
     skip_email = bool(payload.get("skip_email"))
 
+    # Coerce unknown/forward-added types so the INSERT can never fail with
+    # `invalid input value for enum notification_type` and take down the
+    # calling flow (e.g. POST /payments/verify after the user already paid).
+    notification_type = _coerce_notification_type(payload.get("type", "system_announcement"))
+
     # Include email by default, but never when the event is email-suppressed.
     req_channels = payload.get("channels") or []
     if not req_channels:
@@ -74,7 +139,7 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
 
     notification = Notification(
         user_id=payload["user_id"],
-        type=payload["type"],
+        type=notification_type,
         title=payload["title"],
         message=payload["message"],
         priority=payload.get("priority", "low"),
@@ -111,6 +176,7 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
         'agreement_created': 'order_updates',
         'agreement_approved': 'order_updates',
         'agreement_rejected': 'order_updates',
+        'agreement_activated': 'order_updates',
         'agreement_completed': 'order_updates',
         'car_approved': 'order_updates',
         'car_rejected': 'order_updates',
