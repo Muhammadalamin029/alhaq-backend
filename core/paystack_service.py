@@ -423,33 +423,34 @@ class PaystackService:
 
     def verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
         """
-        Verify Paystack webhook signature using HMAC SHA512
-        
-        Args:
-            payload: Raw webhook payload
-            signature: X-Paystack-Signature header value
-            
-        Returns:
-            bool: True if signature is valid
+        Verify a Paystack webhook per docs: x-paystack-signature is the
+        HMAC-SHA512 of the raw event payload keyed with your Paystack
+        SECRET key (sk_test_... / sk_live_..., mode-matched). There is no
+        separate webhook secret — PAYSTACK_WEBHOOK_SECRET is only honored
+        as a legacy fallback.
         """
-        if not self.webhook_secret:
+        # Per Paystack docs the signing key is the secret key — it MUST take
+        # precedence. PAYSTACK_WEBHOOK_SECRET is only a legacy fallback for
+        # setups that duplicated the secret key into it.
+        key = self.secret_key or self.webhook_secret
+        if not key:
             if getattr(self, "is_production", False):
-                logger.error("Webhook secret missing in production. Rejecting webhook.")
+                logger.error("No Paystack key configured in production. Rejecting webhook.")
                 return False
-            logger.warning("Webhook secret not configured. Skipping signature verification.")
+            logger.warning("No Paystack key configured. Skipping signature verification.")
             return True  # Allow in development
-        
+
         try:
             # Create HMAC signature
             expected_signature = hmac.new(
-                self.webhook_secret.encode('utf-8'),
+                key.encode('utf-8'),
                 payload,
                 hashlib.sha512
             ).hexdigest()
-            
+
             # Compare signatures using constant-time comparison
             return hmac.compare_digest(expected_signature, signature)
-            
+
         except Exception as e:
             logger.error(f"Webhook signature verification failed: {str(e)}")
             return False
