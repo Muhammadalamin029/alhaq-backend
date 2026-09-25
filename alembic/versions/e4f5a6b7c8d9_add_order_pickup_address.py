@@ -17,7 +17,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('orders', sa.Column('pickup_address', sa.Text(), nullable=True))
+    # Idempotent: skip when the column already exists (databases that have
+    # the schema but never recorded this revision).
+    inspector = sa.inspect(op.get_bind())
+    try:
+        existing = {c["name"] for c in inspector.get_columns("orders")}
+    except Exception:
+        existing = set()
+    if "pickup_address" not in existing:
+        op.add_column('orders', sa.Column('pickup_address', sa.Text(), nullable=True))
 
 
 def downgrade() -> None:

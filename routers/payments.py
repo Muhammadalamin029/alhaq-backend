@@ -204,7 +204,11 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
             payment_logger.info(f"Unhandled webhook event: {event} for reference: {reference}")
         
         return {"status": "success"}
-        
+
+    except HTTPException:
+        # Intended client errors (400s) must propagate — never convert to 500,
+        # or Paystack treats them as server failures and spams retries.
+        raise
     except Exception as e:
         log_error(payment_logger, "Webhook processing failed", e)
         raise HTTPException(
