@@ -13,6 +13,7 @@ class ProductCreate(BaseModel):
     price: float = Field(..., gt=0, description="Product price must be greater than 0")
     stock_quantity: int = Field(0, ge=0, description="Stock quantity cannot be negative")
     category_id: UUID4
+    amenities: Optional[List[str]] = Field(None, max_length=50, description="Feature/amenity tags")
     images: Optional[List[AssetImageCreate]] = None
 
     class Config:
@@ -32,6 +33,8 @@ class ProductUpdate(BaseModel):
     category_id: Optional[UUID4] = None
     status: Optional[str] = Field(
         None, pattern="^(active|inactive|out_of_stock)$")
+    amenities: Optional[List[str]] = Field(
+        None, max_length=50, description="Feature/amenity tags")
     images: Optional[List[AssetImageCreate]] = None
 
     class Config:
@@ -53,6 +56,7 @@ class ProductResponse(BaseModel):
     price: float
     stock_quantity: int
     status: str
+    amenities: Optional[List[str]] = []
     created_at: datetime
     updated_at: datetime
     category: CategoryResponse

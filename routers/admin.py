@@ -640,6 +640,7 @@ async def get_admin_products(
                 price=product.price,
                 stock_quantity=product.stock_quantity,
                 status=product.status,
+                amenities=product.amenities or [],
                 created_at=product.created_at,
                 updated_at=product.updated_at,
                 seller_id=product.seller_id,
@@ -1128,6 +1129,7 @@ async def get_admin_products(
                 price=product.price,
                 stock_quantity=product.stock_quantity,
                 status=product.status,
+                amenities=product.amenities or [],
                 seller_id=product.seller_id,
                 seller_name=(
                     product.seller.business_name if product.seller else "Unknown"

@@ -301,6 +301,7 @@ class AdminProductListResponse(BaseModel):
     price: Decimal
     stock_quantity: int
     status: str
+    amenities: Optional[list] = []
     seller_id: UUID
     seller_name: str
     category_id: Optional[UUID] = None

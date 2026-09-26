@@ -103,6 +103,7 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
             category_id=payload.category_id,
             description=payload.description,
             stock_quantity=payload.stock_quantity,
+            amenities=payload.amenities,
             images=payload.images
         )
 

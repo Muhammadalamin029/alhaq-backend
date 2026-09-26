@@ -52,6 +52,7 @@ class ProductService:
         category_id: UUID,
         description: Optional[str] = None,
         stock_quantity: int = 0,
+        amenities: Optional[list] = None,
         images: Optional[list] = None
     ):
         # 1. Create product with default status
@@ -62,6 +63,7 @@ class ProductService:
             category_id=category_id,
             description=description,
             stock_quantity=stock_quantity,
+            amenities=amenities or [],
             status="active" if stock_quantity > 0 else "out_of_stock"
         )
         db.add(new_product)

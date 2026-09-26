@@ -210,6 +210,7 @@ class Product(Base):
     category_id = Column(UUID, ForeignKey("categories.id"), nullable=False)
     status = Column(Enum("active", "inactive", "out_of_stock",
                     name="product_status"), default="active")
+    amenities = Column(JSON, nullable=True, default=list)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
     ), onupdate=func.current_timestamp())
