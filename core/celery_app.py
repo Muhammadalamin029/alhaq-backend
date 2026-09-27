@@ -121,6 +121,10 @@ celery_app.conf.beat_schedule = {
         "task": "core.tasks.charge_due_mandates",
         "schedule": crontab(minute=0, hour=7), # Run at 7 AM UTC, before the 8 AM reminder/default sweep
     },
+    "purge_deleted_accounts_daily": {
+        "task": "core.tasks.purge_deleted_accounts",
+        "schedule": crontab(minute=0, hour=2), # Run at 2 AM UTC — purge PII past 30-day deletion grace
+    },
     "send_weekly_admin_report": {
         "task": "core.tasks.send_weekly_admin_report",
         "schedule": crontab(minute=0, hour=8, day_of_week="mon"),

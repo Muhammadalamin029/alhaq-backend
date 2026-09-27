@@ -32,16 +32,17 @@ def _url(loc: str, lastmod: datetime | None, changefreq: str, priority: str) -> 
 def sitemap(db: Session = Depends(get_db)):
     urls = [
         _url(f"{settings.FRONTEND_URL}/", None, "daily", "1.0"),
-        _url(f"{FRONTEND_URL}/products", None, "daily", "0.9"),
-        _url(f"{FRONTEND_URL}/automotive", None, "daily", "0.9"),
-        _url(f"{FRONTEND_URL}/properties", None, "daily", "0.9"),
-        _url(f"{FRONTEND_URL}/categories", None, "weekly", "0.8"),
-        _url(f"{FRONTEND_URL}/about", None, "monthly", "0.6"),
-        _url(f"{FRONTEND_URL}/help", None, "monthly", "0.5"),
-        _url(f"{FRONTEND_URL}/faq", None, "monthly", "0.5"),
-        _url(f"{FRONTEND_URL}/trust-and-safety", None, "monthly", "0.5"),
-        _url(f"{FRONTEND_URL}/privacy", None, "yearly", "0.3"),
-        _url(f"{FRONTEND_URL}/legal", None, "yearly", "0.3"),
+        _url(f"{settings.FRONTEND_URL}/products", None, "daily", "0.9"),
+        _url(f"{settings.FRONTEND_URL}/automotive", None, "daily", "0.9"),
+        _url(f"{settings.FRONTEND_URL}/properties", None, "daily", "0.9"),
+        _url(f"{settings.FRONTEND_URL}/categories", None, "weekly", "0.8"),
+        _url(f"{settings.FRONTEND_URL}/about", None, "monthly", "0.6"),
+        _url(f"{settings.FRONTEND_URL}/help", None, "monthly", "0.5"),
+        _url(f"{settings.FRONTEND_URL}/faq", None, "monthly", "0.5"),
+        _url(f"{settings.FRONTEND_URL}/trust-and-safety", None, "monthly", "0.5"),
+        _url(f"{settings.FRONTEND_URL}/privacy", None, "yearly", "0.3"),
+        _url(f"{settings.FRONTEND_URL}/legal", None, "yearly", "0.3"),
+        _url(f"{settings.FRONTEND_URL}/account-deletion", None, "yearly", "0.3"),
     ]
 
     # Only public listings are included. Private/admin routes are never exposed.
@@ -52,7 +53,7 @@ def sitemap(db: Session = Depends(get_db)):
         .all()
     )
     urls.extend(
-        _url(f"{FRONTEND_URL}/products/{product.id}", product.updated_at, "weekly", "0.8")
+        _url(f"{settings.FRONTEND_URL}/products/{product.id}", product.updated_at, "weekly", "0.8")
         for product in products
     )
 
@@ -63,7 +64,7 @@ def sitemap(db: Session = Depends(get_db)):
         .all()
     )
     urls.extend(
-        _url(f"{FRONTEND_URL}/automotive/{car.id}", car.updated_at, "weekly", "0.8")
+        _url(f"{settings.FRONTEND_URL}/automotive/{car.id}", car.updated_at, "weekly", "0.8")
         for car in cars
     )
 
@@ -74,13 +75,13 @@ def sitemap(db: Session = Depends(get_db)):
         .all()
     )
     urls.extend(
-        _url(f"{FRONTEND_URL}/properties/{prop.id}", prop.updated_at, "weekly", "0.8")
+        _url(f"{settings.FRONTEND_URL}/properties/{prop.id}", prop.updated_at, "weekly", "0.8")
         for prop in properties
     )
 
     categories = db.query(Category).order_by(Category.created_at.desc()).all()
     urls.extend(
-        _url(f"{FRONTEND_URL}/categories/{category.id}", category.created_at, "weekly", "0.7")
+        _url(f"{settings.FRONTEND_URL}/categories/{category.id}", category.created_at, "weekly", "0.7")
         for category in categories
     )
 

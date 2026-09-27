@@ -914,6 +914,35 @@ def send_weekly_admin_report():
         return {"success": False, "error": str(e)}
 
 
+@celery_app.task(name='core.tasks.purge_deleted_accounts')
+def purge_deleted_accounts():
+    """
+    Daily purge for Play-compliant account deletion.
+
+    Permanently deletes/anonymizes PII for accounts past the 30-day grace
+    period (is_active=False AND deleted_at <= now). Anonymized escrow/financial
+    ledgers are retained up to 7 years for AML / tax / deed-tracing compliance.
+    Runs daily at 2 AM UTC via Celery Beat. Manual run:
+        .venv/bin/python -m services.purge_deleted_accounts
+    """
+    try:
+        db = next(get_db())
+        try:
+            from services.purge_deleted_accounts import purge_due_accounts
+
+            count = purge_due_accounts(db)
+            logger.info(f"Purged PII for {count} deleted account(s).")
+            return {"success": True, "purged_count": count}
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error purging deleted accounts: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @celery_app.task(bind=True, name='core.tasks.send_push_notification')
 def send_push_notification(self, user_id: str, title: str, message: str, data: dict = None):
     """Deliver an Expo push to all active device tokens of a user."""

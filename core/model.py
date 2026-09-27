@@ -28,7 +28,10 @@ class User(Base):
     locked_until = Column(TIMESTAMP, nullable=True)
     last_login = Column(TIMESTAMP, nullable=True)
     password_changed_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    is_active = Column(Boolean, default=True)  # False = soft-deleted account
+    is_active = Column(Boolean, default=True)  # False = deletion requested / soft-deleted
+    # Play-compliant grace-period deletion: request -> 30d blocked login -> purge PII.
+    deletion_requested_at = Column(TIMESTAMP, nullable=True)
+    deleted_at = Column(TIMESTAMP, nullable=True)  # purge due date (request + 30 days)
     
     
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())

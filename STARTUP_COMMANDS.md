@@ -39,7 +39,11 @@ python start_app.py prod
 cd alhaq-backend
 celery -A core.celery_app worker --loglevel=info --concurrency=2 --queues=default,emails,notifications
 
-# Terminal 2 - Start FastAPI
+# Terminal 2 - Start Celery Beat (daily purge of deleted accounts at 2 AM UTC + other periodic tasks)
+cd alhaq-backend
+celery -A core.celery_app beat --loglevel=info
+
+# Terminal 3 - Start FastAPI
 cd alhaq-backend
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
@@ -50,7 +54,11 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 cd alhaq-backend
 celery -A core.celery_app worker --loglevel=info --concurrency=4 --queues=default,emails,notifications
 
-# Terminal 2 - Start FastAPI
+# Terminal 2 - Start Celery Beat (docker-compose already runs a dedicated celery-beat service)
+cd alhaq-backend
+celery -A core.celery_app beat --loglevel=info
+
+# Terminal 3 - Start FastAPI
 cd alhaq-backend
 gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --access-logfile - --error-logfile -
 ```

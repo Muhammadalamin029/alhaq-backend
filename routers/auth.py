@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from core.config import settings
@@ -9,6 +9,7 @@ from core.auth import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    ensure_user_active,
     get_current_user,
 )
 from core.auth_service import auth_service
@@ -305,6 +306,7 @@ def get_current_user_profile(
 ):
     """Get current authenticated user's profile"""
     try:
+        ensure_user_active(db, current_user["id"])
         auth_logger.debug(f"Profile fetch request for user: {current_user['id']}")
 
         profile_data = auth_service.get_user_profile(db, current_user["id"])
@@ -329,10 +331,17 @@ def delete_current_user_account(
     current_user=Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
-    Soft-delete the authenticated user's account.
-    Sets is_active = False — account data is retained for audit purposes.
-    The user will no longer be able to log in.
+    Request Play-compliant account deletion (30-day grace period).
+
+    - Blocks login immediately (is_active=False, enforced in auth_service).
+    - Revokes push tokens immediately.
+    - Personal data is permanently deleted/anonymized after 30 days by the
+      purge job (services/purge_deleted_accounts.py).
+    - Anonymized escrow/financial ledgers are retained up to 7 years for
+      AML / tax / deed-tracing compliance and cannot be expunged.
+    - Idempotent: repeating the call returns the existing schedule.
     """
+    from core.model import PushDeviceToken as PushDeviceTokenModel
     from core.model import User as UserModel
 
     try:
@@ -340,13 +349,35 @@ def delete_current_user_account(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        now = datetime.utcnow()
+        if getattr(user, "is_active", True) is False and getattr(user, "deleted_at", None):
+            return {
+                "success": True,
+                "message": "Account deletion already scheduled.",
+                "data": {
+                    "deleted_at": user.deleted_at.isoformat() if user.deleted_at else None,
+                    "retention_note": "Personal data purged 30 days after request. Anonymized escrow/financial ledgers retained up to 7 years for legal compliance.",
+                },
+            }
+
+        purge_due = now + timedelta(days=30)
         user.is_active = False
+        user.deletion_requested_at = now
+        user.deleted_at = purge_due
+        # Revoke push tokens immediately so deleted users get no notifications.
+        db.query(PushDeviceTokenModel).filter(
+            PushDeviceTokenModel.user_id == user.id
+        ).delete(synchronize_session=False)
         db.commit()
 
-        auth_logger.info(f"Account soft-deleted for user: {current_user['id']}")
+        auth_logger.info(f"Account deletion scheduled for user: {current_user['id']} due {purge_due.isoformat()}")
         return {
             "success": True,
-            "message": "Account has been deactivated successfully.",
+            "message": "Account deletion scheduled. Your personal data will be permanently deleted in 30 days.",
+            "data": {
+                "deleted_at": purge_due.isoformat(),
+                "retention_note": "Personal data purged 30 days after request. Anonymized escrow/financial ledgers retained up to 7 years for legal compliance.",
+            },
         }
 
     except HTTPException:
@@ -359,7 +390,80 @@ def delete_current_user_account(
             e,
             user_id=current_user["id"],
         )
-        raise HTTPException(status_code=500, detail="Failed to deactivate account")
+        raise HTTPException(status_code=500, detail="Failed to schedule account deletion")
+
+
+@router.post("/me/restore", status_code=200)
+def restore_deleted_account(
+    current_user=Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Restore an account within the 30-day grace period (re-activates login)."""
+    from core.model import User as UserModel
+
+    user = db.query(UserModel).filter(UserModel.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if getattr(user, "is_active", True) is True:
+        return {"success": True, "message": "Account is already active."}
+    # Past purge date cannot be restored (purge job owns final deletion).
+    user.is_active = True
+    user.deletion_requested_at = None
+    user.deleted_at = None
+    db.commit()
+    auth_logger.info(f"Account restored for user: {current_user['id']}")
+    return {"success": True, "message": "Account restored successfully."}
+
+
+@router.get("/me/export", status_code=200)
+def export_current_user_data(
+    current_user=Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """NDPR right to data portability: JSON dump of account + related rows."""
+    from core.model import (
+        Address as AddressModel,
+        Profile as ProfileModel,
+        User as UserModel,
+    )
+
+    user = db.query(UserModel).filter(UserModel.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    profile = db.query(ProfileModel).filter(ProfileModel.id == user.id).first()
+    addresses = db.query(AddressModel).filter(AddressModel.user_id == user.id).all()
+    return {
+        "success": True,
+        "data": {
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "role": user.role,
+                "email_verified": user.email_verified,
+                "is_active": user.is_active,
+                "deletion_requested_at": user.deletion_requested_at.isoformat() if getattr(user, "deletion_requested_at", None) else None,
+                "deleted_at": user.deleted_at.isoformat() if getattr(user, "deleted_at", None) else None,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            },
+            "profile": {
+                "name": profile.name if profile else None,
+                "phone": profile.phone if profile else None,
+                "bio": profile.bio if profile else None,
+                "avatar_url": profile.avatar_url if profile else None,
+                "kyc_status": profile.kyc_status if profile else None,
+            } if profile else None,
+            "addresses": [
+                {
+                    "title": a.title,
+                    "street_address": a.street_address,
+                    "city": a.city,
+                    "state_province": a.state_province,
+                    "postal_code": a.postal_code,
+                    "country": a.country,
+                }
+                for a in addresses
+            ],
+            "retention_note": "Escrow/financial ledgers retained anonymized up to 7 years for legal compliance.",
+        },
+    }
 
 
 @router.put("/me", response_model=FullUserProfileResponse)
@@ -370,6 +474,7 @@ def update_current_user_profile(
 ):
     """Update current authenticated user's profile"""
     try:
+        ensure_user_active(db, current_user["id"])
         update_data = payload.model_dump(exclude_unset=True)
 
         auth_logger.info(

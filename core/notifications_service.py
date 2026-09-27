@@ -238,6 +238,15 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
                     **(_parse_data(notification.data) or {}),
                 },
             )
+            logger.info(
+                f"Push queued for user {notification.user_id} "
+                f"(type={notification.type}, title={notification.title!r})"
+            )
+        else:
+            logger.info(
+                f"Push skipped for user {notification.user_id}: "
+                f"push_{group} preference is off"
+            )
     except Exception as e:
         logger.error(f"Error queuing push for user {notification.user_id}: {e}")
 

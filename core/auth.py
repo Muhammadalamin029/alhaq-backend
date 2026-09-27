@@ -6,7 +6,6 @@ from fastapi import HTTPException, status, Depends
 from datetime import timedelta
 from core.config import settings
 from passlib.context import CryptContext
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 SECRET_KEY = settings.SECRET_KEY
 REFRESH_SECRET_KEY = settings.REFRESH_SECRET_KEY
@@ -99,3 +98,37 @@ def role_required(required_roles: list):
             )
         return user
     return wrapper
+
+
+def ensure_user_active(db, user_id: str) -> None:
+    """Raise 401 if the account is pending deletion (is_active=False).
+
+    Call from routes that must reject stale tokens issued before DELETE /auth/me.
+    Login/refresh paths already block via auth_service; this covers access tokens
+    still valid within their 30-minute window.
+    """
+    from core.model import User as UserModel
+
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if user is not None and getattr(user, "is_active", True) is False:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account scheduled for deletion. Restore within 30 days to continue.",
+        )
+
+
+def get_current_active_user(
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Drop-in replacement for get_current_user that also blocks deleted accounts."""
+    from db.session import get_db as _get_db
+
+    db = next(_get_db())
+    try:
+        ensure_user_active(db, user["id"])
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return user
