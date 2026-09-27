@@ -15,7 +15,13 @@ Usage:
 """
 
 import argparse
+import os
+import sys
 from datetime import date
+
+# Allow running as `python scripts/seed_legal.py` from any cwd: the backend
+# root (parent of scripts/) must be importable for `core` and `db`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.model import LegalDocument
 from db.session import SessionLocal
