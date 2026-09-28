@@ -20,4 +20,7 @@ jinja2>=3.1.2  # For email templates
 aiosmtplib>=3.0.1  # Async SMTP client
 
 # HTTP requests for external APIs
-requests>=2.31.0  # For Paystack API integration
+requests>=2.31.0  # For Flutterwave API integration
+
+# Payload encryption for Flutterwave direct card charges (3DES)
+pycryptodome>=3.20.0

@@ -8,12 +8,14 @@ from uuid import UUID
 
 from core.auth import role_required, get_current_user
 from db.session import get_db
-from core.paystack_service import paystack_service
+from core.flutterwave_service import flutterwave_service
 from core.payment_service import payment_service
 from core import receipt_service
 from core.model import Payment, Order, StoreProfile, Profile, User
 from schemas.payment import (
-    PaymentInitializeRequest,
+    CardAuthorizeRequest,
+    CardChargeRequest,
+    CardValidateRequest,
     PaymentInitializeResponse,
     PaymentVerifyRequest,
     PaymentVerifyResponse,
@@ -33,37 +35,107 @@ payment_logger = get_logger("routers.payments")
 
 router = APIRouter()
 
-@router.post("/initialize", response_model=PaymentInitializeResponse)
-async def initialize_payment(
-    request: PaymentInitializeRequest,
+@router.post("/charge-card", response_model=PaymentInitializeResponse)
+async def charge_card(
+    request: CardChargeRequest,
     user=Depends(role_required(["customer", "admin"])),
     db: Session = Depends(get_db)
 ):
-    """Unified payment initialization hub"""
+    """Step 1 of the Direct-API card flow.
+
+    Charges the card via Flutterwave and returns ``next_step`` (pin | avs |
+    otp | redirect | success | failed) plus ``tx_ref`` for the follow-up
+    calls. Raw card fields are forwarded over TLS and never stored.
+    """
+    from decimal import Decimal
     try:
-        system_settings_service.require_verified_email_for_user(db, user["id"], "initialize a payment")
-        data = payment_service.initialize_payment(
+        system_settings_service.require_verified_email_for_user(db, user["id"], "make a card payment")
+        data = payment_service.charge_card_payment(
             db=db,
             user_id=user["id"],
             email=request.email,
-            amount_kobo=int(request.amount * 100),
+            amount_naira=Decimal(str(request.amount)),
             category=request.category,
+            card_number=request.card_number,
+            cvv=request.cvv,
+            expiry_month=request.expiry_month,
+            expiry_year=request.expiry_year,
             order_id=str(request.order_id) if request.order_id else None,
             agreement_id=str(request.agreement_id) if request.agreement_id else None,
-            callback_url=request.callback_url,
-            metadata=request.metadata,  # passed through to Paystack, not stored on model
+            fullname=request.fullname,
+            phone_number=request.phone_number,
+            redirect_url=request.redirect_url,
+            metadata=request.metadata,
             payment_method=request.payment_method
         )
-        
+
         return PaymentInitializeResponse(
-            success=True,
-            message="Payment initialized successfully",
+            success=data.get("next_step") not in ("failed",),
+            message="Card charge processed",
             data=data
         )
     except HTTPException:
         raise
     except Exception as e:
-        payment_logger.error(f"Failed to initialize payment: {str(e)}")
+        payment_logger.error(f"Failed to charge card: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/charge-card/authorize", response_model=PaymentInitializeResponse)
+async def authorize_card(
+    request: CardAuthorizeRequest,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Step 2: resubmit the card payload with PIN/AVS authorization."""
+    try:
+        data = payment_service.authorize_card_payment(
+            db=db,
+            tx_ref=request.tx_ref,
+            card_number=request.card_number,
+            cvv=request.cvv,
+            expiry_month=request.expiry_month,
+            expiry_year=request.expiry_year,
+            authorization=request.authorization,
+            email=request.email,
+            fullname=request.fullname,
+            phone_number=request.phone_number,
+            redirect_url=request.redirect_url,
+        )
+
+        return PaymentInitializeResponse(
+            success=data.get("next_step") not in ("failed",),
+            message="Card authorization processed",
+            data=data
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Failed to authorize card charge: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/charge-card/validate", response_model=PaymentInitializeResponse)
+async def validate_card(
+    request: CardValidateRequest,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Step 3: validate the charge with the OTP sent to the customer."""
+    try:
+        data = payment_service.validate_card_payment(
+            db=db,
+            tx_ref=request.tx_ref,
+            otp=request.otp,
+        )
+
+        return PaymentInitializeResponse(
+            success=data.get("next_step") == "success",
+            message="Card charge validated",
+            data=data
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        payment_logger.error(f"Failed to validate card charge: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/initialize-bank-transfer", response_model=BankTransferInitializeResponse)
@@ -73,17 +145,20 @@ async def initialize_bank_transfer(
     db: Session = Depends(get_db)
 ):
     """Generate a one-time bank account number (Pay with Transfer) for an order or agreement payment"""
+    from decimal import Decimal
     try:
         system_settings_service.require_verified_email_for_user(db, user["id"], "initialize a payment")
         data = payment_service.initialize_bank_transfer_payment(
             db=db,
             user_id=user["id"],
             email=request.email,
-            amount_kobo=int(request.amount * 100),
+            amount_naira=Decimal(str(request.amount)),
             category=request.category,
             order_id=str(request.order_id) if request.order_id else None,
             agreement_id=str(request.agreement_id) if request.agreement_id else None,
             metadata=request.metadata,
+            fullname=request.fullname,
+            phone_number=request.phone_number,
         )
 
         return BankTransferInitializeResponse(
@@ -103,22 +178,18 @@ async def verify_payment(
     user=Depends(role_required(["customer"])),
     db: Session = Depends(get_db)
 ):
-    """Unified payment verification hub"""
+    """Unified payment verification hub (Flutterwave verify + ledger match)"""
     try:
-        ps_res = payment_service.verify_transaction(db, request.reference)
-        is_success = ps_res.get("status", False) and ps_res.get("data", {}).get("status") == "success"
-
-        if not is_success:
-            # Paystack's top-level message often says 'Verification successful' because the API request
-            # succeeded, even if the payment itself failed or was abandoned. 
-            # We should use the actual transaction status for a more accurate error message.
-            tx_status = ps_res.get("data", {}).get("status", "failed")
+        result = payment_service.verify_transaction(db, request.reference, transaction_id=request.transaction_id)
+        if not result.get("completed"):
+            # Flutterwave's top-level message often says 'success' because the API
+            # request succeeded, even if the payment itself failed or is pending.
+            tx_status = (result.get("data") or {}).get("status", "pending")
             error_msg = f"Payment status: {tx_status}"
-            if ps_res.get("data", {}).get("gateway_response"):
-                error_msg += f" ({ps_res['data']['gateway_response']})"
-            elif not ps_res.get("status", False):
-                # If the API request itself failed, use its message
-                error_msg = ps_res.get("message", "Payment verification failed")
+            if (result.get("data") or {}).get("processor_response"):
+                error_msg += f" ({result['data']['processor_response']})"
+            elif not result.get("status", False):
+                error_msg = result.get("message", "Payment verification failed")
 
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -127,8 +198,8 @@ async def verify_payment(
 
         return PaymentVerifyResponse(
             success=True,
-            message=ps_res.get("message", "Payment verified successfully"),
-            data=ps_res.get("data", {})
+            message=result.get("message", "Payment verified successfully"),
+            data=result.get("data", {})
         )
     except HTTPException:
         raise
@@ -137,29 +208,21 @@ async def verify_payment(
         raise HTTPException(status_code=500, detail="Verification failed")
 
 @router.post("/webhook")
-async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
-    """Handle Paystack webhook events"""
+async def flutterwave_webhook(request: Request, db: Session = Depends(get_db)):
+    """Handle Flutterwave webhook events (charge.completed for cards, bank
+    transfers and tokenized mandate installments)."""
     try:
         # Get the raw body
         body = await request.body()
-        
-        # Verify webhook signature
-        signature = request.headers.get("x-paystack-signature")
-        if not signature:
-            payment_logger.warning("Webhook request missing signature")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing signature"
-            )
-        
-        # Verify signature
-        if not paystack_service.verify_webhook_signature(body, signature):
+
+        # Verify webhook signature (verif-hash / flutterwave-signature)
+        if not flutterwave_service.verify_webhook_signature(dict(request.headers), body):
             payment_logger.warning("Webhook signature verification failed")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid signature"
             )
-        
+
         webhook_data = json.loads(body)
         event = webhook_data.get("event")
         data = webhook_data.get("data", {})
@@ -167,47 +230,44 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         payment_logger.info(f"Processing webhook event: {event}")
 
         # Handle different webhook events
-        reference = data.get("reference")
-        if not reference:
-            payment_logger.warning(f"No reference found in webhook event: {event}")
+        tx_ref = data.get("tx_ref")
+        if not tx_ref:
+            payment_logger.warning(f"No tx_ref found in webhook event: {event}")
             return {"status": "ignored", "reason": "no_reference"}
 
-        # Direct Debit mandate authorization webhooks carry a `reference` that
-        # matches a PaymentMandate (from initialize_authorization), not a Payment -
-        # handle that before falling through to the Payment lookup below.
-        authorization = data.get("authorization") or {}
-        if authorization.get("channel") == "direct_debit":
-            mandate_result = payment_service.handle_mandate_webhook(db, event, reference, authorization)
-            if mandate_result is not None:
-                return mandate_result
+        # Tokenized installment charges that have no local Payment row yet are
+        # handled by the mandate hook; anything with a Payment falls through.
+        mandate_result = payment_service.handle_mandate_webhook(db, event, tx_ref, data)
+        if mandate_result is not None:
+            return mandate_result
 
         # Find payment record
         payment = db.query(Payment).filter(
-            Payment.transaction_id == reference
+            (Payment.reference == tx_ref) | (Payment.transaction_id == tx_ref)
         ).first()
 
         if not payment:
-            payment_logger.warning(f"Payment not found for reference: {reference}")
+            payment_logger.warning(f"Payment not found for reference: {tx_ref}")
             return {"status": "ignored", "reason": "payment_not_found"}
-        
+
         # Check if already processed (idempotency)
         if payment.status in ["completed", "failed"]:
-            payment_logger.info(f"Payment {reference} already processed with status: {payment.status}")
+            payment_logger.info(f"Payment {tx_ref} already processed with status: {payment.status}")
             return {"status": "ignored", "reason": "already_processed"}
-        
-        if event == "charge.success":
-            # Handle successful payment through unified service
-            payment_service.verify_transaction(db, reference)
-            payment_logger.info(f"Webhook: Payment verified for {reference}")
-            
+
+        if event == "charge.completed":
+            # Re-verify via API (failsafe) and complete through unified service
+            payment_service.verify_transaction(db, tx_ref, transaction_id=data.get("id"))
+            payment_logger.info(f"Webhook: Payment verified for {tx_ref}")
+
         else:
-            payment_logger.info(f"Unhandled webhook event: {event} for reference: {reference}")
-        
+            payment_logger.info(f"Unhandled webhook event: {event} for reference: {tx_ref}")
+
         return {"status": "success"}
 
     except HTTPException:
         # Intended client errors (400s) must propagate — never convert to 500,
-        # or Paystack treats them as server failures and spams retries.
+        # or Flutterwave treats them as server failures and spams retries.
         raise
     except Exception as e:
         log_error(payment_logger, "Webhook processing failed", e)
@@ -419,7 +479,7 @@ async def refund_payment(
     user=Depends(role_required(["admin"])),
     db: Session = Depends(get_db)
 ):
-    """Refund a successfully processed paystack payment (Admin only)"""
+    """Refund a successfully processed Flutterwave payment (Admin only)"""
     try:
         payment = payment_service.refund_payment(
             db=db,

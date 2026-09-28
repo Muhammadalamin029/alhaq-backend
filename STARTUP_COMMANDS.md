@@ -127,7 +127,10 @@ Make sure these environment variables are set:
 export DATABASE_URL="postgresql://user:password@localhost:5432/alhaq"
 export REDIS_URL="redis://localhost:6379"
 export SECRET_KEY="your-secret-key"
-export PAYSTACK_SECRET_KEY="your-paystack-key"
+export FLUTTERWAVE_SECRET_KEY="your-flutterwave-secret-key"
+export FLUTTERWAVE_PUBLIC_KEY="your-flutterwave-public-key"
+export FLUTTERWAVE_ENCRYPTION_KEY="your-flutterwave-encryption-key"
+export FLUTTERWAVE_SECRET_HASH="your-webhook-secret-hash"
 ```
 
 ## 🚀 Quick Start

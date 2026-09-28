@@ -142,5 +142,6 @@ class MandateResponse(BaseModel):
         from_attributes = True
 
 class MandateInitiateResponse(BaseModel):
-    redirect_url: str
     reference: str
+    status: str = "pending_authorization"
+    message: str = "Pay the first installment by card to activate automatic monthly charges."

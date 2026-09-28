@@ -244,8 +244,8 @@ def initiate_agreement_mandate(
     db: Session = Depends(get_db),
     current_user: dict = Depends(role_required(["customer"]))
 ):
-    """Start recurring bank-debit (Direct Debit) authorization for a monthly agreement.
-    Returns a redirect_url the customer must visit to consent to the mandate."""
+    """Stage a recurring card-token mandate for a monthly agreement.
+    The customer activates it by paying the first installment by card."""
     return asset_service.initiate_mandate(db, UUID(current_user["id"]), id, data)
 
 @router.get("/agreements/{id}/mandate", response_model=MandateResponse)
@@ -254,7 +254,7 @@ def get_agreement_mandate(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """Poll the status of a recurring mandate (updated by Paystack's webhook)."""
+    """Poll the status of a recurring mandate (activated when the first card charge returns a token)."""
     mandate = asset_service.get_mandate(db, UUID(current_user["id"]), id)
     if not mandate:
         raise HTTPException(status_code=404, detail="Mandate not found")

@@ -56,7 +56,19 @@ class Settings(BaseSettings):
     EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 15
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
 
-    # Paystack Configuration
+    # Flutterwave Configuration (v3 Direct API — full replacement for Paystack).
+    # FLUTTERWAVE_SECRET_KEY signs server-side calls (never expose publicly).
+    # FLUTTERWAVE_PUBLIC_KEY is safe for client-side reference only.
+    # FLUTTERWAVE_ENCRYPTION_KEY is required for direct card charges (3DES).
+    # FLUTTERWAVE_SECRET_HASH verifies inbound webhooks (verif-hash header).
+    FLUTTERWAVE_SECRET_KEY: str = ""
+    FLUTTERWAVE_PUBLIC_KEY: str = ""
+    FLUTTERWAVE_ENCRYPTION_KEY: str = ""
+    FLUTTERWAVE_SECRET_HASH: str = ""
+    FLUTTERWAVE_BASE_URL: str = "https://api.flutterwave.com/v3"
+
+    # Deprecated Paystack keys — kept only so pre-migration .env files still
+    # parse. Unused by the Flutterwave integration; remove after cutover.
     PAYSTACK_SECRET_KEY: str = ""
     PAYSTACK_PUBLIC_KEY: str = ""
     PAYSTACK_WEBHOOK_SECRET: str = ""

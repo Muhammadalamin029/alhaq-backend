@@ -79,6 +79,35 @@ class RedisClient:
             return bool(self.redis_client.delete(key))
         except Exception:
             return False
+
+    def acquire_lock(self, key: str, expire: int = 30) -> Optional[str]:
+        """Acquire a short-lived mutual-exclusion lock (SET NX).
+
+        Returns a token when acquired, ``None`` when another holder owns it.
+        The lock auto-expires, so a crashed holder can only block retries for
+        ``expire`` seconds. Fail-open (returns a token) when Redis itself is
+        unreachable, so payments degrade to today's behavior instead of 500s.
+        """
+        import uuid as _uuid
+
+        token = _uuid.uuid4().hex
+        try:
+            if self.redis_client.set(key, token, ex=expire, nx=True):
+                return token
+            return None
+        except Exception:
+            return token
+
+    def release_lock(self, key: str, token: Optional[str]) -> bool:
+        """Release a lock only if we still own it."""
+        if not token:
+            return False
+        try:
+            if self.redis_client.get(key) == token:
+                return bool(self.redis_client.delete(key))
+            return False
+        except Exception:
+            return False
     
     def exists(self, key: str) -> bool:
         """Check if key exists"""

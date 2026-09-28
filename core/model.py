@@ -269,8 +269,8 @@ class Order(Base):
     pickup_address = Column(Text, nullable=True)  # Full address snapshot at checkout
 
     # Payment URL fields
-    payment_url = Column(Text, nullable=True)  # Paystack authorization URL
-    payment_reference = Column(String(100), nullable=True)  # Paystack reference
+    payment_url = Column(Text, nullable=True)  # Legacy hosted-checkout URL (unused by Flutterwave Direct API)
+    payment_reference = Column(String(100), nullable=True)  # Our tx_ref, sent to Flutterwave as tx_ref
     payment_initialized_at = Column(TIMESTAMP, nullable=True)  # When payment was first initialized
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -327,7 +327,7 @@ class Payment(Base):
     # type for internal handling (deposit, installment, etc)
     payment_type = Column(Enum("order", "deposit", "installment", "full_pay", 
                                name="asset_payment_type"), nullable=True)
-    payment_method = Column(String(50), nullable=True, default="paystack")
+    payment_method = Column(String(50), nullable=True, default="flutterwave")
     transaction_id = Column(String(100), unique=True, nullable=False)
     # Human-readable receipt identifier (RCPT-YYYYMMDD-XXXXXXXX). Nullable so a
     # missed creation path degrades to a derived value instead of failing the
@@ -335,9 +335,9 @@ class Payment(Base):
     receipt_number = Column(String(50), unique=True, index=True, nullable=True)
     
     # Payment URL fields
-    authorization_url = Column(Text, nullable=True)  # Paystack authorization URL
-    access_code = Column(String(100), nullable=True)  # Paystack access code
-    reference = Column(String(100), nullable=True)  # Paystack reference
+    authorization_url = Column(Text, nullable=True)  # Legacy Paystack field, unused by Flutterwave Direct API
+    access_code = Column(String(100), nullable=True)  # Legacy Paystack field, unused by Flutterwave Direct API
+    reference = Column(String(100), nullable=True)  # Our tx_ref (LEL_…), sent to Flutterwave as tx_ref
     transaction_metadata = Column(JSON, nullable=True)  # Arbitrary payment metadata (fee breakdown, etc.)
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -727,7 +727,7 @@ class GeneralAgreement(Base):
 
 
 class PaymentMandate(Base):
-    """A recurring bank-debit authorization (Paystack Direct Debit) backing a
+    """A recurring card-token authorization (Flutterwave tokenized charge) backing a
     structured GeneralAgreement's monthly installments. One mandate per agreement."""
     __tablename__ = "payment_mandates"
 
@@ -735,18 +735,18 @@ class PaymentMandate(Base):
     agreement_id = Column(UUID, ForeignKey("general_agreements.id"), nullable=False, unique=True)
     user_id = Column(UUID, ForeignKey("users.id"), nullable=False)
 
-    provider = Column(String(50), nullable=False, default="paystack")
+    provider = Column(String(50), nullable=False, default="flutterwave")
     status = Column(Enum("pending_authorization", "active", "revoked", "failed",
                         name="mandate_status"), default="pending_authorization")
 
-    # Paystack only allows charging an authorization with the exact email it was created with.
+    # Flutterwave tokenized charges must reuse the exact email the token was created with.
     email = Column(String(255), nullable=False)
-    reference = Column(String(100), nullable=True)  # initialize_authorization reference
-    authorization_code = Column(String(100), nullable=True)  # set once the customer authorizes
+    reference = Column(String(100), nullable=True)  # local mandate reference (LEL_MANDATE_…)
+    authorization_code = Column(String(255), nullable=True)  # Flutterwave card token (flw-t1nf-…)
     bank_name = Column(String(100), nullable=True)
     account_number_last4 = Column(String(10), nullable=True)
     failed_attempts = Column(Integer, nullable=False, default=0)
-    authorized_at = Column(TIMESTAMP, nullable=True)  # Paystack requires a 6h wait before first charge
+    authorized_at = Column(TIMESTAMP, nullable=True)  # set once the card token is captured
 
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
@@ -867,6 +867,9 @@ class Dispute(Base):
     user = relationship("User")
     order = relationship("Order")
     agreement = relationship("GeneralAgreement")
+
+
+# ---------------- LEGAL DOCelationship("GeneralAgreement")
 
 
 # ---------------- LEGAL DOCUMENTS (admin-editable public pages) ----------------

@@ -25,7 +25,6 @@ from core.model import (
 )
 from core.notifications_service import create_notification
 from core.email_service import _ref
-from core.paystack_service import paystack_service
 from core.payment_service import payment_service
 from core.system_settings_service import system_settings_service
 from core.financing_service import financing_service
@@ -1173,8 +1172,15 @@ class AssetService:
         agreement_id: UUID,
         data: MandateInitiateRequest,
     ) -> Dict[str, Any]:
-        """Start recurring bank-debit authorization for a structured (monthly) agreement.
-        Returns a redirect_url the customer must visit to consent to the mandate."""
+        """Register a pending card-token mandate for a structured (monthly) agreement.
+
+        With Flutterwave tokenization there is no separate bank-consent redirect:
+        the customer pays the first installment by card (Direct-API card flow) and
+        the reusable card token returned on success *becomes* the mandate
+        (activated in ``PaymentService._maybe_capture_card_mandate``). This
+        endpoint therefore only stages the ``pending_authorization`` row and
+        tells the client to collect the first card payment.
+        """
         agreement = (
             db.query(GeneralAgreement)
             .filter(
@@ -1204,17 +1210,6 @@ class AssetService:
             )
 
         reference = f"LEL_MANDATE_{uuid4().hex[:10].upper()}"
-        ps_res = paystack_service.initialize_authorization(
-            email=data.email,
-            reference=reference,
-            channels=["direct_debit"],
-            callback_url=data.callback_url,
-        )
-
-        if not ps_res.get("status"):
-            raise HTTPException(
-                status_code=400, detail="Could not start mandate authorization"
-            )
 
         if mandate:
             mandate.email = data.email
@@ -1235,8 +1230,9 @@ class AssetService:
         db.commit()
 
         return {
-            "redirect_url": ps_res["data"]["redirect_url"],
             "reference": reference,
+            "status": "pending_authorization",
+            "message": "Pay the first installment by card to activate automatic monthly charges.",
         }
 
     def get_mandate(

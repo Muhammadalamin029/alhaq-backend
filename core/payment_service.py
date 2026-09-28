@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any
 from decimal import Decimal
+import functools
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from core.model import (
     Payment, Order, OrderItem, GeneralAgreement,
     GeneralInspection, Property, PropertyUnit, PaymentMandate, User
 )
-from core.paystack_service import paystack_service
+from core.flutterwave_service import flutterwave_service
 from core.receipt_service import derive_receipt_number
 from core.notifications_service import create_notification
 from core.email_service import _ref
@@ -21,13 +22,43 @@ from core.order_installment_service import order_installment_service
 logger = logging.getLogger(__name__)
 
 BANK_TRANSFER_EXPIRY_PREFIX = "bank_transfer_expiry:"
+BANK_TRANSFER_INIT_LOCK_PREFIX = "bank_transfer_init_lock:"
+CARD_CHARGE_INIT_LOCK_PREFIX = "card_charge_init_lock:"
+# How long a duplicate initiation is held off while the winner finishes.
+INIT_LOCK_TTL_SECONDS = 30
+
+
+def _serialize_initiation(prefix: str, busy_message: str):
+    """Decorator serializing concurrent initiations for the same payment target.
+
+    The decorated method must receive ``category``/``order_id``/``agreement_id``
+    as keyword arguments (all current callers do). The loser gets HTTP 429 and
+    its retry lands on the reuse path (or a fresh attempt). The lock is always
+    released in ``finally``; TTL only bounds stale holds after a crash.
+    """
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(self, db, user_id, *args, **kwargs):
+            category = kwargs.get("category")
+            order_id = kwargs.get("order_id")
+            agreement_id = kwargs.get("agreement_id")
+            lock_key = f"{prefix}{user_id}:{category}:{order_id or agreement_id}"
+            token = redis_client.acquire_lock(lock_key, expire=INIT_LOCK_TTL_SECONDS)
+            if not token:
+                raise HTTPException(status_code=429, detail=busy_message)
+            try:
+                return fn(self, db, user_id, *args, **kwargs)
+            finally:
+                redis_client.release_lock(lock_key, token)
+        return wrapper
+    return decorator
 
 
 def _safe_notify(db: Session, payload: Dict[str, Any]):
     """Best-effort notification that can never break payment completion.
 
     A notification failure (e.g. a type missing from the DB enum) must never
-    turn a successful Paystack charge into a 500 / lost payment state.
+    turn a successful Flutterwave charge into a 500 / lost payment state.
     Core payment/agreement state is committed by the caller BEFORE
     notifications, so a rollback here only drops the notification itself.
     """
@@ -46,62 +77,92 @@ def _safe_notify(db: Session, payload: Dict[str, Any]):
 
 
 class PaymentService:
-    def __init__(self):
-        self.paystack = paystack_service
+    PROVIDER = "flutterwave"
 
-    def initialize_payment(
-        self, 
-        db: Session, 
-        user_id: str, 
-        email: str, 
-        amount_kobo: int, 
-        category: str,
-        order_id: Optional[str] = None,
-        agreement_id: Optional[str] = None,
-        callback_url: Optional[str] = None,
-        metadata: Optional[Dict] = None,
-        payment_method: str = "paystack"
-    ) -> Dict[str, Any]:
-        """Unified payment initialization for Orders and Asset Agreements"""
-        if payment_method != "paystack":
-            raise HTTPException(status_code=400, detail="Manual payments have been removed. Please use Paystack.")
-        
-        # 1. Validation based on category
+    def __init__(self):
+        self.flw = flutterwave_service
+
+    @staticmethod
+    def _validate_card_fields(card_number: str, cvv: str, expiry_month: str, expiry_year: str) -> str:
+        """Light server-side card sanity check. Returns normalized PAN digits."""
+        digits = "".join(ch for ch in (card_number or "") if ch.isdigit())
+        if not (13 <= len(digits) <= 19):
+            raise HTTPException(status_code=400, detail="Invalid card number")
+        if not ((cvv or "").isdigit() and 3 <= len(cvv) <= 4):
+            raise HTTPException(status_code=400, detail="Invalid CVV")
+        try:
+            month = int(expiry_month)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid expiry month")
+        if not 1 <= month <= 12:
+            raise HTTPException(status_code=400, detail="Invalid expiry month")
+        year = (expiry_year or "").strip()
+        if len(year) == 4 and year.isdigit():
+            year = year[2:]
+        if not (len(year) == 2 and year.isdigit()):
+            raise HTTPException(status_code=400, detail="Invalid expiry year")
+        return digits
+
+    def _validate_payment_category(self, category: str, order_id: Optional[str], agreement_id: Optional[str]) -> None:
         if category == "order" and not order_id:
             raise HTTPException(status_code=400, detail="order_id is required for order payments")
         if category in ["asset_deposit", "asset_installment", "full_pay"] and not agreement_id:
             raise HTTPException(status_code=400, detail="agreement_id is required for asset payments")
 
-        # 2. Check if we have an existing pending payment and reuse it
+    @staticmethod
+    def _infer_payment_type(category: str, metadata: Optional[Dict]) -> Optional[str]:
+        payment_type = (metadata or {}).get("payment_type")
+        if payment_type:
+            return payment_type
+        if category == "asset_deposit":
+            return "deposit"
+        if category == "asset_installment":
+            return "installment"
+        if category == "order":
+            return "order"
+        if category == "full_pay":
+            return "full_pay"
+        return None
+
+    def _prepare_payment(
+        self,
+        db: Session,
+        user_id: str,
+        category: str,
+        amount_naira: Decimal,
+        order_id: Optional[str] = None,
+        agreement_id: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+    ):
+        """Shared validation + pending-payment staging for card and bank-transfer charges.
+
+        Returns ``(payment, agreement)`` where ``payment`` is a pending ``Payment``
+        row (reused or newly created) with a fresh ``LEL_`` tx_ref already assigned
+        to ``transaction_id``/``reference``. The caller still must invoke the
+        provider, attach provider ids to ``transaction_metadata``, and commit.
+        Amounts here are **Naira major units** (Flutterwave convention).
+        """
+        self._validate_payment_category(category, order_id, agreement_id)
+
         existing_payment = db.query(Payment).filter(
             Payment.buyer_id == user_id,
             Payment.status == "pending",
             Payment.payment_category == category
         )
-        if order_id: existing_payment = existing_payment.filter(Payment.order_id == order_id)
-        if agreement_id: existing_payment = existing_payment.filter(Payment.agreement_id == agreement_id)
-
+        if order_id:
+            existing_payment = existing_payment.filter(Payment.order_id == order_id)
+        if agreement_id:
+            existing_payment = existing_payment.filter(Payment.agreement_id == agreement_id)
         existing_payment = existing_payment.first()
 
-        # 4. Infer payment_type if missing in metadata
-        payment_type = (metadata or {}).get("payment_type")
-        if not payment_type:
-            if category == "asset_deposit": payment_type = "deposit"
-            elif category == "asset_installment": payment_type = "installment"
-            elif category == "order": payment_type = "order"
-            elif category == "full_pay": payment_type = "full_pay"
+        payment_type = self._infer_payment_type(category, metadata)
 
-        # Get seller_id if applicable
         seller_id = None
         agreement = None
         if agreement_id:
             agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == agreement_id).first()
             if agreement:
                 seller_id = agreement.seller_id
-        elif order_id:
-            # For orders, we might have multiple sellers, so seller_id at the payment level might be None
-            # and handled per item or per split. But for simplicity if it's single seller we can set it.
-            pass
 
         # Admin-configured minimum initial-payment percentage for installment plans.
         # Checked once - only on the payment that starts the plan (no prior completed
@@ -113,8 +174,7 @@ class PaymentService:
             ).first() is not None
             if not has_prior_payment:
                 min_percent = Decimal(str(system_settings_service.get_payment_setting_values(db).get("installment_min_percent", 0)))
-                amount = Decimal(amount_kobo) / 100
-                paid_percent = (amount / agreement.total_price * 100) if agreement.total_price else Decimal(0)
+                paid_percent = (amount_naira / agreement.total_price * 100) if agreement.total_price else Decimal(0)
                 if paid_percent < min_percent:
                     raise HTTPException(
                         status_code=400,
@@ -124,23 +184,51 @@ class PaymentService:
         # Product-order installment validation (first payment percentage, balance cap, etc.)
         if category == "order" and (metadata or {}).get("payment_type") == "installment":
             order = db.query(Order).filter(Order.id == order_id).first()
-            order_installment_service.validate_installment_payment(
-                db, user_id, order, Decimal(amount_kobo) / 100
-            )
+            order_installment_service.validate_installment_payment(db, user_id, order, amount_naira)
 
-        if existing_payment:
-            # Re-initialize with Paystack if it's old or just return existing
-            logger.info(f"Re-using existing pending payment for {category}: {existing_payment.id}")
-            # We update the amount in case it changed
-            existing_payment.amount = Decimal(amount_kobo) / 100
-            if (metadata or {}).get("payment_type"):
-                existing_payment.payment_type = payment_type
-            
-        # 3. Generate unique reference
         reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
 
-        # 4. Prepare metadata for Paystack
-        ps_metadata = {
+        if existing_payment:
+            logger.info(f"Re-using existing pending payment for {category}: {existing_payment.id}")
+            payment = existing_payment
+            payment.amount = amount_naira
+            if (metadata or {}).get("payment_type"):
+                payment.payment_type = payment_type
+            payment.transaction_id = reference
+            payment.reference = reference
+        else:
+            payment = Payment(
+                order_id=order_id,
+                agreement_id=agreement_id,
+                buyer_id=user_id,
+                seller_id=seller_id,
+                amount=amount_naira,
+                status="pending",
+                payment_category=category,
+                payment_type=payment_type,
+                transaction_id=reference,
+                reference=reference,
+                payment_method=self.PROVIDER
+            )
+            db.add(payment)
+            db.flush()
+            payment.receipt_number = derive_receipt_number(payment)
+
+        return payment, agreement
+
+    def _mark_order_processing(self, db: Session, order_id: Optional[str], reference: str) -> None:
+        if not order_id:
+            return
+        order = db.query(Order).filter(Order.id == order_id).first()
+        if order:
+            order.payment_reference = reference
+            order.status = "processing"
+            db.query(OrderItem).filter(OrderItem.order_id == order_id).update(
+                {"status": "processing"}, synchronize_session=False
+            )
+
+    def _provider_meta(self, user_id: str, category: str, order_id: Optional[str], agreement_id: Optional[str], metadata: Optional[Dict]) -> Dict[str, Any]:
+        return {
             "user_id": str(user_id),
             "category": category,
             "order_id": str(order_id) if order_id else None,
@@ -148,109 +236,203 @@ class PaymentService:
             **(metadata or {})
         }
 
-        # 5. Initialize Paystack transaction
-        ps_res = self.paystack.initialize_transaction(
-            email=email,
-            amount=amount_kobo,
-            reference=reference,
-            metadata=ps_metadata,
-            callback_url=callback_url
-        )
+    def _store_provider_ids(self, payment: Payment, flw_data: Dict[str, Any], channel: str) -> None:
+        provider_meta = dict(payment.transaction_metadata or {})
+        provider_meta.update({
+            "provider": self.PROVIDER,
+            "channel": channel,
+            "flw_ref": flw_data.get("flw_ref"),
+            "flw_id": flw_data.get("id"),
+        })
+        payment.transaction_metadata = provider_meta
 
-        if not ps_res.get("status"):
-            raise HTTPException(status_code=400, detail="Paystack initialization failed")
+    # ── Direct card charge (multi-step) ────────────────────────
+    @_serialize_initiation(CARD_CHARGE_INIT_LOCK_PREFIX, "A card payment is already being processed. Please wait a moment and try again.")
+    def charge_card_payment(
+        self,
+        db: Session,
+        user_id: str,
+        email: str,
+        amount_naira: Decimal,
+        category: str,
+        card_number: str,
+        cvv: str,
+        expiry_month: str,
+        expiry_year: str,
+        order_id: Optional[str] = None,
+        agreement_id: Optional[str] = None,
+        fullname: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        redirect_url: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+        payment_method: str = "flutterwave"
+    ) -> Dict[str, Any]:
+        """Step 1 of the Direct-API card flow: charge the card, return the next step.
 
-        # 6. Save or Update record
-        if existing_payment:
-            payment = existing_payment
-            payment.transaction_id = reference
-            payment.reference = reference
-            payment.authorization_url = ps_res["data"]["authorization_url"]
-            payment.access_code = ps_res["data"]["access_code"]
-        else:
-            payment = Payment(
-                order_id=order_id,
-                agreement_id=agreement_id,
-                buyer_id=user_id,
-                seller_id=seller_id,
-                amount=Decimal(amount_kobo) / 100,
-                status="pending",
-                payment_category=category,
-                payment_type=payment_type,
-                transaction_id=reference,
-                reference=reference,
-                authorization_url=ps_res["data"]["authorization_url"],
-                access_code=ps_res["data"]["access_code"],
-                payment_method=payment_method
-            )
-            db.add(payment)
-            db.flush()
-            payment.receipt_number = derive_receipt_number(payment)
-        
-        # 7. Specific link logic — update order and all its items to "processing"
-        if category == "order":
-            order = db.query(Order).filter(Order.id == order_id).first()
-            if order:
-                order.payment_url = ps_res["data"]["authorization_url"]
-                order.payment_reference = reference
-                order.status = "processing"
-                db.query(OrderItem).filter(OrderItem.order_id == order_id).update(
-                    {"status": "processing"}, synchronize_session=False
-                )
-
-        db.commit()
-        return ps_res["data"]
-
-    def _normalize_bank_transfer_details(self, data: Dict[str, Any]) -> Dict[str, Optional[str]]:
-        """Defensively extract account details from a Paystack /charge bank_transfer response.
-
-        Paystack returns account_number/account_name/bank/account_expires_at at the
-        top level of `data` (not nested under a `bank_transfer` key); the nested
-        lookups are kept as a fallback in case the shape differs across API versions.
+        Raw card fields are passed straight through to Flutterwave over TLS and
+        are never persisted. Response: ``next_step`` of pin | avs | otp |
+        redirect | success | failed plus ``tx_ref`` for the follow-up calls.
         """
-        bt = data.get("bank_transfer") or {}
-        bank = data.get("bank") or bt.get("bank")
-        if isinstance(bank, dict):
-            bank_name = bank.get("name") or data.get("bank_name") or bt.get("bank_name") or ""
-        else:
-            bank_name = data.get("bank_name") or bt.get("bank_name") or (bank if isinstance(bank, str) else "") or ""
+        if payment_method != self.PROVIDER:
+            raise HTTPException(status_code=400, detail="Manual payments have been removed. Please use card payment.")
 
-        return {
-            "account_number": data.get("account_number") or bt.get("account_number") or bt.get("transfer_account") or "",
-            "account_name": data.get("account_name") or bt.get("account_name") or "",
-            "bank_name": bank_name,
-            "expires_at": data.get("account_expires_at") or bt.get("account_expires_at") or bt.get("expires_at"),
-        }
+        pan = self._validate_card_fields(card_number, cvv, expiry_month, expiry_year)
 
+        payment, _agreement = self._prepare_payment(
+            db, user_id, category, amount_naira, order_id, agreement_id, metadata
+        )
+        tx_ref = payment.reference
+
+        flw_res = self.flw.charge_card(
+            card_number=pan,
+            cvv=cvv,
+            expiry_month=str(expiry_month).zfill(2),
+            expiry_year=expiry_year[-2:],
+            amount=float(amount_naira),
+            email=email,
+            tx_ref=tx_ref,
+            fullname=fullname,
+            phone_number=phone_number,
+            redirect_url=redirect_url,
+            meta=self._provider_meta(user_id, category, order_id, agreement_id, metadata),
+        )
+        if not flw_res.get("status"):
+            raise HTTPException(status_code=400, detail=flw_res.get("message", "Card charge failed"))
+
+        flw_data = flw_res.get("data") or {}
+        self._store_provider_ids(payment, flw_data, channel="card")
+        self._mark_order_processing(db, order_id, tx_ref)
+        db.commit()
+
+        step = self.flw.next_step(flw_res)
+        step["payment_id"] = str(payment.id)
+        if step.get("next_step") == "success":
+            self.verify_transaction(db, tx_ref, transaction_id=flw_data.get("id"))
+            step["next_step"] = "success"
+        return step
+
+    def authorize_card_payment(
+        self,
+        db: Session,
+        tx_ref: str,
+        card_number: str,
+        cvv: str,
+        expiry_month: str,
+        expiry_year: str,
+        authorization: Dict[str, Any],
+        email: Optional[str] = None,
+        fullname: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        redirect_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Step 2: resend the charge with PIN/AVS authorization.
+
+        Flutterwave requires the full card payload on re-charge, so the client
+        resubmits the card fields together with ``authorization``. Card data is
+        never stored server-side.
+        """
+        payment = db.query(Payment).filter(Payment.reference == tx_ref).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        if payment.status != "pending":
+            raise HTTPException(status_code=400, detail=f"Payment is already {payment.status}")
+
+        pan = self._validate_card_fields(card_number, cvv, expiry_month, expiry_year)
+        mode = (authorization or {}).get("mode")
+        if mode not in ("pin", "avs_noauth", "avs"):
+            raise HTTPException(status_code=400, detail="authorization.mode must be pin or avs_noauth")
+
+        flw_res = self.flw.charge_card(
+            card_number=pan,
+            cvv=cvv,
+            expiry_month=str(expiry_month).zfill(2),
+            expiry_year=str(expiry_year)[-2:],
+            amount=float(payment.amount),
+            email=email or self._payment_email(db, payment),
+            tx_ref=tx_ref,
+            fullname=fullname,
+            phone_number=phone_number,
+            redirect_url=redirect_url,
+            authorization=authorization,
+            meta=(payment.transaction_metadata or {}),
+        )
+        if not flw_res.get("status"):
+            raise HTTPException(status_code=400, detail=flw_res.get("message", "Card authorization failed"))
+
+        flw_data = flw_res.get("data") or {}
+        self._store_provider_ids(payment, flw_data, channel="card")
+        db.commit()
+
+        step = self.flw.next_step(flw_res)
+        step["payment_id"] = str(payment.id)
+        if step.get("next_step") == "success":
+            self.verify_transaction(db, tx_ref, transaction_id=flw_data.get("id"))
+            step["next_step"] = "success"
+        return step
+
+    def validate_card_payment(self, db: Session, tx_ref: str, otp: str) -> Dict[str, Any]:
+        """Step 3: validate the charge with the OTP sent to the customer."""
+        payment = db.query(Payment).filter(Payment.reference == tx_ref).first()
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        if payment.status != "pending":
+            raise HTTPException(status_code=400, detail=f"Payment is already {payment.status}")
+        flw_ref = (payment.transaction_metadata or {}).get("flw_ref")
+        if not flw_ref:
+            raise HTTPException(status_code=400, detail="No Flutterwave charge found for this payment")
+
+        flw_res = self.flw.validate_charge(otp=otp, flw_ref=flw_ref)
+        if not flw_res.get("status"):
+            raise HTTPException(status_code=400, detail=flw_res.get("message", "OTP validation failed"))
+
+        flw_data = flw_res.get("data") or {}
+        self._store_provider_ids(payment, flw_data, channel="card")
+        db.commit()
+
+        result = self.verify_transaction(db, tx_ref, transaction_id=flw_data.get("id"))
+        return {"next_step": "success" if result.get("completed") else "pending",
+                "tx_ref": tx_ref, "payment_id": str(payment.id), "verification": result}
+
+    def _payment_email(self, db: Session, payment: Payment) -> str:
+        buyer = db.query(User).filter(User.id == payment.buyer_id).first()
+        return (buyer.email if buyer else "") or "customer@example.com"
+
+    def _normalize_bank_transfer_details(self, flw_response: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        """Extract display fields from a Flutterwave bank-transfer charge response."""
+        return flutterwave_service.normalize_bank_transfer_details(flw_response)
+
+    @_serialize_initiation(BANK_TRANSFER_INIT_LOCK_PREFIX, "A bank transfer is already being generated. Please wait a moment and try again.")
     def initialize_bank_transfer_payment(
         self,
         db: Session,
         user_id: str,
         email: str,
-        amount_kobo: int,
+        amount_naira: Decimal,
         category: str,
         order_id: Optional[str] = None,
         agreement_id: Optional[str] = None,
         metadata: Optional[Dict] = None,
+        fullname: Optional[str] = None,
+        phone_number: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate a one-time 'Pay with Transfer' account number for an order or agreement payment"""
-        # 1. Validation based on category
-        if category == "order" and not order_id:
-            raise HTTPException(status_code=400, detail="order_id is required for order payments")
-        if category in ["asset_deposit", "asset_installment", "full_pay"] and not agreement_id:
-            raise HTTPException(status_code=400, detail="agreement_id is required for asset payments")
+        """Generate a one-time 'Pay with Transfer' account number for an order or agreement payment.
 
-        # 2. Check if we have an existing pending payment and reuse it
+        Amounts are **Naira major units**. Reuses a still-valid account for the
+        same pending payment instead of minting a new one per call.
+        """
+        self._validate_payment_category(category, order_id, agreement_id)
+
+        # Reuse existing bank transfer details if still valid for this amount
         existing_payment = db.query(Payment).filter(
             Payment.buyer_id == user_id,
             Payment.status == "pending",
             Payment.payment_category == category
         )
-        if order_id: existing_payment = existing_payment.filter(Payment.order_id == order_id)
-        if agreement_id: existing_payment = existing_payment.filter(Payment.agreement_id == agreement_id)
-
+        if order_id:
+            existing_payment = existing_payment.filter(Payment.order_id == order_id)
+        if agreement_id:
+            existing_payment = existing_payment.filter(Payment.agreement_id == agreement_id)
         existing_payment = existing_payment.first()
-        amount_naira = Decimal(amount_kobo) / 100
         requested_payment_type = (metadata or {}).get("payment_type")
 
         # 2a. Product-order installment validation (first payment percentage, balance cap, etc.)
@@ -260,14 +442,24 @@ class PaymentService:
                 db, user_id, order, amount_naira
             )
 
-        # 2b. Reuse existing bank transfer details if still valid for this amount
+        # 2b. Reuse existing bank transfer details only if the account is still
+        # valid for this amount: Redis TTL key alive AND the stored expires_at
+        # still in the future. Otherwise fall through and mint a fresh account
+        # (a stale cached timestamp is what used to blank the UI with an
+        # instant "expired" screen).
         if existing_payment and existing_payment.transaction_metadata:
             cached = existing_payment.transaction_metadata
             cached_bank_transfer = cached.get("bank_transfer") if cached.get("channel") == "bank_transfer" else None
             if cached_bank_transfer and cached_bank_transfer.get("account_number") and existing_payment.amount == amount_naira:
-                is_expired = not redis_client.exists(f"{BANK_TRANSFER_EXPIRY_PREFIX}{existing_payment.reference}")
+                redis_alive = redis_client.exists(f"{BANK_TRANSFER_EXPIRY_PREFIX}{existing_payment.reference}")
+                cached_expiry = cached_bank_transfer.get("expires_at")
 
-                if not is_expired:
+                if not redis_alive or not self.flw.expiry_is_fresh(cached_expiry):
+                    logger.info(
+                        f"Cached bank transfer for {category} {existing_payment.id} is stale "
+                        f"(redis_alive={redis_alive}, expires_at={cached_expiry}); minting a fresh account."
+                    )
+                else:
                     if requested_payment_type and existing_payment.payment_type != requested_payment_type:
                         existing_payment.payment_type = requested_payment_type
                         db.commit()
@@ -278,17 +470,14 @@ class PaymentService:
                         "bank_name": cached_bank_transfer.get("bank_name", ""),
                         "amount": amount_naira,
                         "reference": existing_payment.reference,
-                        "expires_at": cached_bank_transfer.get("expires_at"),
+                        # Re-normalize so the client always gets ISO+offset, even
+                        # for rows cached before the normalization change.
+                        "expires_at": self.flw.normalize_expiry_iso(cached_expiry),
                         "currency": "NGN",
                     }
 
         # 3. Infer payment_type if missing in metadata
-        payment_type = (metadata or {}).get("payment_type")
-        if not payment_type:
-            if category == "asset_deposit": payment_type = "deposit"
-            elif category == "asset_installment": payment_type = "installment"
-            elif category == "order": payment_type = "order"
-            elif category == "full_pay": payment_type = "full_pay"
+        payment_type = self._infer_payment_type(category, metadata)
 
         # Get seller_id if applicable
         seller_id = None
@@ -306,43 +495,50 @@ class PaymentService:
         # 4. Generate unique reference
         reference = f"LEL_{uuid.uuid4().hex[:10].upper()}"
 
-        # 5. Prepare metadata for Paystack
-        ps_metadata = {
-            "user_id": str(user_id),
-            "category": category,
-            "order_id": str(order_id) if order_id else None,
-            "agreement_id": str(agreement_id) if agreement_id else None,
-            **(metadata or {})
-        }
+        # 5. Prepare metadata for Flutterwave
+        flw_meta = self._provider_meta(user_id, category, order_id, agreement_id, metadata)
 
         # 6. Initiate the Pay with Transfer charge
-        ps_res = self.paystack.charge_bank_transfer(
+        flw_res = self.flw.charge_bank_transfer(
             email=email,
-            amount=amount_kobo,
-            reference=reference,
-            metadata=ps_metadata,
+            amount=float(amount_naira),
+            tx_ref=reference,
+            fullname=fullname,
+            phone_number=phone_number,
+            meta=flw_meta,
         )
 
-        if not ps_res.get("status"):
-            raise HTTPException(status_code=400, detail=ps_res.get("message", "Paystack bank transfer initialization failed"))
+        if not flw_res.get("status"):
+            raise HTTPException(status_code=400, detail=flw_res.get("message", "Flutterwave bank transfer initialization failed"))
 
-        bank_details = self._normalize_bank_transfer_details(ps_res["data"])
+        bank_details = self._normalize_bank_transfer_details(flw_res)
         if not bank_details["account_number"]:
-            logger.error(f"Bank transfer charge for {reference} returned no account number: {ps_res}")
-            raise HTTPException(status_code=502, detail="Bank transfer details unavailable from Paystack")
+            logger.error(f"Bank transfer charge for {reference} returned no account number: { {k: v for k, v in flw_res.items() if k != 'meta'} }")
+            raise HTTPException(status_code=502, detail="Bank transfer details unavailable from Flutterwave")
 
         if bank_details["expires_at"]:
             try:
                 expiry_dt = datetime.fromisoformat(str(bank_details["expires_at"]).replace("Z", "+00:00"))
-                ttl_seconds = max(30, int((expiry_dt - datetime.now(timezone.utc)).total_seconds()))
+                if expiry_dt.tzinfo is None:
+                    expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+                remaining = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
+                if remaining <= 0:
+                    logger.error(
+                        f"Flutterwave returned a past account_expiration for {reference}: "
+                        f"{bank_details['expires_at']} (backend clock may be skewed)"
+                    )
+                ttl_seconds = max(30, int(remaining))
                 redis_client.set(f"{BANK_TRANSFER_EXPIRY_PREFIX}{reference}", bank_details["expires_at"], expire=ttl_seconds)
             except ValueError:
-                logger.warning(f"Could not parse account_expires_at for {reference}: {bank_details['expires_at']}")
+                logger.warning(f"Could not parse account_expiration for {reference}: {bank_details['expires_at']}")
 
+        flw_data = flw_res.get("data") or {}
         payment_metadata = {
+            "provider": self.PROVIDER,
             "channel": "bank_transfer",
             "bank_transfer": bank_details,
-            "bank_transfer_raw": ps_res["data"],
+            "flw_ref": flw_data.get("flw_ref"),
+            "flw_id": flw_data.get("id"),
         }
 
         # 7. Save or update record
@@ -364,21 +560,14 @@ class PaymentService:
                 transaction_id=reference,
                 reference=reference,
                 transaction_metadata=payment_metadata,
-                payment_method="paystack",
+                payment_method=self.PROVIDER,
             )
             db.add(payment)
             db.flush()
             payment.receipt_number = derive_receipt_number(payment)
 
-        # 8. Order-specific side effects — mirror initialize_payment, minus payment_url
-        if category == "order":
-            order = db.query(Order).filter(Order.id == order_id).first()
-            if order:
-                order.payment_reference = reference
-                order.status = "processing"
-                db.query(OrderItem).filter(OrderItem.order_id == order_id).update(
-                    {"status": "processing"}, synchronize_session=False
-                )
+        # 8. Order-specific side effects
+        self._mark_order_processing(db, order_id, reference)
 
         db.commit()
 
@@ -392,43 +581,87 @@ class PaymentService:
             "currency": "NGN",
         }
 
-    def verify_transaction(self, db: Session, reference: str) -> Dict[str, Any]:
-        """Unified verification logic"""
-        ps_res = self.paystack.verify_transaction(reference)
-        
-        if not ps_res.get("status"):
-            return ps_res
+    def verify_transaction(self, db: Session, tx_ref: str, transaction_id: Optional[int] = None) -> Dict[str, Any]:
+        """Unified verification logic against Flutterwave.
 
-        data = ps_res.get("data", {})
-        status_raw = data.get("status")
+        Resolves the Flutterwave transaction id from the argument, the stored
+        payment metadata, or a ``verify_by_reference`` lookup — then requires
+        ``status == successful`` plus matching amount/currency/tx_ref before
+        completing the payment. Returns the raw FLW response plus a
+        ``completed`` flag for convenience.
+        """
+        payment = db.query(Payment).filter(
+            (Payment.reference == tx_ref) | (Payment.transaction_id == tx_ref)
+        ).first()
 
-        payment = db.query(Payment).filter(Payment.transaction_id == reference).first()
+        flw_id = transaction_id or ((payment.transaction_metadata or {}).get("flw_id") if payment else None)
+        if flw_id is None and payment is not None:
+            try:
+                lookup = self.flw.verify_by_tx_ref(tx_ref)
+                flw_id = (lookup.get("data") or {}).get("id")
+            except Exception as e:
+                logger.error(f"Flutterwave tx_ref lookup failed for {tx_ref}: {e}")
+
+        if flw_id is None:
+            return {"status": "error", "message": "Could not resolve Flutterwave transaction", "completed": False}
+
+        try:
+            flw_res = self.flw.verify_transaction(int(flw_id))
+        except Exception as e:
+            logger.error(f"Flutterwave verification error for {tx_ref}: {e}")
+            return {"status": "error", "message": str(e), "completed": False}
+
+        if not flw_res.get("status"):
+            return {**flw_res, "completed": False}
+
+        data = flw_res.get("data", {})
+        status_raw = str(data.get("status") or "").lower()
+
         if not payment:
-            return ps_res
+            return {**flw_res, "completed": False}
 
-        if status_raw == "success":
+        # Failsafe: the webhook/redirect payload must agree with the ledger.
+        expected_amount = float(payment.amount or 0)
+        try:
+            flw_amount = float(data.get("amount") or 0)
+        except (TypeError, ValueError):
+            flw_amount = -1
+        matches = (
+            (data.get("tx_ref") in (payment.reference, payment.transaction_id))
+            and abs(flw_amount - expected_amount) < 0.01
+            and str(data.get("currency") or "NGN").upper() == "NGN"
+        )
+        if not matches:
+            logger.error(
+                f"Flutterwave verification mismatch for {tx_ref}: "
+                f"expected NGN {expected_amount}, got {data.get('currency')} {data.get('amount')} / {data.get('tx_ref')}"
+            )
+            return {**flw_res, "completed": False}
+
+        self._store_provider_ids(payment, data, channel=(payment.transaction_metadata or {}).get("channel", "card"))
+
+        if status_raw == "successful":
             if payment.status != "completed":
                 self._handle_completion(db, payment)
-            self._maybe_capture_card_mandate(db, payment, data.get("authorization") or {})
-        elif status_raw in ["failed", "abandoned", "reversed"]:
+            self._maybe_capture_card_mandate(db, payment, data)
+            db.commit()
+            return {**flw_res, "completed": True}
+        elif status_raw in ["failed", "cancelled", "expired"]:
             payment.status = "failed"
             db.commit()
 
-        return ps_res
+        return {**flw_res, "completed": False}
 
-    def _maybe_capture_card_mandate(self, db: Session, payment: Payment, authorization: Dict[str, Any]) -> None:
-        """When a card payment against a structured (monthly) agreement completes with
-        a reusable authorization, that authorization *is* the recurring mandate - no
-        separate bank-consent step needed. (Direct-debit authorizations are handled
-        separately via the mandate webhook, since those aren't tied to a specific
-        Payment/charge the way a card authorization is.)"""
-        if not payment.agreement_id or not authorization.get("reusable"):
-            return
-        if authorization.get("channel") == "direct_debit":
+    def _maybe_capture_card_mandate(self, db: Session, payment: Payment, flw_data: Dict[str, Any]) -> None:
+        """When a card payment against a structured (monthly) agreement completes and
+        Flutterwave returns a reusable card ``token``, that token *is* the recurring
+        mandate — later installments are charged via ``/v3/tokenized-charges`` with
+        the same customer email. No separate bank-consent step is needed."""
+        if not payment.agreement_id:
             return
 
-        authorization_code = authorization.get("authorization_code")
-        if not authorization_code:
+        token = self.flw.extract_card_token(flw_data)
+        if not token:
             return
 
         agreement = db.query(GeneralAgreement).filter(GeneralAgreement.id == payment.agreement_id).first()
@@ -444,13 +677,14 @@ class PaymentService:
             mandate = PaymentMandate(agreement_id=agreement.id, user_id=payment.buyer_id, email=buyer.email)
             db.add(mandate)
 
+        card = flw_data.get("card") or {}
         mandate.email = buyer.email
         mandate.status = "active"
-        mandate.authorization_code = authorization_code
+        mandate.authorization_code = token
         mandate.authorized_at = datetime.now(timezone.utc)
-        bank = authorization.get("bank")
-        mandate.bank_name = bank if isinstance(bank, str) else None
-        mandate.account_number_last4 = authorization.get("last4")
+        mandate.bank_name = card.get("issuer") or None
+        last4 = card.get("last_4digits") or card.get("last4")
+        mandate.account_number_last4 = last4
         db.commit()
 
         _safe_notify(db, {
@@ -740,76 +974,39 @@ class PaymentService:
 
         db.commit()
         
-    def handle_mandate_webhook(self, db: Session, event: str, reference: str, authorization: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Process a direct-debit `authorization` payload from a Paystack webhook that
-        concerns mandate lifecycle (authorization consent, revocation) rather than a
-        specific Payment. Returns None if `reference` doesn't belong to a mandate at
-        all (e.g. it's actually a regular recurring installment charge, which has its
-        own Payment row and should fall through to the normal Payment-based handling).
+    def handle_mandate_webhook(self, db: Session, event: str, tx_ref: str, flw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handle tokenized-installment webhooks that carry no local Payment row yet.
 
-        NOTE: the exact webhook event name(s) Paystack fires for mandate
-        authorization/revocation could not be confirmed against live docs while
-        building this - this handles it defensively off the `authorization` object's
-        `channel`/`reusable`/`authorization_code` fields, which should be stable
-        regardless of the wrapping event name, but re-verify against a real Paystack
-        webhook log before relying on this in production.
+        With Flutterwave tokenization there is no separate Direct-Debit mandate
+        lifecycle: activation happens when the first card charge returns a token
+        (see ``_maybe_capture_card_mandate``). This hook only handles late
+        failure notifications for tokenized charges — e.g. a 3DS-pending
+        installment that ultimately failed. Returns None when the ``tx_ref``
+        belongs to a regular Payment (normal Payment-based handling applies).
         """
-        mandate = db.query(PaymentMandate).filter(PaymentMandate.reference == reference).first()
-
-        is_revocation = "revoked" in (event or "").lower() or authorization.get("reusable") is False
-        if not mandate and is_revocation:
-            authorization_code = authorization.get("authorization_code")
-            if authorization_code:
-                mandate = db.query(PaymentMandate).filter(PaymentMandate.authorization_code == authorization_code).first()
-
-        if not mandate:
+        payment = db.query(Payment).filter(
+            (Payment.reference == tx_ref) | (Payment.transaction_id == tx_ref)
+        ).first()
+        if payment:
             return None
 
-        if is_revocation:
-            mandate.status = "revoked"
-            db.commit()
-            create_notification(db, {
-                "user_id": str(mandate.user_id),
-                "type": "agreement_update",
-                "title": "Recurring Payment Cancelled",
-                "message": "Your bank has cancelled the recurring debit authorization for your monthly payment plan. Please re-authorize to avoid missing installments.",
-                "priority": "urgent",
-                "channels": ["in_app", "email"],
-            })
-            logger.info(f"Mandate {mandate.id} revoked via webhook")
-            return {"status": "success"}
-
-        authorization_code = authorization.get("authorization_code")
-        if authorization_code and authorization.get("reusable"):
-            mandate.authorization_code = authorization_code
-            mandate.status = "active"
-            mandate.authorized_at = datetime.now(timezone.utc)
-            bank = authorization.get("bank")
-            mandate.bank_name = bank if isinstance(bank, str) else (authorization.get("bank_name") or None)
-            last4 = authorization.get("last4") or authorization.get("account_number", "")[-4:] if authorization.get("account_number") else None
-            mandate.account_number_last4 = last4
-            db.commit()
-
-            create_notification(db, {
-                "user_id": str(mandate.user_id),
-                "type": "agreement_update",
-                "title": "Recurring Payment Authorized",
-                "message": "Your bank account has been authorized for recurring monthly debits. We'll automatically charge your installment each month.",
-                "priority": "medium",
-                "channels": ["in_app", "email"],
-            })
-            logger.info(f"Mandate {mandate.id} activated via webhook")
-            return {"status": "success"}
-
-        logger.info(f"Ignoring non-actionable mandate webhook for reference {reference} (event={event})")
+        status_raw = str((flw_data or {}).get("status") or "").lower()
+        if status_raw in ("failed", "cancelled", "expired"):
+            mandate = db.query(PaymentMandate).filter(PaymentMandate.reference == tx_ref).first()
+            if mandate:
+                mandate.failed_attempts = (mandate.failed_attempts or 0) + 1
+                db.commit()
+                logger.info(f"Mandate {mandate.id} installment failed via webhook ({tx_ref})")
+                return {"status": "success"}
+        logger.info(f"Ignoring non-actionable mandate webhook for reference {tx_ref} (event={event})")
         return {"status": "ignored", "reason": "mandate_not_actionable"}
 
     def charge_mandate_installment(self, db: Session, agreement: GeneralAgreement, mandate: PaymentMandate) -> Payment:
-        """Attempt one recurring installment charge against an active Direct Debit
+        """Attempt one recurring installment charge against an active card-token
         mandate (called by the daily `charge_due_mandates` celery task). Creates a
-        Payment row; if Paystack responds synchronously with success, completes it
+        Payment row; if Flutterwave responds synchronously with success, completes it
         immediately via the normal completion path. A pending/async response is left
-        for the `charge.success`/`charge.failed` webhook to resolve later."""
+        for the `charge.completed` webhook to resolve later."""
         amount = Decimal(str(agreement.monthly_installment or 0))
         if amount <= 0:
             raise ValueError(f"Agreement {agreement.id} has no monthly_installment configured")
@@ -825,7 +1022,7 @@ class PaymentService:
             payment_type="installment",
             transaction_id=reference,
             reference=reference,
-            payment_method="paystack",
+            payment_method=self.PROVIDER,
         )
         db.add(payment)
         db.flush()
@@ -833,29 +1030,33 @@ class PaymentService:
         db.commit()
 
         try:
-            ps_res = self.paystack.charge_authorization(
-                authorization_code=mandate.authorization_code,
+            flw_res = self.flw.create_tokenized_charge(
+                token=mandate.authorization_code,
                 email=mandate.email,
-                amount=int(amount * 100),
-                reference=reference,
+                amount=float(amount),
+                tx_ref=reference,
+                narration=f"Installment for agreement {agreement.id}",
             )
         except Exception as e:
-            logger.error(f"Mandate charge failed to reach Paystack for agreement {agreement.id}: {e}")
+            logger.error(f"Mandate charge failed to reach Flutterwave for agreement {agreement.id}: {e}")
             payment.status = "failed"
             mandate.failed_attempts = (mandate.failed_attempts or 0) + 1
             db.commit()
             return payment
 
-        ps_status = (ps_res.get("data") or {}).get("status")
-        if ps_res.get("status") and ps_status == "success":
+        flw_data = flw_res.get("data") or {}
+        self._store_provider_ids(payment, flw_data, channel="card_token")
+        db.commit()
+        flw_status = str(flw_data.get("status") or "").lower()
+        if flw_res.get("status") == "success" and flw_status == "successful":
             self._handle_completion(db, payment)
             mandate.failed_attempts = 0
             db.commit()
-        elif ps_status in ["failed", "abandoned", "reversed"]:
+        elif flw_status in ["failed", "cancelled", "expired"]:
             payment.status = "failed"
             mandate.failed_attempts = (mandate.failed_attempts or 0) + 1
             db.commit()
-        # else: pending/processing - the charge.success/charge.failed webhook resolves it later.
+        # else: pending/processing - the charge.completed webhook resolves it later.
 
         return payment
 
@@ -866,7 +1067,12 @@ class PaymentService:
         admin_id: str,
         reason: str = "Requested by admin/buyer"
     ) -> Payment:
-        """Process a refund via Paystack and update local records"""
+        """Process a refund via Flutterwave and update local records.
+
+        Only payments originally processed through Flutterwave (with a stored
+        ``flw_id``) can be refunded via API. Legacy Paystack rows must be
+        refunded manually through the Paystack dashboard.
+        """
         payment = db.query(Payment).filter(Payment.id == payment_id).first()
         
         if not payment:
@@ -875,21 +1081,25 @@ class PaymentService:
         if payment.status != "completed":
             raise HTTPException(status_code=400, detail=f"Cannot refund a payment with status '{payment.status}'")
             
-        if payment.payment_method != "paystack":
-            raise HTTPException(status_code=400, detail="Only Paystack payments can be refunded via API")
-            
-        # Call Paystack refund
+        if payment.payment_method != self.PROVIDER:
+            raise HTTPException(status_code=400, detail="Only Flutterwave payments can be refunded via API. Legacy payments must be refunded manually.")
+
+        flw_id = (payment.transaction_metadata or {}).get("flw_id")
+        if not flw_id:
+            raise HTTPException(status_code=400, detail="No Flutterwave transaction id stored for this payment; refund it manually.")
+
+        # Call Flutterwave refund
         try:
-            refund_res = self.paystack.initiate_refund(
-                reference=payment.reference,
-                customer_note=reason
+            refund_res = self.flw.initiate_refund(
+                flw_transaction_id=int(flw_id),
+                amount=float(payment.amount),
             )
-            
+
             if refund_res.get("status"):
                 payment.status = "refunded"
                 payment.transaction_metadata = {**(payment.transaction_metadata or {}), "refund_reason": reason, "refunded_by": str(admin_id), "refund_data": refund_res.get("data")}
                 # Persist refund state before the best-effort notification so a
-                # notification failure can never lose a completed Paystack refund.
+                # notification failure can never lose a completed Flutterwave refund.
                 try:
                     db.commit()
                 except Exception:
