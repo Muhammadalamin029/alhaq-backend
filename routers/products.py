@@ -24,15 +24,21 @@ async def list_products(
     search_query: Optional[str] = Query(
         None, description="Search products by name"),
     category_id: Optional[str] = Query(None, description="Filter by category"),
+    min_price: Optional[float] = Query(None, ge=0, description="Minimum price"),
+    max_price: Optional[float] = Query(None, ge=0, description="Maximum price"),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    sort_by: Optional[str] = Query(None, description="Sort field: price, name, created_at"),
+    sort_order: Optional[str] = Query(None, description="Sort direction: asc, desc"),
 ):
     try:
         products_logger.info(f"Fetching products - page: {page}, limit: {limit}, search: {search_query}, category: {category_id}")
-        
+
         # Use a reasonable limit to prevent excessive data loading
         effective_limit = min(limit, 50)  # Cap at 50 products per request
-        
+
         products, count = product_service.fetch_products(
-            db=db, limit=effective_limit, page=page, category_id=category_id, search_query=search_query)
+            db=db, limit=effective_limit, page=page, category_id=category_id, search_query=search_query,
+            min_price=min_price, max_price=max_price, status=status, sort_by=sort_by, sort_order=sort_order)
         
         products_logger.info(f"Products fetched successfully - count: {count}, page: {page}")
         
@@ -48,7 +54,7 @@ async def list_products(
             }
         }
     except Exception as e:
-        log_error(products_logger, "Failed to fetch products", e, page=page, limit=limit, search_query=search_query, category_id=category_id)
+        log_error(products_logger, "Failed to fetch products", e, page=page, limit=limit, search_query=search_query, category_id=category_id, min_price=min_price, max_price=max_price, status=status, sort_by=sort_by, sort_order=sort_order)
         raise HTTPException(status_code=500, detail="Failed to fetch products")
 
 

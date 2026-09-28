@@ -14,15 +14,23 @@ class ProductService:
             joinedload(Product.images)
         )
 
-    def fetch_products(self, db: Session, search_query: Optional[str] = None, category_id: Optional[str] = None, limit: int = 10, page: int = 1):
+    def fetch_products(self, db: Session, search_query: Optional[str] = None, category_id: Optional[str] = None, limit: int = 10, page: int = 1,
+                       min_price: Optional[float] = None, max_price: Optional[float] = None, status: Optional[str] = None,
+                       sort_by: Optional[str] = None, sort_order: Optional[str] = None):
 
         query = self._with_relationships(db.query(Product))
 
-        # Filter by status first (most selective filter)
-        query = query.filter(Product.status == "active")
+        # Filter by status (defaults to active-only for storefront)
+        query = query.filter(Product.status == (status or "active"))
 
         if category_id:
             query = query.filter(Product.category_id == category_id)
+
+        if min_price is not None:
+            query = query.filter(Product.price >= min_price)
+
+        if max_price is not None:
+            query = query.filter(Product.price <= max_price)
 
         if search_query:
             # Use full-text search if available, fallback to ILIKE
@@ -35,8 +43,13 @@ class ProductService:
                 # Fallback to ILIKE if full-text search fails
                 query = query.filter(Product.name.ilike(f"%{search_query}%"))
 
-        # Order by created_at for consistent pagination
-        query = query.order_by(Product.created_at.desc())
+        # Ordering — strict whitelist so arbitrary column names can't reach order_by
+        sortable = {"created_at": Product.created_at, "price": Product.price, "name": Product.name}
+        sort_column = sortable.get((sort_by or "created_at").lower(), Product.created_at)
+        if (sort_order or "desc").lower() == "asc":
+            query = query.order_by(sort_column.asc())
+        else:
+            query = query.order_by(sort_column.desc())
 
         offset = (page - 1) * limit
         count = query.count()
