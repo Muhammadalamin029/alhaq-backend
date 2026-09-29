@@ -11,6 +11,7 @@ from routers import (
     checkout as checkout_router,
     notifications as notifications_router,
     admin as admin_router,
+    admin_external_payments as admin_external_payments_router,
     payments,
     automotive,
     assets,
@@ -106,6 +107,11 @@ app.include_router(
     notifications_router.router, prefix="/notifications", tags=["Notifications"]
 )
 app.include_router(admin_router.router, prefix="/admin", tags=["Admin"])
+app.include_router(
+    admin_external_payments_router.router,
+    prefix="/admin/external-payments",
+    tags=["Admin"],
+)
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 app.include_router(automotive.router, prefix="/automotive", tags=["Automotive"])
 app.include_router(assets.router, prefix="/assets", tags=["Assets"])

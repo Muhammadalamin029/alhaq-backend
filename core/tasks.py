@@ -428,6 +428,77 @@ def send_order_delivered_email(self, user_email: str, user_name: str,
         raise self.retry(exc=exc, countdown=60, max_retries=2)
 
 
+@celery_app.task(bind=True, name='core.tasks.send_external_receipt_email')
+def send_external_receipt_email(self, external_payment_id: str, to_email: str):
+    """Email an admin-recorded external receipt with the Cloudinary PDF attached.
+
+    Both the email body and the PDF use the site's normal receipt template
+    (`core/templates/receipt.html`): the body is the rendered receipt HTML
+    itself, and the PDF (FE-generated from the same HTML) is attached.
+    """
+    try:
+        import requests
+        from db.session import SessionLocal
+        from core.model import ExternalPayment
+        from core.external_receipt_service import build_external_receipt_dict
+        from core.receipt_service import render_receipt_html
+
+        db = SessionLocal()
+        try:
+            payment = db.query(ExternalPayment).filter(
+                ExternalPayment.id == external_payment_id).first()
+            if not payment:
+                return {"success": False,
+                        "error": "External payment not found"}
+            if not payment.pdf_url:
+                return {"success": False, "error": "No receipt PDF attached"}
+
+            pdf_bytes = None
+            try:
+                resp = requests.get(payment.pdf_url, timeout=30)
+                if resp.status_code == 200 and resp.content[:4] == b"%PDF":
+                    pdf_bytes = resp.content[:10 * 1024 * 1024]
+            except Exception as fetch_exc:
+                logger.error(f"Could not fetch receipt PDF "
+                             f"{payment.pdf_url}: {fetch_exc}")
+
+            receipt = build_external_receipt_dict(db, payment)
+            html_body = render_receipt_html(receipt)
+            lines = [
+                f"{i['quantity']} x {i['name']} — "
+                f"{receipt['currency']} {i['line_total']:,.2f}"
+                for i in receipt["order"]["items"]
+            ]
+            text_body = (
+                f"Payment Receipt {payment.receipt_number}\n"
+                f"Hello {payment.payer_name},\n\n"
+                + "\n".join(lines)
+                + f"\n\nTotal Paid: {receipt['amount_display']}\n"
+                f"Receipt: {payment.pdf_url}"
+            )
+            attachments = (
+                [(f"{payment.receipt_number}.pdf", pdf_bytes, "application/pdf")]
+                if pdf_bytes else []
+            )
+            success = email_service.send_email_with_attachment_sync(
+                to_email=to_email,
+                subject=f"Payment Receipt {payment.receipt_number} — "
+                       f"{email_service.from_name}",
+                html_body=html_body,
+                text_body=text_body,
+                attachments=attachments,
+            )
+            if success:
+                logger.info(f"External receipt email sent to {to_email}")
+                return {"success": True}
+            raise self.retry(countdown=60, max_retries=3)
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.error(f"Error sending external receipt email to {to_email}: {exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=3)
+
+
 @celery_app.task(name='core.tasks.cleanup_expired_codes')
 def cleanup_expired_codes():
     """

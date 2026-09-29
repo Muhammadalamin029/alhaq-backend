@@ -914,6 +914,61 @@ class CampaignBanner(Base):
                         onupdate=func.current_timestamp())
 
 
+# ---------------- EXTERNAL PAYMENTS (admin-recorded, offline sales) ----------------
+# Standalone ledger for cash / bank-transfer / POS sales to anyone (customer
+# or guest). Deliberately NOT linked to `payments`: no FK either way, so the
+# Flutterwave flow is untouched. The receipt PDF is generated on the FE,
+# uploaded to Cloudinary, and only the URL is stored here (V1: public
+# unguessable URL).
+
+
+class ExternalPayment(Base):
+    __tablename__ = "external_payments"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    # EXT-RCPT-YYYYMMDD-XXXXXXXX — distinct prefix so it never collides with
+    # payments.RCPT-... in UX/search.
+    receipt_number = Column(String(50), unique=True, index=True, nullable=False)
+    payer_name = Column(String(255), nullable=False)
+    payer_email = Column(String(255), nullable=False, index=True)
+    payer_phone = Column(String(50), nullable=True)
+    # Optional link when the email matches a registered customer; NULL = guest.
+    buyer_id = Column(UUID, ForeignKey("profiles.id"), nullable=True)
+    amount = Column(Numeric(15, 2), nullable=False)
+    channel = Column(Enum("cash", "bank_transfer", "pos",
+                          name="external_payment_channel"), nullable=False)
+    status = Column(String(20), nullable=False, default="completed")
+    notes = Column(Text, nullable=True)
+    paid_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    recorded_by = Column(UUID, ForeignKey("users.id"), nullable=False)
+    # Cloudinary secure_url of the FE-generated receipt PDF (V1 public URL).
+    pdf_url = Column(Text, nullable=True)
+
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+    items = relationship("ExternalPaymentItem", back_populates="payment",
+                         cascade="all, delete-orphan")
+
+
+class ExternalPaymentItem(Base):
+    __tablename__ = "external_payment_items"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    external_payment_id = Column(UUID, ForeignKey(
+        "external_payments.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    unit_price = Column(Numeric(15, 2), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    payment = relationship("ExternalPayment", back_populates="items")
+
+
 # ---------------- PUSH DEVICE TOKENS (Expo push notifications) ----------------
 
 

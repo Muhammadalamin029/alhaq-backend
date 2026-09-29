@@ -2,6 +2,7 @@ import aiosmtplib
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 from html import escape
 from typing import Optional
 from core.config import settings
@@ -1787,6 +1788,50 @@ class EmailService:
 
         # No specific template matched — use the generic fallback.
         return None
+
+    def send_email_with_attachment_sync(
+        self, to_email, subject, html_body, text_body=None,
+        attachments: Optional[list[tuple[str, bytes, str]]] = None,
+    ) -> bool:
+        """Send an email with file attachments (e.g. receipt PDFs).
+
+        attachments: list of (filename, content_bytes, mime_type).
+        """
+        try:
+            msg = MIMEMultipart("mixed")
+            msg["Subject"] = subject
+            msg["From"] = f"{self.from_name} <{self.from_email}>"
+            msg["To"] = to_email
+
+            alt = MIMEMultipart("alternative")
+            if text_body:
+                alt.attach(MIMEText(text_body, "plain"))
+            alt.attach(MIMEText(html_body, "html"))
+            msg.attach(alt)
+
+            for filename, content, mime_type in (attachments or []):
+                maintype, _, subtype = mime_type.partition("/") or ("application", "", "octet-stream")
+                part = MIMEApplication(content, _subtype=subtype or "octet-stream")
+                part.add_header("Content-Disposition", "attachment",
+                                filename=filename)
+                msg.attach(part)
+
+            if self.use_ssl:
+                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=30)
+            else:
+                server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30)
+                if self.use_tls:
+                    server.starttls()
+            server.set_debuglevel(0)
+            if self.username and self.password:
+                server.login(self.username, self.password)
+            server.send_message(msg)
+            server.quit()
+            logger.info(f"Email with attachment sent to {to_email}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send email with attachment to {to_email}: {e}")
+            return False
 
     def _render_generic_notification_email(
         self,

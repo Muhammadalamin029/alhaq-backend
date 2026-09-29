@@ -71,6 +71,8 @@ config_updates = {
         # Order emails
         "core.tasks.send_order_shipped_email":      {"queue": "emails"},
         "core.tasks.send_order_delivered_email":    {"queue": "emails"},
+        # External (admin-recorded) receipt emails
+        "core.tasks.send_external_receipt_email":   {"queue": "emails"},
     },
     "task_default_queue": "default",
     "task_annotations": {
