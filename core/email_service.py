@@ -1236,10 +1236,15 @@ class EmailService:
         balance_label: str = "Remaining Balance",
         next_due: Optional[str] = None,
         note: Optional[str] = None,
+        cta_url: Optional[str] = None,
+        cta_label: Optional[str] = None,
+        payment_method: Optional[str] = None,
     ) -> tuple[str, str]:
         rows = [("Amount Paid", amount_paid)]
         if reference:
             rows.append(("Reference", reference))
+        if payment_method:
+            rows.append(("Payment Method", payment_method))
         if total_paid:
             rows.append(("Total Paid", total_paid))
         if remaining:
@@ -1252,6 +1257,11 @@ class EmailService:
         ) + _info_box(
             "Your payment was received successfully.", "#27ae60"
         )
+        # Default CTA (customer payment history) is kept for existing callers;
+        # pass cta_url/cta_label to point the button elsewhere (e.g. a
+        # Cloudinary receipt PDF for guest external sales).
+        cta_target = cta_url or f"{settings.FRONTEND_URL.rstrip('/')}/my-payments"
+        cta_text = cta_label or "View Payment"
         html = _base_html(
             from_name=self.from_name,
             icon="💰",
@@ -1259,13 +1269,14 @@ class EmailService:
             header_subtitle="Payment received",
             greeting=f"Hello {user_name},",
             body_html=body,
-            cta_html=_cta_button(f"{settings.FRONTEND_URL.rstrip('/')}/my-payments", "View Payment"),
+            cta_html=_cta_button(cta_target, cta_text),
         )
         text = _base_text(
             from_name=self.from_name,
             title=title or "Payment Confirmed",
             greeting=f"Hello {user_name},",
-            body="\n".join(f"{k}: {v}" for k, v in rows),
+            body="\n".join(f"{k}: {v}" for k, v in rows)
+            + (f"\n\n{cta_text}: {cta_target}" if cta_url else ""),
         )
         return html, text
 

@@ -432,16 +432,17 @@ def send_order_delivered_email(self, user_email: str, user_name: str,
 def send_external_receipt_email(self, external_payment_id: str, to_email: str):
     """Email an admin-recorded external receipt with the Cloudinary PDF attached.
 
-    Both the email body and the PDF use the site's normal receipt template
-    (`core/templates/receipt.html`): the body is the rendered receipt HTML
-    itself, and the PDF (FE-generated from the same HTML) is attached.
+    The body is the standard payment-confirmation email with a Download
+    Receipt button (NOT the full receipt markup); the itemized receipt
+    itself travels as the attached PDF, generated from the normal receipt
+    template by the FE.
     """
     try:
         import requests
         from db.session import SessionLocal
         from core.model import ExternalPayment
-        from core.external_receipt_service import build_external_receipt_dict
-        from core.receipt_service import render_receipt_html
+        from core.external_receipt_service import CHANNEL_LABELS
+        from core.email_service import _ngn
 
         db = SessionLocal()
         try:
@@ -462,19 +463,17 @@ def send_external_receipt_email(self, external_payment_id: str, to_email: str):
                 logger.error(f"Could not fetch receipt PDF "
                              f"{payment.pdf_url}: {fetch_exc}")
 
-            receipt = build_external_receipt_dict(db, payment)
-            html_body = render_receipt_html(receipt)
-            lines = [
-                f"{i['quantity']} x {i['name']} — "
-                f"{receipt['currency']} {i['line_total']:,.2f}"
-                for i in receipt["order"]["items"]
-            ]
-            text_body = (
-                f"Payment Receipt {payment.receipt_number}\n"
-                f"Hello {payment.payer_name},\n\n"
-                + "\n".join(lines)
-                + f"\n\nTotal Paid: {receipt['amount_display']}\n"
-                f"Receipt: {payment.pdf_url}"
+            html_body, text_body = email_service.render_payment_confirmed_email(
+                user_name=payment.payer_name or "there",
+                title="Payment Confirmed",
+                reference=payment.receipt_number,
+                amount_paid=_ngn(payment.amount),
+                payment_method=CHANNEL_LABELS.get(
+                    payment.channel, payment.channel),
+                note=("Thank you for your payment. Your receipt is attached, "
+                      "or download it with the button below."),
+                cta_url=payment.pdf_url,
+                cta_label="Download Receipt",
             )
             attachments = (
                 [(f"{payment.receipt_number}.pdf", pdf_bytes, "application/pdf")]
