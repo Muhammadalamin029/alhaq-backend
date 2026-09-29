@@ -720,6 +720,7 @@ class PaymentService:
                     remaining = summary["remaining_balance"]
                     total_amount = float(order.total_amount or 0)
                     notification_data = {
+                        "payment_id": str(payment.id),
                         "order_id": str(order.id),
                         "amount": float(payment.amount or 0),
                         "amount_paid": amount_paid,
@@ -786,6 +787,7 @@ class PaymentService:
                         "channels": ["in_app", "email"],
                         "data": {
                             "context": "order",
+                            "payment_id": str(payment.id),
                             "order_id": str(order.id),
                             "reference": payment.reference,
                             "amount": float(payment.amount or 0),
@@ -935,6 +937,7 @@ class PaymentService:
                         "channels": ["in_app", "email"],
                         "data": {
                             "context": "agreement",
+                            "payment_id": str(payment.id),
                             "reference": agreement_ref,
                             "amount": float(payment.amount or 0),
                             "amount_paid": float(total_paid),

@@ -1640,6 +1640,17 @@ class EmailService:
             )
             if total_paid_str and total_paid_str == amount_paid_str:
                 total_paid_str = None
+            # Deep-link the receipt: the payment detail page already
+            # downloads the PDF, so the button takes them straight there.
+            # Payloads without a payment_id keep the legacy history link.
+            receipt_payment_id = d.get("payment_id")
+            if receipt_payment_id:
+                receipt_url = (
+                    f"{settings.FRONTEND_URL.rstrip('/')}"
+                    f"/my-payments/{receipt_payment_id}"
+                )
+            else:
+                receipt_url = None
             return self.render_payment_confirmed_email(
                 user_name=user_name,
                 title=title or "Payment Confirmed",
@@ -1656,6 +1667,8 @@ class EmailService:
                 balance_label="Remaining Balance",
                 next_due=d.get("next_due_date"),
                 note=d.get("note"),
+                cta_url=receipt_url,
+                cta_label="Download Receipt" if receipt_url else None,
             )
 
         if notification_type == "payment_refunded":
