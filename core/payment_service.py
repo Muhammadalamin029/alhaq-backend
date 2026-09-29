@@ -333,8 +333,10 @@ class PaymentService:
         """
         payment = db.query(Payment).filter(Payment.reference == tx_ref).first()
         if not payment:
+            logger.warning(f"Card authorize for unknown tx_ref={tx_ref} (client session likely stale or remounted)")
             raise HTTPException(status_code=404, detail="Payment not found")
         if payment.status != "pending":
+            logger.warning(f"Card authorize for non-pending payment tx_ref={tx_ref} status={payment.status}")
             raise HTTPException(status_code=400, detail=f"Payment is already {payment.status}")
 
         pan = self._validate_card_fields(card_number, cvv, expiry_month, expiry_year)
@@ -374,8 +376,10 @@ class PaymentService:
         """Step 3: validate the charge with the OTP sent to the customer."""
         payment = db.query(Payment).filter(Payment.reference == tx_ref).first()
         if not payment:
+            logger.warning(f"Card validate for unknown tx_ref={tx_ref} (client session likely stale or remounted)")
             raise HTTPException(status_code=404, detail="Payment not found")
         if payment.status != "pending":
+            logger.warning(f"Card validate for non-pending payment tx_ref={tx_ref} status={payment.status}")
             raise HTTPException(status_code=400, detail=f"Payment is already {payment.status}")
         flw_ref = (payment.transaction_metadata or {}).get("flw_ref")
         if not flw_ref:

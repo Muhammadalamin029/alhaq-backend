@@ -16,13 +16,20 @@ FLW_BASE_URL = "https://api.flutterwave.com/v3"
 
 
 def derive_3des_key(encryption_key: str) -> bytes:
-    """Derive the 24-byte 3DES key from a Flutterwave encryption key.
+    """Return the 3DES key bytes for Flutterwave v3 direct charges.
 
-    Matches the official v3 encryption scheme: MD5 the encryption key,
-    then concatenate the last 12 hex chars + first 12 hex chars.
+    Per the official v3 encryption spec the dashboard Encryption Key is used
+    *directly* as the 3DES key (3DES-ECB) — no MD5 derivation. (MD5-based
+    derivation exists only in SDK helpers that derive a key from the *secret*
+    key when no encryption key is available.)
     """
-    digest = hashlib.md5(encryption_key.encode("utf-8")).hexdigest()
-    return (digest[-12:] + digest[:12]).encode("utf-8")
+    key_bytes = (encryption_key or "").encode("utf-8")
+    if len(key_bytes) not in (16, 24):
+        raise RuntimeError(
+            "FLUTTERWAVE_ENCRYPTION_KEY must be 16 or 24 bytes for 3DES "
+            f"(got {len(key_bytes)}). Copy it verbatim from Settings > API."
+        )
+    return key_bytes
 
 
 def encrypt_payload(encryption_key: str, payload: Dict[str, Any]) -> str:
