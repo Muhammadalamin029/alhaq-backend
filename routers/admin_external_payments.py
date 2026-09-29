@@ -226,3 +226,37 @@ async def get_external_payment(
                             detail="External payment not found")
     return {"success": True, "message": "External payment retrieved",
             "data": _serialize(payment)}
+
+
+@router.delete("/{payment_id}")
+async def delete_external_payment(
+    payment_id: UUID,
+    admin=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete an external payment and its line items.
+
+    Line items are removed via the relationship cascade. A previously
+    emailed/uploaded Cloudinary PDF is left orphaned (unguessable URL).
+    """
+    payment = (
+        db.query(ExternalPayment).filter(ExternalPayment.id == payment_id).first()
+    )
+    if not payment:
+        raise HTTPException(status_code=404,
+                            detail="External payment not found")
+    receipt_number = payment.receipt_number
+    try:
+        db.delete(payment)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        log_error(logger, f"Failed to delete external payment {payment_id}", e)
+        raise HTTPException(status_code=500,
+                            detail="Failed to delete external payment")
+    logger.info(
+        f"External payment {receipt_number} ({payment_id}) deleted "
+        f"by admin {admin['id']}"
+    )
+    return {"success": True, "message": f"{receipt_number} deleted",
+            "data": {"id": str(payment_id), "receipt_number": receipt_number}}
