@@ -170,7 +170,7 @@ class StoreProfile(Base):
     __tablename__ = "store_profiles"
 
     id = Column(UUID, primary_key=True, index=True, default=func.gen_random_uuid())
-    business_name = Column(String(255), nullable=False, default="LEL Marketplace")
+    business_name = Column(String(255), nullable=False, default="LEL Store")
     description = Column(Text, nullable=True)
     contact_email = Column(String(255), nullable=True)
     contact_phone = Column(String(50), nullable=True)

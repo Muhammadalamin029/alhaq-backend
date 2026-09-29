@@ -16,7 +16,16 @@ from core.system_settings_service import system_settings_service
 class AuthService:
     """Service class for authentication operations"""
 
-    def create_user(self, db: Session, email: str, password: str, role: UserRole, full_name: str, phone: str, bio: str) -> str:
+    def create_user(
+        self,
+        db: Session,
+        email: str,
+        password: str,
+        role: UserRole,
+        full_name: str,
+        phone: str,
+        bio: str,
+    ) -> str:
         """
         Create a new user with appropriate profile
 
@@ -24,8 +33,7 @@ class AuthService:
         """
         # Prevent admin creation via public endpoint
         if role == UserRole.ADMIN:
-            raise HTTPException(
-                status_code=403, detail="Cannot register as admin")
+            raise HTTPException(status_code=403, detail="Cannot register as admin")
 
         # Validate password policy
         PasswordPolicy.validate_password(password)
@@ -35,7 +43,7 @@ class AuthService:
             email=email,
             hashed_password=hashed_password,
             role=role,
-            password_changed_at=func.current_timestamp()
+            password_changed_at=func.current_timestamp(),
         )
         db.add(user)
         db.flush()  # ensures user.id exists
@@ -46,23 +54,26 @@ class AuthService:
         db.add(profile)
         db.commit()
         db.refresh(user)
-        
+
         # Create welcome notification
         try:
-            create_notification(db, {
-                "user_id": str(user.id),
-                "type": "account_verified",
-                "title": "Welcome to LEL Marketplace!",
-                "message": f"Welcome {full_name}! Your account has been created successfully. Start exploring our marketplace.",
-                "priority": "medium",
-                "channels": ["in_app", "email"],
-                "skip_email": True,  # the dedicated welcome email sends at verification
-                "data": {
+            create_notification(
+                db,
+                {
                     "user_id": str(user.id),
-                    "role": role.value,
-                    "welcome": True
-                }
-            })
+                    "type": "account_verified",
+                    "title": "Welcome to LEL Store!",
+                    "message": f"Welcome {full_name}! Your account has been created successfully. Start exploring our marketplace.",
+                    "priority": "medium",
+                    "channels": ["in_app", "email"],
+                    "skip_email": True,  # the dedicated welcome email sends at verification
+                    "data": {
+                        "user_id": str(user.id),
+                        "role": role.value,
+                        "welcome": True,
+                    },
+                },
+            )
         except Exception as e:
             # Log error but don't fail user creation
             print(f"Failed to create welcome notification: {e}")
@@ -81,10 +92,12 @@ class AuthService:
             )
         except Exception as e:
             print(f"Failed to notify admins about new user: {e}")
-        
+
         return str(user.id)
 
-    def authenticate_or_create_google_user(self, db: Session, google_id: str, email: str, full_name: str) -> User:
+    def authenticate_or_create_google_user(
+        self, db: Session, google_id: str, email: str, full_name: str
+    ) -> User:
         """
         Look up a user by Google id, falling back to linking-by-email for an
         existing password account, or creating a brand-new customer.
@@ -96,7 +109,7 @@ class AuthService:
             if user.is_active is False:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="This account has been deactivated."
+                    detail="This account has been deactivated.",
                 )
             return user
 
@@ -105,7 +118,7 @@ class AuthService:
             if user.is_active is False:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="This account has been deactivated."
+                    detail="This account has been deactivated.",
                 )
             # Auto-link: this email already has a password account — attach the Google identity.
             user.google_id = google_id
@@ -133,20 +146,23 @@ class AuthService:
         db.refresh(user)
 
         try:
-            create_notification(db, {
-                "user_id": str(user.id),
-                "type": "account_verified",
-                "title": "Welcome to LEL Marketplace!",
-                "message": f"Welcome {display_name}! Your account has been created successfully. Start exploring our marketplace.",
-                "priority": "medium",
-                "channels": ["in_app", "email"],
-                "skip_email": True,  # the dedicated welcome email sends at verification
-                "data": {
+            create_notification(
+                db,
+                {
                     "user_id": str(user.id),
-                    "role": UserRole.CUSTOMER.value,
-                    "welcome": True
-                }
-            })
+                    "type": "account_verified",
+                    "title": "Welcome to LEL Store!",
+                    "message": f"Welcome {display_name}! Your account has been created successfully. Start exploring our marketplace.",
+                    "priority": "medium",
+                    "channels": ["in_app", "email"],
+                    "skip_email": True,  # the dedicated welcome email sends at verification
+                    "data": {
+                        "user_id": str(user.id),
+                        "role": UserRole.CUSTOMER.value,
+                        "welcome": True,
+                    },
+                },
+            )
         except Exception as e:
             print(f"Failed to create welcome notification: {e}")
 
@@ -167,7 +183,9 @@ class AuthService:
 
         return user
 
-    def authenticate_user(self, db: Session, email: str, password: str) -> Tuple[User, bool]:
+    def authenticate_user(
+        self, db: Session, email: str, password: str
+    ) -> Tuple[User, bool]:
         """
         Authenticate user and handle login attempts
 
@@ -179,36 +197,37 @@ class AuthService:
         # Check if user exists
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
 
         # Check if account is active (not soft-deleted)
-        if hasattr(user, 'is_active') and user.is_active is False:
+        if hasattr(user, "is_active") and user.is_active is False:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
 
         # Google-only accounts have no password to verify
         if not user.hashed_password:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="This account uses Google Sign-In. Please continue with Google."
+                detail="This account uses Google Sign-In. Please continue with Google.",
             )
 
         # Check if account is locked
         if user.locked_until and user.locked_until > datetime.utcnow():
-            remaining_time = (user.locked_until -
-                              datetime.utcnow()).total_seconds() / 60
+            remaining_time = (
+                user.locked_until - datetime.utcnow()
+            ).total_seconds() / 60
             minutes = int(remaining_time) or 1
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
-                detail=f"Account is locked. Try again in {minutes} minutes."
+                detail=f"Account is locked. Try again in {minutes} minutes.",
             )
 
         max_login_attempts = system_settings_service.get_max_login_attempts(db)
-        lockout_duration_minutes = system_settings_service.get_lockout_duration_minutes(db)
+        lockout_duration_minutes = system_settings_service.get_lockout_duration_minutes(
+            db
+        )
 
         # Verify password
         if not verify_password(password, user.hashed_password):
@@ -217,18 +236,20 @@ class AuthService:
 
             # Lock account after the configured number of failed attempts
             if user.failed_login_attempts >= max_login_attempts:
-                user.locked_until = datetime.utcnow() + timedelta(minutes=lockout_duration_minutes)
+                user.locked_until = datetime.utcnow() + timedelta(
+                    minutes=lockout_duration_minutes
+                )
                 db.commit()
                 raise HTTPException(
                     status_code=status.HTTP_423_LOCKED,
-                    detail=f"Account locked due to multiple failed login attempts. Try again in {lockout_duration_minutes} minutes."
+                    detail=f"Account locked due to multiple failed login attempts. Try again in {lockout_duration_minutes} minutes.",
                 )
 
             db.commit()
             remaining_attempts = max_login_attempts - user.failed_login_attempts
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid credentials. {remaining_attempts} attempts remaining before account lock."
+                detail=f"Invalid credentials. {remaining_attempts} attempts remaining before account lock.",
             )
 
         # Reset failed attempts on successful login
@@ -246,8 +267,7 @@ class AuthService:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         # Get user profile - both customer and admin now use the same Profile table
@@ -258,38 +278,37 @@ class AuthService:
 
         user_response = UserProfileResponse.model_validate(user)
 
-        return {
-            "user": user_response,
-            "profile": profile
-        }
+        return {"user": user_response, "profile": profile}
 
-    def update_user_profile(self, db: Session, user_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+    def update_user_profile(
+        self, db: Session, user_id: str, update_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Update user profile with validation, aligned with frontend formData structure
         """
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         if not update_data:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No fields provided for update"
+                detail="No fields provided for update",
             )
 
         # Update email if provided
         if "email" in update_data:
-            existing_user = db.query(User).filter(
-                User.email == update_data["email"],
-                User.id != user.id
-            ).first()
+            existing_user = (
+                db.query(User)
+                .filter(User.email == update_data["email"], User.id != user.id)
+                .first()
+            )
             if existing_user:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already registered by another user"
+                    detail="Email already registered by another user",
                 )
             user.email = update_data["email"]
             user.email_verified = False
@@ -318,36 +337,37 @@ class AuthService:
 
         return self.get_user_profile(db, user_id)
 
-    def change_user_password(self, db: Session, user_id: str, current_password: str, new_password: str) -> Dict[str, Any]:
+    def change_user_password(
+        self, db: Session, user_id: str, current_password: str, new_password: str
+    ) -> Dict[str, Any]:
         """
         Change user password with validation
         """
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         # Google-only accounts have no current password to verify
         if not user.hashed_password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This account has no password set. Use 'Forgot password' to create one."
+                detail="This account has no password set. Use 'Forgot password' to create one.",
             )
 
         # Verify current password
         if not verify_password(current_password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Current password is incorrect"
+                detail="Current password is incorrect",
             )
 
         # Validate new password with additional checks
         validate_password_change(
             current_password=current_password,
             new_password=new_password,
-            user_email=user.email
+            user_email=user.email,
         )
 
         # Update password
@@ -359,11 +379,16 @@ class AuthService:
 
         db.commit()
 
-        return {
-            "password_changed_at": user.password_changed_at.isoformat()
-        }
+        return {"password_changed_at": user.password_changed_at.isoformat()}
 
-    def create_admin_user(self, db: Session, email: str, password: str, business_name: str, description: str = None) -> str:
+    def create_admin_user(
+        self,
+        db: Session,
+        email: str,
+        password: str,
+        business_name: str,
+        description: str = None,
+    ) -> str:
         """
         Create admin user - only callable internally or by existing admins
         Admin users use the standard Profile table like customers do
@@ -376,7 +401,7 @@ class AuthService:
             email=email,
             hashed_password=hashed_password,
             role="admin",
-            password_changed_at=func.current_timestamp()
+            password_changed_at=func.current_timestamp(),
         )
         db.add(user)
         db.flush()
@@ -447,15 +472,14 @@ class AuthService:
         user = self.get_user_by_email(db, email)
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         # Check if user is already verified
         if user.email_verified:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email is already verified"
+                detail="Email is already verified",
             )
 
         # Check rate limiting
@@ -465,7 +489,7 @@ class AuthService:
             minutes = minutes or 1
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too many verification requests. Please try again in {minutes} minutes."
+                detail=f"Too many verification requests. Please try again in {minutes} minutes.",
             )
 
         # Get user name from Profile (shared by customer and admin)
@@ -483,10 +507,12 @@ class AuthService:
         return {
             "message": f"Verification email sent to {email}",
             "task_id": task.id,
-            "expires_in_minutes": 15  # verification_manager.EMAIL_VERIFICATION_EXPIRE_MINUTES
+            "expires_in_minutes": 15,  # verification_manager.EMAIL_VERIFICATION_EXPIRE_MINUTES
         }
 
-    def verify_email(self, db: Session, email: str, verification_code: str) -> Dict[str, Any]:
+    def verify_email(
+        self, db: Session, email: str, verification_code: str
+    ) -> Dict[str, Any]:
         """
         Verify user's email with verification code
 
@@ -505,22 +531,23 @@ class AuthService:
         user = self.get_user_by_email(db, email)
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         # Check if user is already verified
         if user.email_verified:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email is already verified"
+                detail="Email is already verified",
             )
 
         # Verify the code
-        if not verification_manager.verify_code(email, verification_code, "verification"):
+        if not verification_manager.verify_code(
+            email, verification_code, "verification"
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired verification code"
+                detail="Invalid or expired verification code",
             )
 
         # Update user verification status
@@ -539,7 +566,7 @@ class AuthService:
 
         return {
             "message": "Email verified successfully",
-            "verified_at": user.email_verified_at.isoformat()
+            "verified_at": user.email_verified_at.isoformat(),
         }
 
     def request_password_reset(self, db: Session, email: str) -> Dict[str, Any]:
@@ -557,18 +584,20 @@ class AuthService:
         from core.tasks import send_password_reset_email
 
         # Check rate limiting before user existence check to prevent enumeration
-        if verification_manager.is_rate_limited(email, max_attempts=3, window_minutes=60):
+        if verification_manager.is_rate_limited(
+            email, max_attempts=3, window_minutes=60
+        ):
             ttl = verification_manager.get_rate_limit_ttl(email)
             minutes = ttl // 60 if ttl > 0 else 60
             minutes = minutes or 1
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too many password reset requests. Please try again in {minutes} minutes."
+                detail=f"Too many password reset requests. Please try again in {minutes} minutes.",
             )
 
         # Check if user exists (but don't reveal if email doesn't exist for security)
         user = self.get_user_by_email(db, email)
-        
+
         # Increment rate limit counter
         verification_manager.increment_rate_limit(email, window_minutes=60)
 
@@ -577,8 +606,7 @@ class AuthService:
         if user:
             # Get user name from Profile (shared by customer and admin)
             user_name = "User"  # Default fallback
-            profile = db.query(Profile).filter(
-                Profile.id == user.id).first()
+            profile = db.query(Profile).filter(Profile.id == user.id).first()
             if profile:
                 user_name = profile.name
 
@@ -587,10 +615,12 @@ class AuthService:
 
         return {
             "message": f"If an account with {email} exists, a password reset email has been sent",
-            "expires_in_minutes": 30  # verification_manager.PASSWORD_RESET_EXPIRE_MINUTES
+            "expires_in_minutes": 30,  # verification_manager.PASSWORD_RESET_EXPIRE_MINUTES
         }
 
-    def reset_password_with_code(self, db: Session, email: str, reset_code: str, new_password: str) -> Dict[str, Any]:
+    def reset_password_with_code(
+        self, db: Session, email: str, reset_code: str, new_password: str
+    ) -> Dict[str, Any]:
         """
         Reset user password using verification code
 
@@ -609,15 +639,14 @@ class AuthService:
         user = self.get_user_by_email(db, email)
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         # Verify the reset code
         if not verification_manager.verify_code(email, reset_code, "password_reset"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired reset code"
+                detail="Invalid or expired reset code",
             )
 
         # Validate new password
@@ -634,7 +663,7 @@ class AuthService:
 
         return {
             "message": "Password reset successfully",
-            "password_changed_at": user.password_changed_at.isoformat()
+            "password_changed_at": user.password_changed_at.isoformat(),
         }
 
     def get_verification_status(self, db: Session, email: str) -> Dict[str, Any]:
@@ -653,20 +682,22 @@ class AuthService:
         user = self.get_user_by_email(db, email)
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
 
         # Check if there's a pending verification code
-        remaining_time = verification_manager.get_remaining_time(
-            email, "verification")
+        remaining_time = verification_manager.get_remaining_time(email, "verification")
 
         return {
             "email_verified": user.email_verified,
-            "verified_at": user.email_verified_at.isoformat() if user.email_verified_at else None,
+            "verified_at": (
+                user.email_verified_at.isoformat() if user.email_verified_at else None
+            ),
             "has_pending_verification": remaining_time > 0,
-            "verification_expires_in_seconds": remaining_time if remaining_time > 0 else None,
-            "can_resend_verification": not verification_manager.is_rate_limited(email)
+            "verification_expires_in_seconds": (
+                remaining_time if remaining_time > 0 else None
+            ),
+            "can_resend_verification": not verification_manager.is_rate_limited(email),
         }
 
 

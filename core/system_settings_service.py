@@ -23,7 +23,7 @@ class SystemSettingsService:
         )
         return {
             "scope": self.DEFAULT_SCOPE,
-            "site_name": "LEL Marketplace",
+            "site_name": "LEL Store",
             "site_description": marketplace_copy,
             "contact_email": support_email,
             "support_email": support_email,
@@ -72,46 +72,66 @@ class SystemSettingsService:
         return self.to_response(self.get_or_create_settings(db))
 
     def to_response(self, settings_row: SystemSettings) -> SystemSettingsResponse:
-        return SystemSettingsResponse.model_validate({
-            "general": {
-                "site_name": settings_row.site_name,
-                "site_description": settings_row.site_description,
-                "contact_email": settings_row.contact_email,
-                "support_email": settings_row.support_email,
-                "currency": settings_row.currency,
-                "language": settings_row.language,
-                "timezone": settings_row.timezone,
-            },
-            "payments": {
-                "installment_min_percent": float(settings_row.installment_min_percent or 0),
-                "installment_price_floor": float(settings_row.installment_price_floor or 0),
-            },
-            "inspection": {
-                "minimum_inspection_notice_hours": int(settings_row.minimum_inspection_notice_hours),
-                "inspection_cancellation_cutoff_hours": int(settings_row.inspection_cancellation_cutoff_hours),
-                "missed_inspection_expiry_hours": int(settings_row.missed_inspection_expiry_hours),
-            },
-            "security": {
-                "require_email_verification": bool(settings_row.require_email_verification),
-                "access_token_lifetime_minutes": int(settings_row.access_token_lifetime_minutes),
-                "max_login_attempts": int(settings_row.max_login_attempts),
-                "lockout_duration_minutes": int(settings_row.lockout_duration_minutes),
-            },
-            "notifications": {
-                "new_user_notifications": bool(settings_row.new_user_notifications),
-                "dispute_notifications": bool(settings_row.dispute_notifications),
-                "system_alerts": bool(settings_row.system_alerts),
-                "weekly_reports": bool(settings_row.weekly_reports),
-            },
-            "promo": self.get_promo_setting_values_from_row(settings_row),
-            "meta": {
-                "scope": settings_row.scope,
-                "updated_at": settings_row.updated_at,
-                "updated_by_user_id": settings_row.updated_by_user_id,
-            },
-        })
+        return SystemSettingsResponse.model_validate(
+            {
+                "general": {
+                    "site_name": settings_row.site_name,
+                    "site_description": settings_row.site_description,
+                    "contact_email": settings_row.contact_email,
+                    "support_email": settings_row.support_email,
+                    "currency": settings_row.currency,
+                    "language": settings_row.language,
+                    "timezone": settings_row.timezone,
+                },
+                "payments": {
+                    "installment_min_percent": float(
+                        settings_row.installment_min_percent or 0
+                    ),
+                    "installment_price_floor": float(
+                        settings_row.installment_price_floor or 0
+                    ),
+                },
+                "inspection": {
+                    "minimum_inspection_notice_hours": int(
+                        settings_row.minimum_inspection_notice_hours
+                    ),
+                    "inspection_cancellation_cutoff_hours": int(
+                        settings_row.inspection_cancellation_cutoff_hours
+                    ),
+                    "missed_inspection_expiry_hours": int(
+                        settings_row.missed_inspection_expiry_hours
+                    ),
+                },
+                "security": {
+                    "require_email_verification": bool(
+                        settings_row.require_email_verification
+                    ),
+                    "access_token_lifetime_minutes": int(
+                        settings_row.access_token_lifetime_minutes
+                    ),
+                    "max_login_attempts": int(settings_row.max_login_attempts),
+                    "lockout_duration_minutes": int(
+                        settings_row.lockout_duration_minutes
+                    ),
+                },
+                "notifications": {
+                    "new_user_notifications": bool(settings_row.new_user_notifications),
+                    "dispute_notifications": bool(settings_row.dispute_notifications),
+                    "system_alerts": bool(settings_row.system_alerts),
+                    "weekly_reports": bool(settings_row.weekly_reports),
+                },
+                "promo": self.get_promo_setting_values_from_row(settings_row),
+                "meta": {
+                    "scope": settings_row.scope,
+                    "updated_at": settings_row.updated_at,
+                    "updated_by_user_id": settings_row.updated_by_user_id,
+                },
+            }
+        )
 
-    def update_general(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+    def update_general(
+        self, db: Session, payload: Dict[str, Any], updated_by_user_id: str
+    ) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "site_name",
@@ -129,7 +149,9 @@ class SystemSettingsService:
         db.refresh(settings_row)
         return self.to_response(settings_row)
 
-    def update_payments(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+    def update_payments(
+        self, db: Session, payload: Dict[str, Any], updated_by_user_id: str
+    ) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "installment_min_percent",
@@ -145,7 +167,9 @@ class SystemSettingsService:
         db.refresh(settings_row)
         return self.to_response(settings_row)
 
-    def update_inspection(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+    def update_inspection(
+        self, db: Session, payload: Dict[str, Any], updated_by_user_id: str
+    ) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "minimum_inspection_notice_hours",
@@ -159,7 +183,9 @@ class SystemSettingsService:
         db.refresh(settings_row)
         return self.to_response(settings_row)
 
-    def update_security(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+    def update_security(
+        self, db: Session, payload: Dict[str, Any], updated_by_user_id: str
+    ) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "require_email_verification",
@@ -174,7 +200,9 @@ class SystemSettingsService:
         db.refresh(settings_row)
         return self.to_response(settings_row)
 
-    def update_notifications(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+    def update_notifications(
+        self, db: Session, payload: Dict[str, Any], updated_by_user_id: str
+    ) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         for field in (
             "new_user_notifications",
@@ -189,7 +217,9 @@ class SystemSettingsService:
         db.refresh(settings_row)
         return self.to_response(settings_row)
 
-    def get_promo_setting_values_from_row(self, settings_row: SystemSettings) -> Dict[str, Any]:
+    def get_promo_setting_values_from_row(
+        self, settings_row: SystemSettings
+    ) -> Dict[str, Any]:
         return {
             "enabled": bool(settings_row.promo_banner_enabled),
             "tag": settings_row.promo_banner_tag,
@@ -204,7 +234,9 @@ class SystemSettingsService:
     def get_promo_setting_values(self, db: Session) -> Dict[str, Any]:
         return self.get_promo_setting_values_from_row(self.get_or_create_settings(db))
 
-    def update_promo(self, db: Session, payload: Dict[str, Any], updated_by_user_id: str) -> SystemSettingsResponse:
+    def update_promo(
+        self, db: Session, payload: Dict[str, Any], updated_by_user_id: str
+    ) -> SystemSettingsResponse:
         settings_row = self.get_or_create_settings(db)
         field_mapping = {
             "enabled": "promo_banner_enabled",
@@ -234,16 +266,24 @@ class SystemSettingsService:
     def get_inspection_setting_values(self, db: Session) -> Dict[str, int]:
         settings_row = self.get_or_create_settings(db)
         return {
-            "minimum_inspection_notice_hours": int(settings_row.minimum_inspection_notice_hours),
-            "inspection_cancellation_cutoff_hours": int(settings_row.inspection_cancellation_cutoff_hours),
-            "missed_inspection_expiry_hours": int(settings_row.missed_inspection_expiry_hours),
+            "minimum_inspection_notice_hours": int(
+                settings_row.minimum_inspection_notice_hours
+            ),
+            "inspection_cancellation_cutoff_hours": int(
+                settings_row.inspection_cancellation_cutoff_hours
+            ),
+            "missed_inspection_expiry_hours": int(
+                settings_row.missed_inspection_expiry_hours
+            ),
         }
 
     def get_minimum_inspection_notice_hours(self, db: Session) -> int:
         return self.get_inspection_setting_values(db)["minimum_inspection_notice_hours"]
 
     def get_inspection_cancellation_cutoff_hours(self, db: Session) -> int:
-        return self.get_inspection_setting_values(db)["inspection_cancellation_cutoff_hours"]
+        return self.get_inspection_setting_values(db)[
+            "inspection_cancellation_cutoff_hours"
+        ]
 
     def get_missed_inspection_expiry_hours(self, db: Session) -> int:
         return self.get_inspection_setting_values(db)["missed_inspection_expiry_hours"]
@@ -260,13 +300,17 @@ class SystemSettingsService:
     def is_email_verification_required(self, db: Session) -> bool:
         return bool(self.get_or_create_settings(db).require_email_verification)
 
-    def require_verified_email_for_user(self, db: Session, user_id: str, action: str) -> None:
+    def require_verified_email_for_user(
+        self, db: Session, user_id: str, action: str
+    ) -> None:
         if not self.is_email_verification_required(db):
             return
 
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
         if user.role == "admin" or user.email_verified:
             return
 
@@ -300,15 +344,18 @@ class SystemSettingsService:
 
         admin_users = db.query(User).filter(User.role == "admin").all()
         for admin in admin_users:
-            create_notification(db, {
-                "user_id": str(admin.id),
-                "type": "system_announcement",
-                "title": title,
-                "message": message,
-                "priority": priority,
-                "channels": channels or ["in_app", "email"],
-                "data": data or {},
-            })
+            create_notification(
+                db,
+                {
+                    "user_id": str(admin.id),
+                    "type": "system_announcement",
+                    "title": title,
+                    "message": message,
+                    "priority": priority,
+                    "channels": channels or ["in_app", "email"],
+                    "data": data or {},
+                },
+            )
 
 
 system_settings_service = SystemSettingsService()

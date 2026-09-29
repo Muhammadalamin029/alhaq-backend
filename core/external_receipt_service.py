@@ -74,6 +74,9 @@ def build_external_receipt_dict(
         "payment_category": "order",
         "payment_type": None,
         "purpose": "External sale",
+        # The shared template derives a "Related Order #…" label from the
+        # order block; suppress it — there is no real order here.
+        "show_related": False,
         "paid_at": _as_aware(payment.paid_at) or now,
         "payer": {
             "name": payment.payer_name,
