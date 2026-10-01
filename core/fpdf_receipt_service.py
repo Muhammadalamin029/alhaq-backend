@@ -79,7 +79,6 @@ def _new_pdf() -> FPDF:
     pdf.set_margins(15, 12, 15)
     pdf.add_font("deja", "", str(_FONTS / "DejaVuSans.ttf"), uni=True)
     pdf.add_font("deja", "B", str(_FONTS / "DejaVuSans-Bold.ttf"), uni=True)
-    pdf.set_fill_color(*INK)
     return pdf
 
 
@@ -144,6 +143,9 @@ def render_receipt_pdf(receipt: Dict[str, Any]) -> bytes:
     pdf.ellipse(cx - 6, cy - 6, 12, 12, style="F")
     pdf.set_fill_color(*accent)
     pdf.ellipse(cx - 4.5, cy - 4.5, 9, 9, style="F")
+    # Reset fill state: table cells paint their (unstyled) backgrounds with
+    # whatever fill colour is current — without this they inherit badge green.
+    pdf.set_fill_color(255, 255, 255)
 
     pdf.set_xy(pdf.l_margin + 16, y0)
     is_paid = accent == GREEN
@@ -175,6 +177,9 @@ def render_receipt_pdf(receipt: Dict[str, Any]) -> bytes:
     pdf.set_text_color(*accent)
     pdf.cell(content_w, 8, _money(receipt.get("amount")), align="R",
              new_x="LMARGIN", new_y="NEXT")
+    # Reset graphics state: later draws must never inherit accent colour.
+    pdf.set_text_color(*INK)
+    pdf.set_fill_color(255, 255, 255)
     pdf.set_y(max(pdf.get_y(), y0 + 16) + 2)
     _hr(pdf)
 
@@ -232,6 +237,8 @@ def render_receipt_pdf(receipt: Dict[str, Any]) -> bytes:
 
 def _items_table(pdf: FPDF, content_w: float, order: Dict[str, Any]) -> None:
     items = order.get("items") or []
+    pdf.set_text_color(*INK)
+    pdf.set_fill_color(255, 255, 255)
     head = FontFace(emphasis="BOLD", color=MUTED)
     name_face = FontFace(emphasis="BOLD", color=INK)
     body = FontFace(color=INK)
@@ -241,6 +248,7 @@ def _items_table(pdf: FPDF, content_w: float, order: Dict[str, Any]) -> None:
         line_height=6.5,
         text_align=("LEFT", "RIGHT", "RIGHT", "RIGHT"),
         borders_layout="HORIZONTAL_LINES",
+        cell_fill_color=(255, 255, 255),
         padding=(1.5, 1.5, 1.5, 1.5),
     ) as table:
         hdr = table.row()
@@ -261,6 +269,8 @@ def _totals_block(pdf: FPDF, content_w: float, order: Dict[str, Any],
                    accent) -> None:
     block_w = 80
     left = pdf.l_margin + content_w - block_w
+    pdf.set_text_color(*INK)
+    pdf.set_fill_color(255, 255, 255)
     pdf.set_font("deja", "", 10)
 
     def _row(label: str, value: str, bold=False, color=None, size=10):
@@ -286,6 +296,8 @@ def _totals_block(pdf: FPDF, content_w: float, order: Dict[str, Any],
 
 
 def _kv_rows(pdf: FPDF, content_w: float, rows: list) -> None:
+    pdf.set_text_color(*INK)
+    pdf.set_fill_color(255, 255, 255)
     label_face = FontFace(color=MUTED)
     value_face = FontFace(emphasis="BOLD", color=INK)
     with pdf.table(
@@ -294,6 +306,7 @@ def _kv_rows(pdf: FPDF, content_w: float, rows: list) -> None:
         line_height=6.5,
         text_align=("LEFT", "RIGHT"),
         borders_layout="HORIZONTAL_LINES",
+        cell_fill_color=(255, 255, 255),
         padding=(1.5, 1.5, 1.5, 1.5),
     ) as table:
         for label, value in rows:
