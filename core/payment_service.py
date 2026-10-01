@@ -76,6 +76,41 @@ def _safe_notify(db: Session, payload: Dict[str, Any]):
         return None
 
 
+def _notify_admins_of_payment(
+    db: Session,
+    payment,
+    target_label: str,
+    data: Dict[str, Any],
+):
+    """Best-effort admin alert for received money (honors System Alerts pref).
+
+    Never breaks completion: notify_admins itself guards on preferences, and
+    any unexpected failure is swallowed here like _safe_notify.
+    """
+    try:
+        buyer = db.query(User).filter(User.id == payment.buyer_id).first()
+        payer_label = buyer.email if buyer else f"buyer {str(payment.buyer_id)[:8]}"
+        amount = Decimal(str(payment.amount or 0))
+        channel_label = (payment.payment_method or "flutterwave").replace("_", " ").title()
+        system_settings_service.notify_admins(
+            db=db,
+            event_key="system_alert",
+            title=f"Payment Received — ₦{amount:,.2f}",
+            message=(
+                f"{channel_label} payment of ₦{amount:,.2f} "
+                f"received for {target_label} from {payer_label}."
+            ),
+            data=data,
+            priority="medium",
+        )
+    except Exception:
+        logger.exception("Non-fatal: failed to notify admins of payment")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 class PaymentService:
     PROVIDER = "flutterwave"
 
@@ -750,6 +785,13 @@ class PaymentService:
                                 "reference": payment.reference,
                             },
                         })
+                        _notify_admins_of_payment(
+                            db, payment,
+                            f"Order #{str(order.id)[:8].upper()} (final installment)",
+                            {"payment_id": str(payment.id),
+                             "order_id": str(order.id),
+                             "amount": float(payment.amount or 0)},
+                        )
                     else:
                         # Order stays processing while a balance remains.
                         order.status = "processing"
@@ -770,6 +812,13 @@ class PaymentService:
                                 "reference": payment.reference,
                             },
                         })
+                        _notify_admins_of_payment(
+                            db, payment,
+                            f"Order #{str(order.id)[:8].upper()} (installment)",
+                            {"payment_id": str(payment.id),
+                             "order_id": str(order.id),
+                             "amount": float(payment.amount or 0)},
+                        )
                 else:
                     order.status = "paid"
 
@@ -796,6 +845,13 @@ class PaymentService:
                             "total_amount": float(order.total_amount or 0),
                         },
                     })
+                    _notify_admins_of_payment(
+                        db, payment,
+                        f"Order #{str(order.id)[:8].upper()}",
+                        {"payment_id": str(payment.id),
+                         "order_id": str(order.id),
+                         "amount": float(payment.amount or 0)},
+                    )
 
         # 3. Handle Asset Agreement Logic
         if hasattr(payment, 'agreement_id') and payment.agreement_id:
@@ -923,6 +979,13 @@ class PaymentService:
                             "reference": agreement_ref,
                         },
                     })
+                    _notify_admins_of_payment(
+                        db, payment,
+                        f"{agreement.asset_type} agreement deposit ({asset_title})",
+                        {"payment_id": str(payment.id),
+                         "agreement_id": str(agreement.id),
+                         "amount": float(payment.amount or 0)},
+                    )
                 else:
                     _safe_notify(db, {
                         "user_id": str(payment.buyer_id),
@@ -946,6 +1009,13 @@ class PaymentService:
                             "next_due_date": next_due_str,
                         },
                     })
+                    _notify_admins_of_payment(
+                        db, payment,
+                        f"{agreement.asset_type} agreement ({asset_title})",
+                        {"payment_id": str(payment.id),
+                         "agreement_id": str(agreement.id),
+                         "amount": float(payment.amount or 0)},
+                    )
 
                 # Ownership logic (individual customer purchase)
                 if agreement.status == "completed" and agreement.asset_type == "property" and agreement.unit_id:

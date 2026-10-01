@@ -22,5 +22,8 @@ aiosmtplib>=3.0.1  # Async SMTP client
 # HTTP requests for external APIs
 requests>=2.31.0  # For Flutterwave API integration
 
+# Server-side receipt PDFs (vector, pure Python, no system deps)
+fpdf2>=2.8
+
 # Payload encryption for Flutterwave direct card charges (3DES)
 pycryptodome>=3.20.0

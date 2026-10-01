@@ -84,6 +84,29 @@ async def record_external_payment(
             {**d, "id": i.id}
             for d, i in zip(data["items"], payment.items or [])
         ]
+        try:
+            from core.system_settings_service import system_settings_service
+            channel_label = {"cash": "Cash", "bank_transfer": "Bank Transfer",
+                             "pos": "POS"}.get(payment.channel, payment.channel)
+            system_settings_service.notify_admins(
+                db=db,
+                event_key="system_alert",
+                title=f"External Payment Recorded — ₦{payment.amount:,.2f}",
+                message=(
+                    f"{channel_label} payment of ₦{payment.amount:,.2f} from "
+                    f"{payment.payer_name} ({payment.payer_email}) recorded by "
+                    f"{admin.get('email', 'admin')} "
+                    f"({payment.receipt_number})."
+                ),
+                data={"external_payment_id": str(payment.id),
+                      "receipt_number": payment.receipt_number,
+                      "amount": float(payment.amount or 0),
+                      "recorded_by": str(payment.recorded_by)},
+                priority="medium",
+            )
+        except Exception as notify_exc:
+            log_error(logger, "Non-fatal: admin alert failed for "
+                              f"{payment.receipt_number}", notify_exc)
         return ExternalPaymentCreateResponse(
             message="External payment recorded",
             data=ExternalPaymentOut(**data),
@@ -207,6 +230,34 @@ async def get_external_receipt_html(
         raise HTTPException(status_code=404,
                             detail="External payment not found")
     return HTMLResponse(content=html)
+
+
+@router.get("/{payment_id}/receipt.pdf")
+async def get_external_receipt_pdf(
+    payment_id: UUID,
+    admin=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """Download an external payment receipt as a server-generated vector PDF."""
+    from fastapi.responses import Response
+    from core.fpdf_receipt_service import render_external_receipt_pdf
+
+    pdf_bytes = render_external_receipt_pdf(db, payment_id)
+    if not pdf_bytes:
+        raise HTTPException(status_code=404,
+                            detail="External payment not found")
+    payment = (
+        db.query(ExternalPayment).filter(ExternalPayment.id == payment_id).first()
+    )
+    filename = "".join(
+        c if (c.isalnum() or c in "._-") else "_"
+        for c in (payment.receipt_number if payment else f"receipt-{payment_id}")
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'},
+    )
 
 
 @router.get("/{payment_id}")

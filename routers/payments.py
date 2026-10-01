@@ -435,6 +435,31 @@ async def get_payment_receipt_html(
     return HTMLResponse(content=receipt_service.render_receipt_html(receipt))
 
 
+@router.get("/{id}/receipt.pdf")
+async def get_payment_receipt_pdf(
+    id: UUID,
+    user=Depends(role_required(["customer", "admin"])),
+    db: Session = Depends(get_db)
+):
+    """Download a payment receipt as a server-generated vector PDF."""
+    from fastapi.responses import Response
+    from core.fpdf_receipt_service import render_receipt_pdf
+
+    receipt = receipt_service.get_receipt(db, user, id)
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found or unauthorized")
+    pdf_bytes = render_receipt_pdf(receipt)
+    filename = "".join(
+        c if (c.isalnum() or c in "._-") else "_"
+        for c in (receipt.get("receipt_number") or f"receipt-{id}")
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'},
+    )
+
+
 @router.get("/{id}", response_model=PaymentResponse)
 async def get_payment(
     id: UUID,
