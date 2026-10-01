@@ -160,7 +160,10 @@ async def process_checkout(
         total_amount=Decimal(str(pending_order.total_amount)),
         status=pending_order.status,
         estimated_delivery=estimated_delivery,
-        tracking_number=tracking_number
+        tracking_number=tracking_number,
+        delivery_type=pending_order.delivery_type,
+        pickup_location=pending_order.pickup_location,
+        pickup_address=pending_order.pickup_address,
     )
     
     # Create order confirmation notification (non-blocking)
@@ -199,7 +202,13 @@ async def process_checkout(
             "user_id": str(pending_order.buyer_id),
             "type": "order_confirmed",
             "title": "Order Confirmed",
-            "message": f"Your order #{str(pending_order.id)[:8]} has been confirmed and is ready for payment. Total: ₦{pending_order.total_amount:,.2f}",
+            "message": (
+                f"Your pickup order #{str(pending_order.id)[:8]} at "
+                f"{pending_order.pickup_location or 'our store'} has been confirmed and is ready for payment. "
+                f"Total: ₦{pending_order.total_amount:,.2f}"
+                if pending_order.delivery_type == "pickup"
+                else f"Your order #{str(pending_order.id)[:8]} has been confirmed and is ready for payment. Total: ₦{pending_order.total_amount:,.2f}"
+            ),
             "priority": "high",
             "channels": ["in_app", "email"],
             "data": {
@@ -211,6 +220,8 @@ async def process_checkout(
                 "delivery_type": pending_order.delivery_type,
                 "delivery_fee": float(pending_order.delivery_fee or 0),
                 "delivery_city": delivery_city,
+                "pickup_location": pending_order.pickup_location,
+                "pickup_address": pending_order.pickup_address,
                 "order_date": placed_at.strftime("%d/%m/%Y"),
                 "order_time": placed_at.strftime("%I:%M%p"),
                 "estimated_delivery": estimated_delivery,

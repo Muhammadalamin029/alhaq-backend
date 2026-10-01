@@ -760,6 +760,14 @@ class OrderService:
             "delivered": f"Your order #{str(order_id)[:8]} has been delivered!",
             "cancelled": f"Your order #{str(order_id)[:8]} has been cancelled.",
         }
+        if order.delivery_type == "pickup":
+            pickup_loc = order.pickup_location or "our store"
+            buyer_messages["shipped"] = (
+                f"Your pickup order #{str(order_id)[:8]} is ready for collection at {pickup_loc}."
+            )
+            buyer_messages["delivered"] = (
+                f"Your pickup order #{str(order_id)[:8]} has been collected. Thank you!"
+            )
 
         try:
             send_order_notification(

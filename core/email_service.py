@@ -1048,8 +1048,11 @@ class EmailService:
         order_date: Optional[str] = None,
         order_time: Optional[str] = None,
         items: Optional[list] = None,
+        pickup_location: Optional[str] = None,
+        pickup_address: Optional[str] = None,
     ) -> tuple[str, str]:
         order_ref = f"#{order_id[:8].upper()}" if order_id else "N/A"
+        is_pickup = (delivery_type or "") == "pickup"
         delivery_label = (
             delivery_type.replace("_", " ").title() if delivery_type else "—"
         )
@@ -1074,10 +1077,13 @@ class EmailService:
         summary_rows = ""
         if subtotal is not None:
             summary_rows += _row("Subtotal", _ngn(subtotal))
-        delivery_dest = f" ({delivery_city})" if delivery_city else ""
-        summary_rows += _row(
-            f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—"
-        )
+        if is_pickup:
+            summary_rows += _row("Pickup", "Free")
+        else:
+            delivery_dest = f" ({delivery_city})" if delivery_city else ""
+            summary_rows += _row(
+                f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—"
+            )
         if discount:
             summary_rows += _row("Spend & save discount", f"-{_ngn(discount)}", SUCCESS)
         total_html = (
@@ -1111,7 +1117,15 @@ class EmailService:
         if order_time:
             details_rows += _detail("Order Time", escape(order_time), SUCCESS)
         if estimated_delivery:
-            details_rows += _detail("Estimated Delivery", escape(estimated_delivery))
+            details_rows += _detail(
+                "Ready for Pickup" if is_pickup else "Estimated Delivery",
+                escape(estimated_delivery),
+            )
+        if is_pickup and (pickup_location or pickup_address):
+            pickup_value = escape(pickup_location or "Store Pickup")
+            if pickup_address:
+                pickup_value += f" — {escape(pickup_address)}"
+            details_rows += _detail("Pickup Location", pickup_value)
         if not (items or []) and items_summary:
             details_rows += _detail("Items", escape(items_summary))
         details_card = (
@@ -1185,7 +1199,7 @@ class EmailService:
         html = _base_html(
             from_name=self.from_name,
             icon="✓",
-            header_title="Your Order is on the Way",
+            header_title="Ready for Pickup" if is_pickup else "Your Order is on the Way",
             header_subtitle="",
             greeting=f"Hi {user_name},",
             body_html=body,
@@ -1196,13 +1210,32 @@ class EmailService:
         summary_text_rows = []
         if subtotal is not None:
             summary_text_rows.append(("Subtotal", _ngn(subtotal)))
-        summary_text_rows.append(
-            (f"Delivery{delivery_dest}", _ngn(delivery_fee) if delivery_fee else "—")
-        )
+        if is_pickup:
+            summary_text_rows.append(("Pickup", "Free"))
+        else:
+            pickup_dest = f" ({delivery_city})" if delivery_city else ""
+            summary_text_rows.append(
+                (f"Delivery{pickup_dest}", _ngn(delivery_fee) if delivery_fee else "—")
+            )
         if discount:
             summary_text_rows.append(("Discount", f"-{_ngn(discount)}"))
         summary_text_rows.append(("Total", _ngn(total)))
         summary_text_rows.append(("Order Number", order_ref))
+        if estimated_delivery:
+            summary_text_rows.append(
+                (
+                    "Ready for Pickup" if is_pickup else "Estimated Delivery",
+                    estimated_delivery,
+                )
+            )
+        if is_pickup and (pickup_location or pickup_address):
+            summary_text_rows.append(
+                (
+                    "Pickup Location",
+                    f"{pickup_location or 'Store Pickup'}"
+                    + (f" — {pickup_address}" if pickup_address else ""),
+                )
+            )
         if order_date:
             summary_text_rows.append(("Order Date", order_date))
         if order_time:
@@ -1219,7 +1252,7 @@ class EmailService:
             text_body = items_summary
         text = _base_text(
             from_name=self.from_name,
-            title="Your Order is on the Way",
+            title="Ready for Pickup" if is_pickup else "Your Order is on the Way",
             greeting=f"Hi {user_name},",
             body=text_body,
         )
@@ -1739,6 +1772,8 @@ class EmailService:
                 order_date=d.get("order_date"),
                 order_time=d.get("order_time"),
                 items=d.get("items"),
+                pickup_location=d.get("pickup_location"),
+                pickup_address=d.get("pickup_address"),
             )
 
         if notification_type == "order_processing":

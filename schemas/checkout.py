@@ -30,6 +30,9 @@ class OrderConfirmation(BaseModel):
     status: str
     estimated_delivery: Optional[str]
     tracking_number: Optional[str]
+    delivery_type: Optional[str] = None
+    pickup_location: Optional[str] = None
+    pickup_address: Optional[str] = None
 
 
 class OrderConfirmationResponse(BaseModel):

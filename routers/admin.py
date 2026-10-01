@@ -727,6 +727,8 @@ async def get_admin_orders(
                 total_amount=order.total_amount,
                 status=order.status,
                 delivery_address=order.delivery_address,
+                delivery_type=order.delivery_type or "delivery",
+                pickup_location=order.pickup_location,
                 created_at=order.created_at,
                 updated_at=order.updated_at,
                 items_count=len(order.order_items),

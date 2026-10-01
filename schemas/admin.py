@@ -145,6 +145,8 @@ class AdminOrderListResponse(BaseModel):
     total_amount: Decimal
     status: str
     delivery_address: Optional[UUID] = None
+    delivery_type: Optional[str] = None
+    pickup_location: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     items_count: int  # Calculated
