@@ -335,11 +335,26 @@ class PaymentService:
             raise HTTPException(status_code=400, detail=flw_res.get("message", "Card charge failed"))
 
         flw_data = flw_res.get("data") or {}
+        if not flw_data.get("id") and not flw_data.get("flw_ref"):
+            # Fail closed: Flutterwave returned no charge object (null data).
+            # Advancing would strand the user on a PIN/OTP screen whose
+            # follow-up calls can never succeed (no flw_ref/tx_ref to act on).
+            logger.error(
+                f"Flutterwave card charge for {tx_ref} returned no charge data: "
+                f"status={flw_res.get('status')!r} message={flw_res.get('message')!r}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=flw_res.get("message") or "Card charge failed: no charge created. Please check your card details or try another card.",
+            )
         self._store_provider_ids(payment, flw_data, channel="card")
         self._mark_order_processing(db, order_id, tx_ref)
         db.commit()
 
         step = self.flw.next_step(flw_res)
+        # Our reference is the source of truth for authorize/validate lookups —
+        # never trust the provider echo (it may be missing or rewritten).
+        step["tx_ref"] = tx_ref
         step["payment_id"] = str(payment.id)
         if step.get("next_step") == "success":
             self.verify_transaction(db, tx_ref, transaction_id=flw_data.get("id"))
@@ -397,10 +412,22 @@ class PaymentService:
             raise HTTPException(status_code=400, detail=flw_res.get("message", "Card authorization failed"))
 
         flw_data = flw_res.get("data") or {}
+        if not flw_data.get("id") and not flw_data.get("flw_ref"):
+            # Fail closed (same rationale as charge step): no charge object
+            # means the follow-up OTP/redirect calls can never succeed.
+            logger.error(
+                f"Flutterwave card authorize for {tx_ref} returned no charge data: "
+                f"status={flw_res.get('status')!r} message={flw_res.get('message')!r}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=flw_res.get("message") or "Card authorization failed: no charge created. Please try again.",
+            )
         self._store_provider_ids(payment, flw_data, channel="card")
         db.commit()
 
         step = self.flw.next_step(flw_res)
+        step["tx_ref"] = tx_ref
         step["payment_id"] = str(payment.id)
         if step.get("next_step") == "success":
             self.verify_transaction(db, tx_ref, transaction_id=flw_data.get("id"))
