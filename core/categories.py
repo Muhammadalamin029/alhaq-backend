@@ -7,11 +7,14 @@ class CategoryService:
     def fetch_categories(self, db: Session, limit: int = 10, page: int = 1):
         offset = (page - 1) * limit
         
-        # Query categories with product count
+        # Query categories with product count. Ordered deterministically so
+        # paginated fetching (page/limit) is stable across requests.
         query = db.query(
             Category,
             func.count(Category.products).label('product_count')
-        ).outerjoin(Category.products).group_by(Category.id)
+        ).outerjoin(Category.products).group_by(Category.id).order_by(
+            Category.name.asc(), Category.id.asc()
+        )
         
         count = db.query(Category).count()
         categories_with_count = query.offset(offset).limit(limit).all()
