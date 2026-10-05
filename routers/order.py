@@ -171,7 +171,15 @@ async def create_order_item(
             detail=f"Insufficient stock. Only {product.stock_quantity} items available"
         )
     
-    price = product.price
+    # Charge the sale-aware effective price; OrderItem.price snapshots it so
+    # past orders never change when a sale ends.
+    from core.discounts import effective_price as _effective_price
+    price = float(_effective_price(
+        float(product.price),
+        getattr(product, "discount_percent", None),
+        getattr(product, "discount_starts_at", None),
+        getattr(product, "discount_ends_at", None),
+    ))
     if existing_order:
         updated_order = order_service.create_order_item(
             db=db,

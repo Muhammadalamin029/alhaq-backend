@@ -95,6 +95,11 @@ class AdminProductListResponse(BaseModel):
     name: str
     description: Optional[str] = None
     price: Decimal
+    discount_percent: Optional[Decimal] = None
+    discount_starts_at: Optional[datetime] = None
+    discount_ends_at: Optional[datetime] = None
+    effective_price: Optional[Decimal] = None
+    is_on_sale: Optional[bool] = None
     stock_quantity: int
     status: str
     created_at: datetime
@@ -301,6 +306,11 @@ class AdminProductListResponse(BaseModel):
     name: str
     description: Optional[str] = None
     price: Decimal
+    discount_percent: Optional[Decimal] = None
+    discount_starts_at: Optional[datetime] = None
+    discount_ends_at: Optional[datetime] = None
+    effective_price: Optional[Decimal] = None
+    is_on_sale: Optional[bool] = None
     stock_quantity: int
     status: str
     amenities: Optional[list] = []

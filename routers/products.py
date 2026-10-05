@@ -59,7 +59,7 @@ async def list_products(
         response = {
             "success": True,
             "message": "Products fetched successfully",
-            "data": [ProductResponse.model_validate(p).model_dump(mode="json") for p in products] if products else [],
+            "data": [ProductResponse.with_discount(p).model_dump(mode="json") for p in products] if products else [],
             "pagination": {
                 "page": page,
                 "limit": effective_limit,
@@ -127,7 +127,11 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
             description=payload.description,
             stock_quantity=payload.stock_quantity,
             amenities=payload.amenities,
-            images=payload.images
+            images=payload.images,
+            discount_percent=payload.discount_percent,
+            sale_price=payload.sale_price,
+            discount_starts_at=payload.discount_starts_at,
+            discount_ends_at=payload.discount_ends_at,
         )
 
         if not new_product:
@@ -143,10 +147,13 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
         return {
             "success": True,
             "message": "Product created successfully",
-            "data": ProductResponse.model_validate(new_product)
+            "data": ProductResponse.with_discount(new_product)
         }
     except HTTPException:
         raise
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         db.rollback()
         log_error(products_logger, f"Failed to create product for user {user['id']}", e, 
@@ -171,7 +178,7 @@ async def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
     response = {
         "success": True,
         "message": "Product fetched successfully",
-        "data": ProductResponse.model_validate(product).model_dump(mode="json")
+        "data": ProductResponse.with_discount(product).model_dump(mode="json")
     }
     await product_cache.set_detail(product_id, response)
     return response
@@ -226,6 +233,15 @@ async def update_product(
                 detail="Category not found"
             )
     
+    # Validate discount window when both ends supplied
+    if "discount_starts_at" in update_data and "discount_ends_at" in update_data:
+        s, e = update_data["discount_starts_at"], update_data["discount_ends_at"]
+        if s is not None and e is not None and e <= s:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discount end must be after discount start"
+            )
+
     # Validate product name uniqueness for this seller (if name is being updated)
     if "name" in update_data:
         existing_product = db.query(Product).filter(
@@ -283,9 +299,14 @@ async def update_product(
         return {
             "success": True,
             "message": "Product updated successfully",
-            "data": ProductResponse.model_validate(updated_product)
+            "data": ProductResponse.with_discount(updated_product)
         }
         
+    except HTTPException:
+        raise
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         db.rollback()
         raise HTTPException(

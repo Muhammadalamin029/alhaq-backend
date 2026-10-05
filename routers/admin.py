@@ -632,12 +632,19 @@ async def get_admin_products(
 
         # Format response
         product_list = []
+        from core.discounts import effective_price as _eff, is_on_sale as _sale
         for product in products:
+            _pct = getattr(product, "discount_percent", None)
             product_data = AdminProductListResponse(
                 id=product.id,
                 name=product.name,
                 description=product.description,
                 price=product.price,
+                discount_percent=_pct,
+                discount_starts_at=getattr(product, "discount_starts_at", None),
+                discount_ends_at=getattr(product, "discount_ends_at", None),
+                effective_price=_eff(float(product.price), _pct, getattr(product, "discount_starts_at", None), getattr(product, "discount_ends_at", None)),
+                is_on_sale=_sale(_pct, getattr(product, "discount_starts_at", None), getattr(product, "discount_ends_at", None)),
                 stock_quantity=product.stock_quantity,
                 status=product.status,
                 amenities=product.amenities or [],
@@ -1123,12 +1130,19 @@ async def get_admin_products(
 
         # Format response
         product_list = []
+        from core.discounts import effective_price as _eff2, is_on_sale as _sale2
         for product in products:
+            _pct2 = getattr(product, "discount_percent", None)
             product_data = AdminProductListResponse(
                 id=product.id,
                 name=product.name,
                 description=product.description,
                 price=product.price,
+                discount_percent=_pct2,
+                discount_starts_at=getattr(product, "discount_starts_at", None),
+                discount_ends_at=getattr(product, "discount_ends_at", None),
+                effective_price=_eff2(float(product.price), _pct2, getattr(product, "discount_starts_at", None), getattr(product, "discount_ends_at", None)),
+                is_on_sale=_sale2(_pct2, getattr(product, "discount_starts_at", None), getattr(product, "discount_ends_at", None)),
                 stock_quantity=product.stock_quantity,
                 status=product.status,
                 amenities=product.amenities or [],

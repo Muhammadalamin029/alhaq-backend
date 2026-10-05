@@ -18,6 +18,7 @@ class ProductService:
                        min_price: Optional[float] = None, max_price: Optional[float] = None, status: Optional[str] = None,
                        sort_by: Optional[str] = None, sort_order: Optional[str] = None):
 
+        from core.discounts import effective_price_expr
         query = self._with_relationships(db.query(Product))
 
         # Filter by status (defaults to active-only for storefront)
@@ -26,11 +27,13 @@ class ProductService:
         if category_id:
             query = query.filter(Product.category_id == category_id)
 
+        # Sale-aware price filtering (uses effective/discounted price)
+        sale_price = effective_price_expr(Product)
         if min_price is not None:
-            query = query.filter(Product.price >= min_price)
+            query = query.filter(sale_price >= min_price)
 
         if max_price is not None:
-            query = query.filter(Product.price <= max_price)
+            query = query.filter(sale_price <= max_price)
 
         if search_query:
             # Use full-text search if available, fallback to ILIKE
@@ -44,7 +47,9 @@ class ProductService:
                 query = query.filter(Product.name.ilike(f"%{search_query}%"))
 
         # Ordering — strict whitelist so arbitrary column names can't reach order_by
-        sortable = {"created_at": Product.created_at, "price": Product.price, "name": Product.name}
+        # "price" sorts/filters on the sale-aware effective price.
+        from core.discounts import effective_price_expr as _eff_expr
+        sortable = {"created_at": Product.created_at, "price": _eff_expr(Product), "name": Product.name}
         sort_column = sortable.get((sort_by or "created_at").lower(), Product.created_at)
         if (sort_order or "desc").lower() == "asc":
             query = query.order_by(sort_column.asc())
@@ -66,8 +71,17 @@ class ProductService:
         description: Optional[str] = None,
         stock_quantity: int = 0,
         amenities: Optional[list] = None,
-        images: Optional[list] = None
+        images: Optional[list] = None,
+        discount_percent: Optional[float] = None,
+        sale_price: Optional[float] = None,
+        discount_starts_at=None,
+        discount_ends_at=None,
     ):
+        from core.discounts import normalize_discount, validate_window
+        pct = normalize_discount(price, discount_percent, sale_price) if (discount_percent not in (None, "") or sale_price not in (None, "")) else None
+        validate_window(discount_starts_at, discount_ends_at)
+        if pct is None and (discount_starts_at is not None or discount_ends_at is not None):
+            raise ValueError("Discount dates require a discount percent or sale price")
         # 1. Create product with default status
         new_product = Product(
             name=name,
@@ -77,6 +91,9 @@ class ProductService:
             description=description,
             stock_quantity=stock_quantity,
             amenities=amenities or [],
+            discount_percent=float(pct) if pct is not None else None,
+            discount_starts_at=discount_starts_at,
+            discount_ends_at=discount_ends_at,
             status="active" if stock_quantity > 0 else "out_of_stock"
         )
         db.add(new_product)
@@ -169,6 +186,50 @@ class ProductService:
         if not product:
             logger.error(f"Product {product_id} not found")
             return None
+
+        from core.discounts import normalize_discount, validate_window
+
+        # --- Discount handling (percent and/or sale price; sale_price wins) ---
+        sale_price_input = kwargs.pop("sale_price", None)
+        discount_pct_input = kwargs.pop("discount_percent", None)
+        clear_discount = kwargs.pop("clear_discount", None)
+        starts_input = kwargs.pop("discount_starts_at", None) if "discount_starts_at" in kwargs else "__keep__"
+        ends_input = kwargs.pop("discount_ends_at", None) if "discount_ends_at" in kwargs else "__keep__"
+        discount_touched = (
+            sale_price_input not in (None, "")
+            or discount_pct_input not in (None, "")
+            or starts_input != "__keep__"
+            or ends_input != "__keep__"
+            or clear_discount
+        )
+        if discount_touched:
+            new_starts = product.discount_starts_at if starts_input == "__keep__" else starts_input
+            new_ends = product.discount_ends_at if ends_input == "__keep__" else ends_input
+            if clear_discount and sale_price_input in (None, "") and discount_pct_input in (None, "") and starts_input == "__keep__" and ends_input == "__keep__":
+                product.discount_percent = None
+                product.discount_starts_at = None
+                product.discount_ends_at = None
+                logger.info("Cleared discount")
+            else:
+                base_price = kwargs.get("price", product.price)
+                if sale_price_input not in (None, "") or discount_pct_input not in (None, ""):
+                    pct = normalize_discount(base_price, discount_pct_input, sale_price_input)
+                else:
+                    pct = product.discount_percent
+                    if pct is None and (new_starts is not None or new_ends is not None):
+                        raise ValueError("Discount dates require a discount percent or sale price")
+                # Explicit zero percent removes the sale but keeps window cleared
+                if discount_pct_input == 0 and sale_price_input in (None, ""):
+                    product.discount_percent = None
+                    product.discount_starts_at = None
+                    product.discount_ends_at = None
+                else:
+                    validate_window(new_starts, new_ends)
+                    product.discount_percent = float(pct) if pct is not None else None
+                    product.discount_starts_at = new_starts
+                    product.discount_ends_at = new_ends
+            # If only the base price changed while a sale is active, keep pct as-is
+            # (effective price derives automatically).
             
         logger.info(f"Found product: {product.name} (ID: {product.id})")
         

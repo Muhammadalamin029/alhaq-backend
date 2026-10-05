@@ -209,6 +209,11 @@ class Product(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Numeric(15, 2), nullable=False)
+    # Sale: base `price` is never mutated; discount window controls the display.
+    # NULL/0 percent = no sale. Blank start/end = active immediately/indefinitely.
+    discount_percent = Column(Numeric(5, 2), nullable=True, default=None)
+    discount_starts_at = Column(TIMESTAMP, nullable=True, default=None)
+    discount_ends_at = Column(TIMESTAMP, nullable=True, default=None)
     stock_quantity = Column(Integer, default=0)
     category_id = Column(UUID, ForeignKey("categories.id"), nullable=False)
     status = Column(Enum("active", "inactive", "out_of_stock",
