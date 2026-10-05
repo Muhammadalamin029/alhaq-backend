@@ -1873,6 +1873,18 @@ async def publish_acquired_property(
         raise HTTPException(status_code=500, detail="Failed to publish property")
 
 
+@router.get("/system/cache/stats", response_model=AdminResponse)
+async def get_cache_stats(user=Depends(role_required(["admin"]))):
+    """Hit/miss stats for the product Redis cache."""
+    from core.product_cache import cache_stats
+
+    try:
+        return AdminResponse(success=True, message="Cache stats", data=await cache_stats())
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch cache stats", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch cache stats")
+
+
 @router.post("/system/cache/clear", response_model=AdminResponse)
 async def clear_system_cache(user=Depends(role_required(["admin"]))):
     """Clear the system cache (Redis flushdb)"""

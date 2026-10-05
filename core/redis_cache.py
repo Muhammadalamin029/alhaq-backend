@@ -72,19 +72,74 @@ class RedisCache:
             logger.error(f"Error deleting key '{key}' from Redis cache: {e}")
 
     @classmethod
-    async def clear_pattern(cls, pattern: str):
+    async def clear_pattern(cls, pattern: str) -> int:
         try:
             redis_client = await cls.get_instance()
             if redis_client is None:
-                return
+                return 0
             keys = []
             async for key in redis_client.scan_iter(match=pattern):
                 keys.append(key)
             if keys:
                 await redis_client.delete(*keys)
                 logger.info(f"Cleared {len(keys)} keys matching pattern '{pattern}' from Redis cache.")
+                return len(keys)
         except Exception as e:
             logger.error(f"Error clearing pattern '{pattern}' from Redis cache: {e}")
+        return 0
+
+    @classmethod
+    async def acquire_lock(cls, key: str, expire: int = 10) -> bool:
+        """SET NX lock for stampede protection. Fail-open (True) when Redis is down."""
+        try:
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return True
+            return bool(await redis_client.set(key, "1", ex=expire, nx=True))
+        except Exception as e:
+            logger.warning(f"Redis acquire_lock failed for '{key}': {e}")
+            return True
+
+    @classmethod
+    async def release_lock(cls, key: str):
+        try:
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return
+            await redis_client.delete(key)
+        except Exception as e:
+            logger.warning(f"Redis release_lock failed for '{key}': {e}")
+
+    @classmethod
+    async def incr_stat(cls, key: str) -> None:
+        try:
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return
+            await redis_client.incr(key)
+        except Exception:
+            pass
+
+    @classmethod
+    async def get_stats(cls) -> dict:
+        """Hit/miss counters for product cache observability. Fail-open to zeros."""
+        try:
+            redis_client = await cls.get_instance()
+            if redis_client is None:
+                return {"hits": 0, "misses": 0, "hit_rate": 0.0, "connected": False}
+            hits = await redis_client.get("cache:stats:prod:hits") or 0
+            misses = await redis_client.get("cache:stats:prod:misses") or 0
+            hits, misses = int(hits), int(misses)
+            total = hits + misses
+            return {
+                "hits": hits,
+                "misses": misses,
+                "hit_rate": round(hits / total, 3) if total else 0.0,
+                "connected": True,
+            }
+        except Exception as e:
+            logger.warning(f"Redis get_stats failed: {e}")
+            return {"hits": 0, "misses": 0, "hit_rate": 0.0, "connected": False}
 
     @classmethod
     async def health_check(cls) -> bool:

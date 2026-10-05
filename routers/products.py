@@ -9,6 +9,7 @@ from schemas.products import ProductCreate, ProductResponse, ProductUpdate
 from typing import Optional
 from core.logging_config import get_logger, log_error
 from core.system_settings_service import system_settings_service
+from core import product_cache
 
 # Get logger for products routes
 products_logger = get_logger("routers.products")
@@ -36,16 +37,29 @@ async def list_products(
         # Use a reasonable limit to prevent excessive data loading
         effective_limit = min(limit, 50)  # Cap at 50 products per request
 
+        # Search queries bypass Redis (low hit rate, cache-buster on FE anyway)
+        cache_key = None
+        if not search_query:
+            cache_key = product_cache.build_list_key(
+                page=page, limit=effective_limit, category_id=category_id,
+                min_price=min_price, max_price=max_price, status=status,
+                sort_by=sort_by, sort_order=sort_order,
+            )
+            cached = await product_cache.get_list(cache_key)
+            if cached is not None:
+                products_logger.debug(f"Products list cache hit - page: {page}")
+                return cached
+
         products, count = product_service.fetch_products(
             db=db, limit=effective_limit, page=page, category_id=category_id, search_query=search_query,
             min_price=min_price, max_price=max_price, status=status, sort_by=sort_by, sort_order=sort_order)
-        
+
         products_logger.info(f"Products fetched successfully - count: {count}, page: {page}")
-        
-        return {
+
+        response = {
             "success": True,
             "message": "Products fetched successfully",
-            "data": [ProductResponse.model_validate(p) for p in products] if products else [],
+            "data": [ProductResponse.model_validate(p).model_dump(mode="json") for p in products] if products else [],
             "pagination": {
                 "page": page,
                 "limit": effective_limit,
@@ -53,6 +67,9 @@ async def list_products(
                 "total_pages": (count + effective_limit - 1) // effective_limit
             }
         }
+        if cache_key:
+            await product_cache.set_list(cache_key, response)
+        return response
     except Exception as e:
         log_error(products_logger, "Failed to fetch products", e, page=page, limit=limit, search_query=search_query, category_id=category_id, min_price=min_price, max_price=max_price, status=status, sort_by=sort_by, sort_order=sort_order)
         raise HTTPException(status_code=500, detail="Failed to fetch products")
@@ -121,6 +138,7 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
             )
         
         products_logger.info(f"Product created successfully: {new_product.id} by user {user['id']}")
+        await product_cache.invalidate_product(str(new_product.id))
         
         return {
             "success": True,
@@ -141,17 +159,22 @@ async def add_product(payload: ProductCreate, user=Depends(role_required(["admin
 
 @router.get("/{product_id}")
 async def get_product_by_id(product_id: str, db: Session = Depends(get_db)):
+    cached = await product_cache.get_detail(product_id)
+    if cached is not None:
+        return cached
     product = product_service.get_product_by_id(db=db, product_id=product_id)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
-    return {
+    response = {
         "success": True,
         "message": "Product fetched successfully",
-        "data": ProductResponse.model_validate(product)
+        "data": ProductResponse.model_validate(product).model_dump(mode="json")
     }
+    await product_cache.set_detail(product_id, response)
+    return response
 
 
 @router.put("/{product_id}")
@@ -255,6 +278,7 @@ async def update_product(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update product"
             )
+        await product_cache.invalidate_product(str(product_id))
         
         return {
             "success": True,
@@ -297,6 +321,7 @@ async def update_product_stock(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update product stock"
             )
+        await product_cache.invalidate_product(str(product_id))
         
         return {
             "success": True,
@@ -353,6 +378,7 @@ async def delete_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete product"
         )
+    await product_cache.invalidate_product(str(product_id))
 
     # Determine the appropriate response message
     if existing_order_items:
