@@ -1,8 +1,19 @@
 from core.model import Product, AssetImage
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import UUID
+from sqlalchemy import UUID, and_, case, func, literal, or_
 from schemas.media import AssetImageResponse
 from typing import Optional
+
+# Trigram similarity floor for fuzzy matching. Short queries (< 3 chars)
+# skip the fuzzy branch entirely — trigram scores are meaningless there.
+FUZZY_MIN_QUERY_LEN = 3
+FUZZY_SIMILARITY_THRESHOLD = 0.25
+FUZZY_WORD_SIMILARITY_THRESHOLD = 0.35
+
+
+def _like_escape(value: str) -> str:
+    """Escape LIKE wildcards so user input matches literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class ProductService:
@@ -36,15 +47,65 @@ class ProductService:
             query = query.filter(sale_price <= max_price)
 
         if search_query:
-            # Use full-text search if available, fallback to ILIKE
-            try:
-                # Try to use the GIN index for better performance
-                query = query.filter(
-                    db.func.to_tsvector('english', Product.name).match(search_query)
+            normalized = " ".join(search_query.split())
+            if normalized:
+                lowered = normalized.lower()
+                tokens = lowered.split(" ")
+                name_col = func.lower(Product.name)
+                desc_col = func.lower(func.coalesce(Product.description, ""))
+
+                # Every token must appear in the name or description
+                # (substring match, wildcards escaped).
+                token_clauses = [
+                    or_(
+                        Product.name.ilike(
+                            f"%{_like_escape(t)}%", escape="\\"
+                        ),
+                        Product.description.ilike(
+                            f"%{_like_escape(t)}%", escape="\\"
+                        ),
+                    )
+                    for t in tokens
+                ]
+
+                # Typo-tolerant fallback: trigram similarity against the full
+                # query catches transpositions/misspellings the token match
+                # misses (e.g. "snekers" vs "sneakers").
+                match_clauses = [and_(*token_clauses)]
+                if len(lowered) >= FUZZY_MIN_QUERY_LEN:
+                    match_clauses.append(
+                        or_(
+                            func.similarity(name_col, lowered)
+                            > FUZZY_SIMILARITY_THRESHOLD,
+                            func.word_similarity(literal(lowered), name_col)
+                            > FUZZY_WORD_SIMILARITY_THRESHOLD,
+                            func.similarity(desc_col, lowered)
+                            > FUZZY_SIMILARITY_THRESHOLD,
+                        )
+                    )
+                query = query.filter(or_(*match_clauses))
+
+                # Rank: exact name > substring of full query > trigram
+                # similarity. Applied first; the sort_by below tie-breaks.
+                rank = (
+                    case((name_col == lowered, 100), else_=0)
+                    + case(
+                        (
+                            Product.name.ilike(
+                                f"%{_like_escape(lowered)}%",
+                                escape="\\",
+                            ),
+                            50,
+                        ),
+                        else_=0,
+                    )
+                    + (func.similarity(name_col, literal(lowered)) * 30)
+                    + (
+                        func.word_similarity(literal(lowered), name_col)
+                        * 20
+                    )
                 )
-            except:
-                # Fallback to ILIKE if full-text search fails
-                query = query.filter(Product.name.ilike(f"%{search_query}%"))
+                query = query.order_by(rank.desc())
 
         # Ordering — strict whitelist so arbitrary column names can't reach order_by
         # "price" sorts/filters on the sale-aware effective price.
