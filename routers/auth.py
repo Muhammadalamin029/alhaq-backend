@@ -14,6 +14,7 @@ from core.auth import (
 )
 from core.auth_service import auth_service
 from core.model import User
+from core.token_denylist import denylist_token, is_denylisted
 from core.password_policy import PasswordPolicy, PASSWORD_REQUIREMENTS
 from core.system_settings_service import system_settings_service
 from db.session import get_db
@@ -22,6 +23,7 @@ from schemas.auth import (
     RegisterRequest,
     TokenResponse,
     RefreshRequest,
+    LogoutRequest,
     ChangePasswordRequest,
     UpdateProfileRequest,
     FullUserProfileResponse,
@@ -67,7 +69,7 @@ def generate_tokens(db: Session, user_id: str, role: str):
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_tokens(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
-    """Refresh access token using refresh token"""
+    """Refresh access token using refresh token (single-use rotation)."""
     try:
         payload = decode_token(
             refresh_request.refresh_token, settings.REFRESH_SECRET_KEY
@@ -78,12 +80,35 @@ def refresh_tokens(refresh_request: RefreshRequest, db: Session = Depends(get_db
             detail="Invalid or expired refresh token",
         )
 
+    # Reject revoked tokens (logout) and already-rotated tokens (reuse).
+    if is_denylisted(refresh_request.refresh_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session revoked. Please sign in again.",
+        )
+
     user_id, role = payload.get("sub"), payload.get("role")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token data")
 
     access_token, refresh_token = generate_tokens(db, user_id, role)
+    # Single-use rotation: the presented token dies here; reuse is rejected.
+    denylist_token(
+        refresh_request.refresh_token,
+        settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+    )
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/logout")
+def logout(logout_request: LogoutRequest):
+    """Revoke the refresh token server-side. Always succeeds (idempotent)."""
+    if logout_request.refresh_token:
+        denylist_token(
+            logout_request.refresh_token,
+            settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        )
+    return {"success": True, "message": "Logged out successfully"}
 
 
 @router.post("/login", response_model=TokenResponse)

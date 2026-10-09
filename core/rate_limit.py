@@ -26,7 +26,14 @@ RULES: List[Tuple[str, str, int, int]] = [
     ("POST", "/auth/send-verification", 10, 60),
     ("POST", "/auth/resend-verification", 10, 60),
     ("POST", "/auth/refresh", 30, 60),
+    ("POST", "/auth/logout", 30, 60),
     ("POST", "/public/image-search", 20, 60),
+    # Money-moving and account-creating writes (order spam / scraping guard).
+    ("POST", "/checkout", 30, 60),
+    ("POST", "/orders", 30, 60),
+    ("POST", "/admin", 60, 60),
+    ("PUT", "/admin", 60, 60),
+    ("DELETE", "/admin", 120, 60),
 ]
 
 # process-local fallback: key -> (count, window_start)

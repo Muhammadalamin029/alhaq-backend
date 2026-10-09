@@ -30,13 +30,16 @@ engine = create_engine(
     _normalize_db_url(settings.DATABASE_URL),
     echo=False,  # Disable SQL logging in production
     future=True,
-    pool_size=20,  # Increase connection pool
-    max_overflow=30,  # Allow more connections
+    # Small pool: the DB is Neon (serverless, strict connection caps) behind
+    # its own pooler, and API + worker + beat each hold a pool. Bunched
+    # traffic queues briefly instead of exhausting database connections.
+    pool_size=5,
+    max_overflow=10,
     pool_pre_ping=True,  # Verify connections before use
     pool_recycle=3600,  # Recycle connections every hour
     # Performance optimizations
     pool_timeout=30,  # Connection timeout
-    pool_reset_on_return='commit'  # Reset connections on return
+    pool_reset_on_return='rollback'  # Never commit stray partial work
 )
 
 SessionLocal = sessionmaker(
@@ -51,5 +54,12 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+        # Read-only fast path: release without committing anything, so a
+        # route that forgot its commit can't leak writes into the pool.
+        db.rollback()
+    except Exception:
+        # Never let a failed transaction return to the pool half-applied.
+        db.rollback()
+        raise
     finally:
         db.close()
