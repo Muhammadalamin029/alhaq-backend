@@ -24,6 +24,7 @@ from routers import (
     financing as financing_router,
     delivery as delivery_router,
     seo as seo_router,
+    image_search as image_search_router,
 )
 from core.config import settings
 from db.session import engine
@@ -121,6 +122,7 @@ app.include_router(
     system_settings.router, prefix="/system-settings", tags=["System Settings"]
 )
 app.include_router(public_router.router, prefix="/public", tags=["Public"])
+app.include_router(image_search_router.router, prefix="/public", tags=["Public"])
 app.include_router(
     legal_documents_router.public_router, prefix="/public", tags=["Public"]
 )

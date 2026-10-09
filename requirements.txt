@@ -27,3 +27,8 @@ fpdf2>=2.8
 
 # Payload encryption for Flutterwave direct card charges (3DES)
 pycryptodome>=3.20.0
+
+# Image search: provider-agnostic LangChain vision (default Gemini) + Pillow
+langchain>=1.0
+langchain-google-genai>=2.0
+pillow>=10.0

@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     # Google Sign-In
     GOOGLE_CLIENT_ID: str = ""
 
+    # Vision provider keys (LangChain reads GOOGLE_API_KEY / GEMINI_API_KEY,
+    # OPENAI_API_KEY, ANTHROPIC_API_KEY from the environment; declaring them
+    # here keeps Settings validation from rejecting the .env file).
+    GOOGLE_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_PASSWORD: str = ""
@@ -76,6 +84,17 @@ class Settings(BaseSettings):
     # Frontend URL — used for deep links in emails (e.g. "View Order" CTA)
     # and as the base for the email logo image.
     FRONTEND_URL: str = "https://lelstore.com"
+
+    # Image search (provider-agnostic LangChain vision).
+    # VISION_PROVIDER: LangChain provider prefix used with init_chat_model,
+    # e.g. "google_genai" (default, needs GOOGLE_API_KEY or GEMINI_API_KEY),
+    # "openai" (needs OPENAI_API_KEY + langchain-openai installed),
+    # "anthropic" (needs ANTHROPIC_API_KEY + langchain-anthropic installed).
+    VISION_PROVIDER: str = "google_genai"
+    VISION_MODEL: str = "gemini-3.8-flash"
+    VISION_TIMEOUT: int = 30
+    IMAGE_SEARCH_MAX_MB: int = 5
+    IMAGE_SEARCH_CACHE_TTL: int = 86400  # 24h, keyed by image SHA256
 
     # Security email — set to False to stop sending a "New Sign-In" email on
     # every login (useful when users authenticate frequently from mobile).

@@ -26,6 +26,7 @@ RULES: List[Tuple[str, str, int, int]] = [
     ("POST", "/auth/send-verification", 10, 60),
     ("POST", "/auth/resend-verification", 10, 60),
     ("POST", "/auth/refresh", 30, 60),
+    ("POST", "/public/image-search", 20, 60),
 ]
 
 # process-local fallback: key -> (count, window_start)
