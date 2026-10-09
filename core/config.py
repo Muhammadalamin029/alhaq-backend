@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     # "openai" (needs OPENAI_API_KEY + langchain-openai installed),
     # "anthropic" (needs ANTHROPIC_API_KEY + langchain-anthropic installed).
     VISION_PROVIDER: str = "google_genai"
-    VISION_MODEL: str = "gemini-3.8-flash"
+    VISION_MODEL: str = "gemini-3.1-flash-lite"
     VISION_TIMEOUT: int = 30
     IMAGE_SEARCH_MAX_MB: int = 5
     IMAGE_SEARCH_CACHE_TTL: int = 86400  # 24h, keyed by image SHA256

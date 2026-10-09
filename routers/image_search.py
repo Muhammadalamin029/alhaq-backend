@@ -25,7 +25,7 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 # Largest side after downscaling — keeps vision cost/latency bounded.
-MAX_SIDE_PX = 1024
+MAX_SIDE_PX = 768
 
 
 def _prepare_image(raw: bytes) -> bytes:

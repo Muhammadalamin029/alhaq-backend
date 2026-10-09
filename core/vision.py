@@ -76,11 +76,18 @@ def get_vision_model():
             os.environ[var] = getattr(settings, var)
 
     identifier = f"{settings.VISION_PROVIDER}:{settings.VISION_MODEL}"
+    # Cost guards: deterministic output, tiny response budget. Gemini-only
+    # extras (low media resolution) stay behind the provider check so the
+    # factory keeps working for OpenAI/Anthropic-compatible providers.
+    extra: dict = {"temperature": 0, "max_tokens": 256}
+    if settings.VISION_PROVIDER == "google_genai":
+        extra["media_resolution"] = "MEDIA_RESOLUTION_LOW"
     try:
         return init_chat_model(
             identifier,
             timeout=settings.VISION_TIMEOUT,
             max_retries=2,
+            **extra,
         )
     except Exception as e:
         logger.error(f"Failed to init vision model '{identifier}': {e}")
