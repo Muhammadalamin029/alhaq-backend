@@ -38,6 +38,9 @@ class RegisterRequest(BaseModel):
     full_name: str
     phone: str = Field(..., min_length=10, max_length=20)
     bio: str = None
+    # Anti-bot: honeypot (humans leave empty) + Turnstile token (optional until key set).
+    website: Optional[str] = None
+    turnstile_token: Optional[str] = None
 
 
 class ChangePasswordRequest(BaseModel):

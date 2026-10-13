@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Google Sign-In
     GOOGLE_CLIENT_ID: str = ""
 
+    # Cloudflare Turnstile (bot protection on registration).
+    # Empty = verification skipped (local dev). Set in production.
+    TURNSTILE_SECRET_KEY: str = ""
+
     # Vision provider keys (LangChain reads GOOGLE_API_KEY / GEMINI_API_KEY,
     # OPENAI_API_KEY, ANTHROPIC_API_KEY from the environment; declaring them
     # here keeps Settings validation from rejecting the .env file).

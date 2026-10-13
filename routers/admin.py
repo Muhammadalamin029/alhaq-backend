@@ -9,6 +9,8 @@ from decimal import Decimal
 from db.session import get_db
 from core.auth import role_required
 from core.model import (
+    Address,
+    AuditLog,
     User,
     Profile,
     StoreProfile,
@@ -17,6 +19,7 @@ from core.model import (
     OrderItem,
     Category,
     Payment,
+    Dispute,
     GeneralInspection,
     GeneralAgreement,
     Property,
@@ -334,6 +337,166 @@ async def get_admin_dashboard_stats(
             "overdue_agreements": overdue_agreements,
         }
 
+        # ---------------- P1 analytics (range-scoped where applicable) ----------------
+        funnel: dict = {}
+        revenue_by_category: list = []
+        top_products: list = []
+        payment_status: dict = {}
+        disputes_summary: dict = {}
+        geo_top_states: list = []
+        signup_stats: dict = {}
+        try:
+            funnel_q = db.query(Order.status, func.count(Order.id))
+            pay_q = db.query(Payment)
+            dispute_q = db.query(Dispute)
+            if range_start:
+                funnel_q = funnel_q.filter(Order.created_at >= range_start)
+                pay_q = pay_q.filter(Payment.created_at >= range_start)
+                dispute_q = dispute_q.filter(Dispute.created_at >= range_start)
+            funnel_rows = funnel_q.group_by(Order.status).all()
+            funnel_breakdown = {s: int(c) for s, c in funnel_rows}
+            funnel_total = sum(funnel_breakdown.values())
+            converted = sum(funnel_breakdown.get(s, 0) for s in ("paid", "shipped", "delivered"))
+            funnel = {
+                "breakdown": funnel_breakdown,
+                "total": funnel_total,
+                "converted": converted,
+                "conversion_rate": round((converted / funnel_total * 100) if funnel_total else 0, 1),
+            }
+
+            # Revenue by category from fulfilled order lines.
+            rev_q = (
+                db.query(
+                    Category.name.label("category"),
+                    func.sum(OrderItem.price * OrderItem.quantity).label("revenue"),
+                    func.sum(OrderItem.quantity).label("units"),
+                    func.count(func.distinct(OrderItem.order_id)).label("orders"),
+                )
+                .join(Product, Product.id == OrderItem.product_id)
+                .join(Category, Category.id == Product.category_id)
+                .join(Order, Order.id == OrderItem.order_id)
+            )
+            if range_start:
+                rev_q = rev_q.filter(Order.created_at >= range_start)
+            for r in rev_q.group_by(Category.name).order_by(desc("revenue")).limit(10).all():
+                revenue_by_category.append(
+                    {
+                        "category": r.category,
+                        "revenue": float(r.revenue or 0),
+                        "units": int(r.units or 0),
+                        "orders": int(r.orders or 0),
+                    }
+                )
+
+            # Top products by revenue.
+            top_q = (
+                db.query(
+                    Product.id.label("pid"),
+                    Product.name.label("name"),
+                    func.sum(OrderItem.price * OrderItem.quantity).label("revenue"),
+                    func.sum(OrderItem.quantity).label("units"),
+                )
+                .join(OrderItem, OrderItem.product_id == Product.id)
+                .join(Order, Order.id == OrderItem.order_id)
+            )
+            if range_start:
+                top_q = top_q.filter(Order.created_at >= range_start)
+            for r in top_q.group_by(Product.id, Product.name).order_by(desc("revenue")).limit(10).all():
+                top_products.append(
+                    {
+                        "product_id": str(r.pid),
+                        "name": r.name,
+                        "revenue": float(r.revenue or 0),
+                        "units": int(r.units or 0),
+                    }
+                )
+
+            # Payment status / failure rate.
+            pay_rows = (
+                pay_q.with_entities(Payment.status, func.count(Payment.id))
+                .group_by(Payment.status)
+                .all()
+            )
+            pay_breakdown = {s: int(c) for s, c in pay_rows}
+            pay_total = sum(pay_breakdown.values())
+            failed = pay_breakdown.get("failed", 0)
+            payment_status = {
+                "breakdown": pay_breakdown,
+                "total": pay_total,
+                "failed": failed,
+                "failure_rate": round((failed / pay_total * 100) if pay_total else 0, 1),
+            }
+
+            # Disputes: counts + avg days to resolve.
+            disp_rows = (
+                dispute_q.with_entities(Dispute.status, func.count(Dispute.id))
+                .group_by(Dispute.status)
+                .all()
+            )
+            disp_breakdown = {s: int(c) for s, c in disp_rows}
+            avg_days = (
+                db.query(func.avg(func.extract("epoch", Dispute.updated_at - Dispute.created_at) / 86400.0))
+                .filter(Dispute.status.in_(["resolved", "closed"]))
+                .scalar()
+            )
+            disputes_summary = {
+                "breakdown": disp_breakdown,
+                "total": sum(disp_breakdown.values()),
+                "open": int(disp_breakdown.get("open", 0) + disp_breakdown.get("under_review", 0)),
+                "avg_resolution_days": round(float(avg_days), 1) if avg_days is not None else None,
+            }
+
+            # Geo: top states by saved address count.
+            geo_rows = (
+                db.query(Address.state_province.label("state"), func.count(Address.id).label("n"))
+                .group_by(Address.state_province)
+                .order_by(desc("n"))
+                .limit(8)
+                .all()
+            )
+            geo_total = sum(int(r.n) for r in geo_rows) or 1
+            for r in geo_rows:
+                geo_top_states.append(
+                    {
+                        "state": r.state or "Unknown",
+                        "count": int(r.n),
+                        "pct": round(int(r.n) / geo_total * 100, 1),
+                    }
+                )
+
+            # Signup / bot signal.
+            week_ago = now - timedelta(days=7)
+            unverified_total = db.query(User).filter(User.email_verified.is_(False), User.role == "customer").count()
+            unverified_week = (
+                db.query(User)
+                .filter(User.email_verified.is_(False), User.role == "customer", User.created_at >= week_ago)
+                .count()
+            )
+            new_week = db.query(User).filter(User.role == "customer", User.created_at >= week_ago).count()
+            signup_rows = (
+                db.query(func.date(User.created_at).label("date"), func.count(User.id).label("n"))
+                .filter(User.role == "customer")
+                .filter(User.created_at >= (range_start or week_ago))
+                .group_by(func.date(User.created_at))
+                .order_by(func.date(User.created_at))
+                .all()
+            )
+            # Top email domains (computed in Python; cheap for admin scale).
+            domains: dict = {}
+            for (email,) in db.query(User.email).filter(User.role == "customer").all():
+                d = (email.split("@")[-1] if "@" in (email or "") else "unknown").lower()
+                domains[d] = domains.get(d, 0) + 1
+            top_domains = sorted(domains.items(), key=lambda kv: kv[1], reverse=True)[:8]
+            signup_stats = {
+                "unverified_total": unverified_total,
+                "unverified_last_7d": unverified_week,
+                "new_last_7d": new_week,
+                "series": [{"date": str(r.date), "count": int(r.n)} for r in signup_rows],
+                "top_domains": [{"domain": d, "count": c} for d, c in top_domains],
+            }
+        except Exception as e:
+            log_error(admin_logger, "P1 analytics computation failed (dashboard degrades gracefully)", e)
+
         stats = AdminDashboardStats(
             total_users=total_users,
             total_assets=total_assets,
@@ -368,6 +531,13 @@ async def get_admin_dashboard_stats(
             agreements_series=agreements_series,
             recent_payments=recent_payments,
             alerts=alerts,
+            funnel=funnel,
+            revenue_by_category=revenue_by_category,
+            top_products=top_products,
+            payment_status=payment_status,
+            disputes_summary=disputes_summary,
+            geo_top_states=geo_top_states,
+            signup_stats=signup_stats,
         )
 
         return AdminResponse(
@@ -1318,6 +1488,161 @@ async def update_user_action(
     except Exception as e:
         log_error(admin_logger, f"Failed to perform user action {action.action}", e)
         raise HTTPException(status_code=500, detail="Failed to perform user action")
+
+
+# ---------------- USER HARD-DELETE (total removal, unblocked) ----------------
+
+
+@router.get("/users/{user_id}/deletion-preview", response_model=AdminResponse)
+async def preview_user_deletion(
+    user_id: UUID,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """Show what a total hard-delete would remove (no writes)."""
+    from core.user_deletion_service import deletion_preview
+
+    preview = deletion_preview(db, str(user_id))
+    if not preview.get("exists"):
+        raise HTTPException(status_code=404, detail="User not found")
+    return AdminResponse(success=True, message="Deletion preview", data=preview)
+
+
+@router.delete("/users/{user_id}", response_model=AdminResponse)
+async def hard_delete_user_account(
+    user_id: UUID,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete a user and ALL linked rows (orders, payments,
+    agreements included). Blocked only for admins and self-delete.
+    An AuditLog entry is written before removal."""
+    from core.user_deletion_service import hard_delete_user
+
+    try:
+        result = hard_delete_user(db, str(user_id), performed_by=user)
+        return AdminResponse(
+            success=True,
+            message=f"User {result['deleted_email']} permanently deleted",
+            data=result,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, f"Failed to hard-delete user {user_id}", e)
+        raise HTTPException(status_code=500, detail="Failed to delete user")
+
+
+class BotCleanupRequest(BaseModel):
+    user_ids: Optional[List[UUID]] = None
+    days: int = Field(7, ge=1, le=90)
+    limit: int = Field(100, ge=1, le=500)
+    dry_run: bool = True
+
+
+@router.post("/users/cleanup-bots", response_model=AdminResponse)
+async def cleanup_bot_accounts(
+    payload: BotCleanupRequest,
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+):
+    """Bulk-remove bot signups. Two modes:
+
+    - Explicit `user_ids`: hard-delete each (paying customers skipped with an error entry).
+    - Otherwise: dry-run (default) lists candidates from the last `days` days;
+      `dry_run=false` deletes them. Accounts with orders/payments are never
+      touched by the candidate path.
+    """
+    from core.user_deletion_service import find_bot_candidates, hard_delete_user
+
+    try:
+        if payload.user_ids:
+            results: List[dict] = []
+            ok = fail = 0
+            for uid in payload.user_ids:
+                try:
+                    r = hard_delete_user(db, str(uid), performed_by=user)
+                    results.append({"user_id": str(uid), "success": True, "email": r["deleted_email"]})
+                    ok += 1
+                except HTTPException as he:
+                    results.append({"user_id": str(uid), "success": False, "error": he.detail})
+                    fail += 1
+            return AdminResponse(
+                success=fail == 0,
+                message=f"Bulk delete: {ok} deleted, {fail} failed",
+                data={"deleted": ok, "failed": fail, "results": results},
+            )
+        candidates = find_bot_candidates(db, days=payload.days, limit=payload.limit)
+        if payload.dry_run:
+            return AdminResponse(
+                success=True,
+                message=f"{len(candidates)} bot candidate(s) found (dry run)",
+                data={"candidates": candidates, "dry_run": True},
+            )
+        results = []
+        ok = 0
+        for c in candidates:
+            try:
+                r = hard_delete_user(db, c["id"], performed_by=user)
+                results.append({"user_id": c["id"], "success": True, "email": r["deleted_email"]})
+                ok += 1
+            except Exception as e:
+                results.append({"user_id": c["id"], "success": False, "error": str(e)})
+        return AdminResponse(
+            success=True,
+            message=f"Bot cleanup: {ok}/{len(candidates)} deleted",
+            data={"deleted": ok, "total": len(candidates), "results": results},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(admin_logger, "Bot cleanup failed", e)
+        raise HTTPException(status_code=500, detail="Bot cleanup failed")
+
+
+@router.get("/audit-logs", response_model=AdminListResponse)
+async def list_audit_logs(
+    user=Depends(role_required(["admin"])),
+    db: Session = Depends(get_db),
+    action: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Queryable admin paper trail (hard-deletes, approvals, locks)."""
+    try:
+        offset = (page - 1) * limit
+        q = db.query(AuditLog).options(joinedload(AuditLog.admin))
+        if action:
+            q = q.filter(AuditLog.action.ilike(f"%{action}%"))
+        total = q.count()
+        rows = q.order_by(desc(AuditLog.timestamp)).offset(offset).limit(limit).all()
+        return AdminListResponse(
+            success=True,
+            message="Audit logs retrieved",
+            data=[
+                {
+                    "id": str(r.id),
+                    "admin_id": str(r.admin_id) if r.admin_id else None,
+                    "admin_email": r.admin.email if getattr(r, "admin", None) else None,
+                    "target_id": str(r.target_id) if r.target_id else None,
+                    "action": r.action,
+                    "details": r.details,
+                    "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                }
+                for r in rows
+            ],
+            pagination={
+                "page": page,
+                "limit": limit,
+                "total_pages": (total + limit - 1) // limit,
+                "has_next": page * limit < total,
+                "has_prev": page > 1,
+            },
+            total=total,
+        )
+    except Exception as e:
+        log_error(admin_logger, "Failed to fetch audit logs", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch audit logs")
 
 
 # ---------------- ASSET MANAGEMENT ----------------

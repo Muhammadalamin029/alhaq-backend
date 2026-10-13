@@ -263,10 +263,29 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/register/customer", response_model=TokenResponse, status_code=201)
-def register_customer(body: RegisterRequest, db: Session = Depends(get_db)):
+def register_customer(body: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     """Register a new customer and return authentication tokens"""
     try:
         auth_logger.info(f"Customer registration attempt: {body.email}")
+
+        # --- Anti-bot gates (fail fast, before any DB write) ---
+        if (body.website or "").strip():
+            # Honeypot filled -> silent bot rejection (generic error, no oracle).
+            auth_logger.warning(f"Bot signup blocked (honeypot): {body.email}")
+            raise HTTPException(status_code=400, detail="Registration failed")
+        from core.antibot import is_disposable_email, verify_turnstile_token
+
+        if is_disposable_email(body.email):
+            auth_logger.warning(f"Bot signup blocked (disposable domain): {body.email}")
+            raise HTTPException(
+                status_code=400,
+                detail="Please sign up with a permanent email address",
+            )
+        forwarded = request.headers.get("x-forwarded-for")
+        client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else None)
+        if not verify_turnstile_token(body.turnstile_token, client_ip):
+            auth_logger.warning(f"Bot signup blocked (turnstile): {body.email}")
+            raise HTTPException(status_code=400, detail="Bot verification failed. Please try again.")
 
         user_id = auth_service.create_user(
             db,

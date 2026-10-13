@@ -18,7 +18,7 @@ logger = get_logger("core.rate_limit")
 # (method, path prefix, max requests, window seconds)
 RULES: List[Tuple[str, str, int, int]] = [
     ("POST", "/auth/login", 10, 60),
-    ("POST", "/auth/register", 5, 60),
+    ("POST", "/auth/register", 3, 60),
     ("POST", "/auth/google", 10, 60),
     ("POST", "/auth/request-password-reset", 5, 60),
     ("POST", "/auth/reset-password", 5, 60),

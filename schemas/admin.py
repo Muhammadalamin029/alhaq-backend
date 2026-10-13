@@ -234,6 +234,15 @@ class AdminDashboardStats(BaseModel):
 
     # Alerts
     alerts: Dict[str, Any] = {}
+
+    # ---- P1 analytics (populated when ?range= is set) ----
+    funnel: Dict[str, Any] = {}
+    revenue_by_category: List[Dict[str, Any]] = []
+    top_products: List[Dict[str, Any]] = []
+    payment_status: Dict[str, Any] = {}
+    disputes_summary: Dict[str, Any] = {}
+    geo_top_states: List[Dict[str, Any]] = []
+    signup_stats: Dict[str, Any] = {}
     
     class Config:
         from_attributes = True
