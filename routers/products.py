@@ -17,6 +17,40 @@ products_logger = get_logger("routers.products")
 router = APIRouter()
 
 
+def _resolve_nl_category(db: Session, hint: str):
+    """Map a parser category hint onto a real category id.
+
+    Matches exact, plural-insensitive, then substring. Returns None when
+    no category matches so the keyword path still applies.
+    """
+    try:
+        from core.categories import category_service
+
+        norm = (hint or "").strip().lower()
+        if not norm:
+            return None
+        categories, _ = category_service.fetch_categories(db, limit=100, page=1)
+        if not categories:
+            return None
+
+        def singular(s: str) -> str:
+            return s[:-1] if s.endswith("s") and len(s) > 3 else s
+
+        names = [(c, (c.name or "").strip().lower()) for c in categories]
+        for c, name in names:
+            if name == norm:
+                return str(c.id)
+        for c, name in names:
+            if singular(name) == singular(norm):
+                return str(c.id)
+        for c, name in names:
+            if norm in name or name in norm:
+                return str(c.id)
+        return None
+    except Exception:
+        return None
+
+
 @router.get("/")
 async def list_products(
     db: Session = Depends(get_db),
@@ -38,12 +72,58 @@ async def list_products(
         effective_limit = min(limit, 50)  # Cap at 50 products per request
 
         # Search queries bypass Redis (low hit rate, cache-buster on FE anyway)
+        # Parser-first: a natural-language query is reduced to structured
+        # filters before the normal keyword path runs. Non-NL input and
+        # explicit query params are never overridden.
+        effective_search_query = search_query
+        effective_category_id = category_id
+        effective_min_price = min_price
+        effective_max_price = max_price
+        effective_sort_by = sort_by
+        effective_sort_order = sort_order
+        applied_filters = None
+        if search_query and search_query.strip():
+            try:
+                from core.nl_search_parser import parse_search_query
+
+                parsed = parse_search_query(search_query)
+            except Exception as e:
+                products_logger.warning(
+                    f"NL parser failed, falling back to keyword search: {e}"
+                )
+                parsed = None
+            if parsed is not None and parsed.was_nl:
+                if parsed.clean_query is not None:
+                    effective_search_query = parsed.clean_query or None
+                if effective_category_id is None and parsed.category_hint:
+                    effective_category_id = _resolve_nl_category(db, parsed.category_hint)
+                if effective_min_price is None and parsed.min_price is not None:
+                    effective_min_price = parsed.min_price
+                if effective_max_price is None and parsed.max_price is not None:
+                    effective_max_price = parsed.max_price
+                if effective_sort_by is None and parsed.sort_by is not None:
+                    effective_sort_by = parsed.sort_by
+                    if effective_sort_order is None:
+                        effective_sort_order = parsed.sort_order
+                applied_filters = {
+                    "was_nl": True,
+                    "clean_query": effective_search_query,
+                    "category_id": effective_category_id,
+                    "min_price": effective_min_price,
+                    "max_price": effective_max_price,
+                    "sort_by": effective_sort_by,
+                    "sort_order": effective_sort_order,
+                }
+                products_logger.info(
+                    f"NL search parsed: {search_query!r} -> {applied_filters}"
+                )
+
         cache_key = None
         if not search_query:
             cache_key = product_cache.build_list_key(
-                page=page, limit=effective_limit, category_id=category_id,
-                min_price=min_price, max_price=max_price, status=status,
-                sort_by=sort_by, sort_order=sort_order,
+                page=page, limit=effective_limit, category_id=effective_category_id,
+                min_price=effective_min_price, max_price=effective_max_price, status=status,
+                sort_by=effective_sort_by, sort_order=effective_sort_order,
             )
             cached = await product_cache.get_list(cache_key)
             if cached is not None:
@@ -51,8 +131,8 @@ async def list_products(
                 return cached
 
         products, count = product_service.fetch_products(
-            db=db, limit=effective_limit, page=page, category_id=category_id, search_query=search_query,
-            min_price=min_price, max_price=max_price, status=status, sort_by=sort_by, sort_order=sort_order)
+            db=db, limit=effective_limit, page=page, category_id=effective_category_id, search_query=effective_search_query,
+            min_price=effective_min_price, max_price=effective_max_price, status=status, sort_by=effective_sort_by, sort_order=effective_sort_order)
 
         products_logger.info(f"Products fetched successfully - count: {count}, page: {page}")
 
@@ -60,6 +140,7 @@ async def list_products(
             "success": True,
             "message": "Products fetched successfully",
             "data": [ProductResponse.with_discount(p).model_dump(mode="json") for p in products] if products else [],
+            "applied_filters": applied_filters,
             "pagination": {
                 "page": page,
                 "limit": effective_limit,
