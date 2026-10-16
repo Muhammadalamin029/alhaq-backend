@@ -136,7 +136,9 @@ app.include_router(
     financing_router.admin_router, prefix="/admin/financing", tags=["Admin"]
 )
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
-app.include_router(seo_router.router, tags=["SEO"])try:
+app.include_router(seo_router.router, tags=["SEO"])
+
+try:
     from routers import whatsapp as whatsapp_router
 
     app.include_router(
@@ -153,6 +155,9 @@ except Exception as exc:
         traceback.format_exc().replace("\n", " || "),
     )
 
+    @app.get("/webhooks/whatsapp-debug")
+    def _whatsapp_debug():
+        return {"whatsapp_load_error": _wa_error}
     @app.get("/webhooks/whatsapp-debug")
     def _whatsapp_debug():
         return {"whatsapp_load_error": _wa_error}
