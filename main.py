@@ -144,8 +144,14 @@ try:
         whatsapp_router.router, prefix="/webhooks/whatsapp", tags=["WhatsApp"]
     )
     logger.info("WhatsApp router loaded")
-except Exception:
-    logger.exception("WhatsApp router failed to load; continuing without it")
+except Exception as exc:
+    import traceback
+
+    logger.error(
+        "WhatsApp router failed to load: %r | %s",
+        exc,
+        traceback.format_exc().replace("\n", " || "),
+    )
 # ------------------------------------------------------
 # Trailing-slash compatibility
 # ------------------------------------------------------
