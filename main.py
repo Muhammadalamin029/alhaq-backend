@@ -137,7 +137,15 @@ app.include_router(
 )
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
 app.include_router(seo_router.router, tags=["SEO"])
+try:
+    from routers import whatsapp as whatsapp_router
 
+    app.include_router(
+        whatsapp_router.router, prefix="/webhooks/whatsapp", tags=["WhatsApp"]
+    )
+    logger.info("WhatsApp router loaded")
+except Exception:
+    logger.exception("WhatsApp router failed to load; continuing without it")
 # ------------------------------------------------------
 # Trailing-slash compatibility
 # ------------------------------------------------------
