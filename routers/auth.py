@@ -283,7 +283,42 @@ def register_customer(body: RegisterRequest, request: Request, db: Session = Dep
             )
         forwarded = request.headers.get("x-forwarded-for")
         client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else None)
-        if not verify_turnstile_token(body.turnstile_token, client_ip):
+
+        # Mobile exemption: the native app cannot render the Turnstile
+        # widget, so it authenticates with X-App-Platform + X-App-Key
+        # instead. The key is obfuscation, not proof — the Redis per-IP
+        # rate limit below is the real abuse control.
+        import secrets as _secrets
+
+        _platform = (request.headers.get("x-app-platform") or "").strip().lower()
+        _app_key = (request.headers.get("x-app-key") or "").strip()
+        _expected_key = (settings.MOBILE_APP_KEY or "").strip()
+        is_mobile_exempt = (
+            _platform in ("android", "ios")
+            and bool(_expected_key)
+            and bool(_app_key)
+            and _secrets.compare_digest(_app_key, _expected_key)
+        )
+
+        if is_mobile_exempt:
+            try:
+                from core.redis_client import redis_client as _redis
+
+                _rl_key = f"mobile_signup:{client_ip or 'unknown'}"
+                _attempts = _redis.incr(_rl_key)
+                if _attempts == 1:
+                    _redis.expire(_rl_key, 3600)
+                if _attempts is not None and _attempts > 5:
+                    auth_logger.warning(f"Bot signup blocked (mobile rate limit): {body.email}")
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Too many signup attempts. Please try again later.",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # fail-open so auth never breaks on Redis outage
+        elif not verify_turnstile_token(body.turnstile_token, client_ip):
             auth_logger.warning(f"Bot signup blocked (turnstile): {body.email}")
             raise HTTPException(status_code=400, detail="Bot verification failed. Please try again.")
 
