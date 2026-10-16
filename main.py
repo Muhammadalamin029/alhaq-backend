@@ -136,8 +136,7 @@ app.include_router(
     financing_router.admin_router, prefix="/admin/financing", tags=["Admin"]
 )
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
-app.include_router(seo_router.router, tags=["SEO"])
-try:
+app.include_router(seo_router.router, tags=["SEO"])try:
     from routers import whatsapp as whatsapp_router
 
     app.include_router(
@@ -147,11 +146,16 @@ try:
 except Exception as exc:
     import traceback
 
+    _wa_error = f"{type(exc).__name__}: {exc}"[:500]
     logger.error(
         "WhatsApp router failed to load: %r | %s",
         exc,
         traceback.format_exc().replace("\n", " || "),
     )
+
+    @app.get("/webhooks/whatsapp-debug")
+    def _whatsapp_debug():
+        return {"whatsapp_load_error": _wa_error}
 # ------------------------------------------------------
 # Trailing-slash compatibility
 # ------------------------------------------------------
