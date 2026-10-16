@@ -25,7 +25,6 @@ from routers import (
     delivery as delivery_router,
     seo as seo_router,
       image_search as image_search_router,
-    whatsapp as whatsapp_router,
 )
 from core.config import settings
 from db.session import engine
@@ -138,7 +137,6 @@ app.include_router(
 )
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
 app.include_router(seo_router.router, tags=["SEO"])
-app.include_router(whatsapp_router.router, prefix="/webhooks/whatsapp", tags=["WhatsApp"])
 
 # ------------------------------------------------------
 # Trailing-slash compatibility
