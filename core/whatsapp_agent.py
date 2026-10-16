@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session, joinedload
 from core.auth_service import auth_service
 from core.config import settings
 from core.discounts import effective_price_expr
-from nl_search_parser import parse_search_query
+from core.nl_search_parser import parse_search_query
 from core.model import (
     Address,
     Category,
