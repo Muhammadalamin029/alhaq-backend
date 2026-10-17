@@ -34,6 +34,7 @@ class WhatsAppSettings(BaseSettings):
     WHATSAPP_GRAPH_VERSION: str = "v23.0"
     WHATSAPP_GEMINI_API_KEY: str = ""
     WHATSAPP_MODEL: str = "gemini-3.1-flash-lite"
+    WHATSAPP_AI_CHAT: bool = True  # set to false to switch the AI conversation off
     ENVIRONMENT: str = "development"
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
