@@ -560,6 +560,17 @@ def _handle_text(ctx: Ctx, text: str) -> None:
         _show_orders(ctx)
         return
 
+    # AI conversation (questions, recommendations, account, location, actions).
+    # Falls back to the classic intent flow below if the AI is off or fails.
+    if wa_settings.WHATSAPP_AI_CHAT:
+        try:
+            from core import whatsapp_ai
+
+            if whatsapp_ai.ai_reply(ctx, text):
+                return
+        except Exception:
+            logger.exception("AI layer crashed; using classic flow")
+
     pending = _pending(ctx.db, ctx.profile.id)
     cart_names = [i.product.name for i in (pending.order_items if pending else []) if i.product]
     intent = _llm_intent(text, ctx.state, cart_names) or _rule_intent(text)
