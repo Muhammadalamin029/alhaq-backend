@@ -35,6 +35,9 @@ class WhatsAppSettings(BaseSettings):
     WHATSAPP_GEMINI_API_KEY: str = ""
     WHATSAPP_MODEL: str = "gemini-3.1-flash-lite"
     WHATSAPP_AI_CHAT: bool = True  # set to false to switch the AI conversation off
+    WHATSAPP_VOICE: bool = True  # voice-note understanding
+    WHATSAPP_REMINDERS: bool = True  # one cart reminder after the customer goes quiet
+    WHATSAPP_REMINDER_MINUTES: int = 30
     ENVIRONMENT: str = "development"
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
@@ -52,6 +55,18 @@ def clip(text: Optional[str], limit: int) -> str:
 class WhatsAppClient:
     def __init__(self, cfg: WhatsAppSettings = wa_settings):
         self.cfg = cfg
+        # Set by core.whatsapp_extras: translates outgoing text into the customer's language.
+        self.localizer = None
+
+    def _localize(self, to: str, items):
+        """items = [(text, max_chars|None)] -> translated list (same order). Never raises."""
+        if self.localizer is None:
+            return [t for t, _ in items]
+        try:
+            return self.localizer(to, items)
+        except Exception:
+            logger.exception("Localizer failed")
+            return [t for t, _ in items]
 
     # ── internals ──────────────────────────────────────────────
     @property
@@ -88,7 +103,10 @@ class WhatsAppClient:
         return resp.json()
 
     # ── message types ──────────────────────────────────────────
-    def send_text(self, to: str, body: str) -> Optional[Dict[str, Any]]:
+    def send_text(self, to: str, body: str, raw: bool = False) -> Optional[Dict[str, Any]]:
+        """raw=True skips translation (use when the text is already in the customer's language)."""
+        if not raw:
+            body = self._localize(to, [(body, None)])[0]
         return self._post_message(
             {"to": to, "type": "text", "text": {"body": clip(body, 4096), "preview_url": False}}
         )
@@ -100,8 +118,23 @@ class WhatsAppClient:
         buttons: Sequence[Tuple[str, str]],
         header_image: Optional[str] = None,
         footer: Optional[str] = None,
+        raw: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Reply buttons (max 3). buttons = [(id, title), ...]; title max 20 chars."""
+        if not raw:
+            buttons = list(buttons)[:3]
+            # Product cards (with a photo) keep their name/price/description as stored; only the
+            # button label is translated. This keeps result pages fast.
+            translate_body = not header_image
+            items = [(body if translate_body else "", None)] + [(t, 20) for _, t in buttons]
+            if footer:
+                items.append((footer, 60))
+            out = self._localize(to, items)
+            if translate_body:
+                body = out[0]
+            buttons = [(bid, out[1 + i]) for i, (bid, _) in enumerate(buttons)]
+            if footer:
+                footer = out[-1]
         interactive: Dict[str, Any] = {
             "type": "button",
             "body": {"text": clip(body, 1024)},
@@ -131,8 +164,26 @@ class WhatsAppClient:
         button_text: str,
         rows: List[Dict[str, str]],
         section_title: str = "Options",
+        raw: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """List message (max 10 rows). rows = [{"id","title","description"?}]."""
+        if not raw:
+            rows = list(rows)[:10]
+            items = [(body, None), (button_text, 20), (section_title, 24)]
+            for row in rows:
+                items.append((row["title"], 24))
+                items.append((row.get("description") or "", 72))
+            out = self._localize(to, items)
+            body, button_text, section_title = out[0], out[1], out[2]
+            new_rows = []
+            for i, row in enumerate(rows):
+                nr = dict(row)
+                # product names in cart/edit lists stay as they are; only labels are translated
+                nr["title"] = out[3 + 2 * i] or row["title"]
+                if row.get("description"):
+                    nr["description"] = out[4 + 2 * i]
+                new_rows.append(nr)
+            rows = new_rows
         clean_rows = []
         for row in rows[:10]:
             item = {"id": row["id"][:200], "title": clip(row["title"], 24)}
@@ -181,6 +232,32 @@ class WhatsAppClient:
             logger.error("WhatsApp media upload failed (%s): %s", resp.status_code, resp.text[:600])
             return None
         return resp.json().get("id")
+
+    def download_media(self, media_id: str):
+        """Download an inbound media file (e.g. a voice note). Returns (bytes, mime) or None."""
+        if not self._configured():
+            return None
+        try:
+            meta = requests.get(
+                f"https://graph.facebook.com/{self.cfg.WHATSAPP_GRAPH_VERSION}/{media_id}",
+                headers=self._headers(),
+                timeout=20,
+            )
+            if meta.status_code >= 400:
+                logger.error("WhatsApp media lookup failed (%s): %s", meta.status_code, meta.text[:300])
+                return None
+            info = meta.json()
+            url = info.get("url")
+            if not url:
+                return None
+            resp = requests.get(url, headers=self._headers(), timeout=60)
+            if resp.status_code >= 400:
+                logger.error("WhatsApp media download failed (%s)", resp.status_code)
+                return None
+            return resp.content, info.get("mime_type") or resp.headers.get("Content-Type", "")
+        except requests.RequestException as exc:
+            logger.error("WhatsApp media download error: %s", exc)
+            return None
 
     def mark_read(self, message_id: str) -> None:
         """Mark inbound message read and show the typing indicator. Best effort."""
