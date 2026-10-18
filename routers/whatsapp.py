@@ -22,6 +22,14 @@ router = APIRouter()
 # Creates the whatsapp_links table on first start (safe to run repeatedly).
 ensure_whatsapp_tables()
 
+# Cart reminders (one nudge 30 min after the customer stops chatting). Never blocks startup.
+try:
+    from core.whatsapp_extras import start_reminder_worker
+
+    start_reminder_worker()
+except Exception:
+    logger.exception("Could not start the WhatsApp reminder worker")
+
 
 @router.get("")
 async def verify_webhook(
