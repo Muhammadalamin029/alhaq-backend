@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import joinedload
 
+from core import whatsapp_extras
 from core.config import settings
 from core.model import Address, Category, DeliveryState, Order, Product
 from core.order import order_service
@@ -43,7 +44,7 @@ _HIDDEN = re.compile(
     re.I,
 )
 
-SYSTEM_PROMPT = """You are *LEL Store's WhatsApp assistant*: a friendly, sharp shopping helper for LEL Store, a store in Nigeria. You chat on WhatsApp, so keep replies short, warm and easy to read (a few short lines, light emoji, WhatsApp formatting: *bold*, _italic_, no markdown headers or tables). Match the customer's language and tone (English or Nigerian Pidgin).
+SYSTEM_PROMPT = """You are *LEL Store's WhatsApp assistant*: a friendly, sharp shopping helper for LEL Store, a store in Nigeria. You chat on WhatsApp, so keep replies short, warm and easy to read (a few short lines, light emoji, WhatsApp formatting: *bold*, _italic_, no markdown headers or tables). LANGUAGES: you speak English, Nigerian Pidgin, Yoruba, Igbo and Hausa. Reply in the customer's current language (shown below) in natural, everyday wording. If the customer clearly writes in, or asks to switch to, one of these languages (or goes back to English), call set_language FIRST with the code (en, yo, ig, ha, pcm). A single borrowed word is not a switch. Keep product names, ₦ amounts and numbers exactly as they are.
 
 WHAT YOU DO
 - Chat naturally. Answer product questions: specs, descriptions, what's good for what, differences between items, sizes, uses.
@@ -177,6 +178,13 @@ def _build_tools(ctx):
 
     db = ctx.db
     profile = ctx.profile
+
+    @tool
+    def set_language(code: str) -> str:
+        """Switch the language of ALL replies and buttons for this customer.
+        code: en (English), yo (Yoruba), ig (Igbo), ha (Hausa) or pcm (Nigerian Pidgin)."""
+        saved = whatsapp_extras.set_lang(ctx.phone, code)
+        return _dump({"language": saved, "name": whatsapp_extras.LANGS.get(saved)})
 
     @tool
     def search_products(
@@ -399,6 +407,7 @@ def _build_tools(ctx):
         return _dump({"saved": True, "address": f"{street}, {st.state_name}", "delivery_fee_ngn": _jsonable(fee)})
 
     return [
+        set_language,
         search_products,
         get_product_details,
         compare_products,
@@ -485,7 +494,8 @@ def ai_reply(ctx, text: str) -> bool:
         name = getattr(ctx.profile, "full_name", None) or ctx.wa_name or "the customer"
         results = ctx.state.get("last_results", [])
         shown = [str(r["n"]) + ". " + r["name"] for r in results]
-        context = f"Customer: {name}\nProducts currently shown to them (by number): {shown or 'none'}"
+        lang = whatsapp_extras.get_lang(ctx.phone)
+        context = f"Customer language: {whatsapp_extras.LANGS[lang]} ({lang})\nCustomer: {name}\nProducts currently shown to them (by number): {shown or 'none'}"
         messages: List[Any] = [SystemMessage(content=SYSTEM_PROMPT + "\n\n" + context)]
         for turn in _history(ctx.phone):
             messages.append(HumanMessage(content=turn["t"]) if turn["r"] == "u" else AIMessage(content=turn["t"]))
@@ -518,7 +528,7 @@ def ai_reply(ctx, text: str) -> bool:
             final = ""
 
         if final:
-            wa.send_text(ctx.phone, clip(final, 3800))
+            wa.send_text(ctx.phone, clip(final, 3800), raw=True)  # already written in their language
             _remember(ctx.phone, text, final)
         elif not acted:
             return False
