@@ -47,6 +47,7 @@ from core.payment_service import payment_service
 from core.products import product_service
 from core.system_settings_service import system_settings_service
 from core.whatsapp_models import WhatsAppLink
+from core import whatsapp_extras  # languages, voice notes, cart reminders (also hooks translation into `wa`)
 from core.whatsapp_service import clip, wa, wa_settings
 from db.session import SessionLocal
 
@@ -129,6 +130,7 @@ class Ctx:
         self.wa_name = wa_name
         self.user: Optional[User] = None
         self.profile: Optional[Profile] = None
+        self.via_voice = False
 
     @property
     def state(self) -> Dict[str, Any]:
@@ -169,6 +171,7 @@ def _process_message(msg: Dict[str, Any], names: Dict[str, Any], loop) -> None:
 
     mtype = msg.get("type")
     text, reply_id = "", None
+    via_voice = False
     if mtype == "text":
         text = ((msg.get("text") or {}).get("body") or "").strip()
     elif mtype == "interactive":
@@ -179,14 +182,25 @@ def _process_message(msg: Dict[str, Any], names: Dict[str, Any], loop) -> None:
     elif mtype == "button":
         reply_id = (msg.get("button") or {}).get("payload")
         text = ((msg.get("button") or {}).get("text") or "").strip()
+    elif mtype == "audio" and wa_settings.WHATSAPP_VOICE:
+        heard, lang = whatsapp_extras.transcribe_voice((msg.get("audio") or {}).get("id") or "")
+        if not heard:
+            wa.send_text(phone, "I couldn't catch that voice note 🙈 Please try again, or type your message.")
+            return
+        if lang:
+            whatsapp_extras.set_lang(phone, lang)
+        wa.send_text(phone, f"🎙️ _{heard}_", raw=True)  # show what I heard, in their own words
+        text, via_voice = heard, True
     else:
-        wa.send_text(phone, "I can read text messages and buttons for now 🙂 Tell me what you're looking for.")
+        wa.send_text(phone, "I can read text messages, voice notes and buttons 🙂 Tell me what you're looking for.")
         return
 
     db = SessionLocal()
     try:
         ctx = Ctx(db, phone, loop, names.get(phone))
+        ctx.via_voice = via_voice
         _route(ctx, text, reply_id)
+        whatsapp_extras.touch(phone)  # starts the 30-minute cart-reminder countdown
     except Exception:
         logger.exception("WhatsApp handler failed for %s", phone)
         try:
@@ -204,6 +218,9 @@ def _route(ctx: Ctx, text: str, rid: Optional[str]) -> None:
     user = db.query(User).filter(User.id == link.user_id).first() if link else None
 
     if user is None or user.is_active is False:
+        if ctx.via_voice:
+            wa.send_text(phone, "To set up your account, please *type* your details here (like your email). Voice notes work once you're signed in 🙂")
+            return
         _onboarding(ctx, text, rid)
         return
 
@@ -421,7 +438,8 @@ HELP_TEXT = (
     "• _a fridge under 250k_\n"
     "• _cheapest sneakers_\n"
     "• _add 2_ (after I show results)\n"
-    "• _my cart_ / _checkout_ / _my orders_"
+    "• _my cart_ / _checkout_ / _my orders_\n"
+    "• Send a voice note 🎙️ or chat in Yoruba, Igbo, Hausa or Pidgin"
 )
 
 
