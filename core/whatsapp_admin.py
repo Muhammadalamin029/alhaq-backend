@@ -976,21 +976,28 @@ def _wizard_category(ctx, cat_id: str, name: Optional[str]) -> None:
 
 
 def _cloudinary_conf() -> Optional[Dict[str, str]]:
-    url = os.environ.get("CLOUDINARY_URL", "")
-    m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", url)
-    if m:
-        return {"key": m.group(1), "secret": m.group(2), "cloud": m.group(3)}
+    """Two ways to upload photos:
+    1. signed: CLOUDINARY_URL, or CLOUDINARY_CLOUD_NAME + CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET
+    2. unsigned: CLOUDINARY_CLOUD_NAME + CLOUDINARY_UPLOAD_PRESET (what many websites use straight
+       from the browser; no secret needed)
+    """
     try:
         from core.config import settings
-
-        def pick(name):
-            return os.environ.get(name) or getattr(settings, name, "") or ""
     except Exception:
-        def pick(name):
-            return os.environ.get(name, "")
+        settings = None
+
+    def pick(name: str) -> str:
+        return os.environ.get(name) or (getattr(settings, name, "") if settings else "") or ""
+
+    m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", pick("CLOUDINARY_URL"))
+    if m:
+        return {"key": m.group(1), "secret": m.group(2), "cloud": m.group(3), "preset": ""}
     cloud, key, secret = pick("CLOUDINARY_CLOUD_NAME"), pick("CLOUDINARY_API_KEY"), pick("CLOUDINARY_API_SECRET")
     if cloud and key and secret:
-        return {"key": key, "secret": secret, "cloud": cloud}
+        return {"key": key, "secret": secret, "cloud": cloud, "preset": ""}
+    preset = pick("CLOUDINARY_UPLOAD_PRESET")
+    if cloud and preset:
+        return {"key": "", "secret": "", "cloud": cloud, "preset": preset}
     return None
 
 
@@ -1007,14 +1014,17 @@ def _upload_photo(media_id: str) -> Optional[str]:
 
     import requests
 
-    folder = os.environ.get("WHATSAPP_CLOUDINARY_FOLDER", "products")
-    ts = str(int(time.time()))
-    to_sign = f"folder={folder}&timestamp={ts}{conf['secret']}"
-    sig = hashlib.sha1(to_sign.encode()).hexdigest()
+    if conf["preset"]:
+        form = {"upload_preset": conf["preset"]}
+    else:
+        folder = os.environ.get("WHATSAPP_CLOUDINARY_FOLDER", "products")
+        ts = str(int(time.time()))
+        sig = hashlib.sha1(f"folder={folder}&timestamp={ts}{conf['secret']}".encode()).hexdigest()
+        form = {"api_key": conf["key"], "timestamp": ts, "folder": folder, "signature": sig}
     try:
         resp = requests.post(
             f"https://api.cloudinary.com/v1_1/{conf['cloud']}/image/upload",
-            data={"api_key": conf["key"], "timestamp": ts, "folder": folder, "signature": sig},
+            data=form,
             files={"file": ("product.jpg", data, mime or "image/jpeg")},
             timeout=60,
         )
