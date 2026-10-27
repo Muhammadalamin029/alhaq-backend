@@ -31,6 +31,16 @@ except Exception:
     logger.exception("Could not start the WhatsApp reminder worker")
 
 
+# Admin mode: creates whatsapp_admin_links and starts the new-order alert worker.
+try:
+    from core.whatsapp_admin import ensure_admin_tables, start_alert_worker
+
+    ensure_admin_tables()
+    start_alert_worker()
+except Exception:
+    logger.exception("Could not start WhatsApp admin mode")
+
+
 @router.get("")
 async def verify_webhook(
     hub_mode: str = Query("", alias="hub.mode"),
