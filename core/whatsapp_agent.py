@@ -131,6 +131,8 @@ class Ctx:
         self.user: Optional[User] = None
         self.profile: Optional[Profile] = None
         self.via_voice = False
+        self.image_id: Optional[str] = None  # inbound photo (used by admin "add product")
+        self.admin_mode = False
 
     @property
     def state(self) -> Dict[str, Any]:
@@ -172,6 +174,7 @@ def _process_message(msg: Dict[str, Any], names: Dict[str, Any], loop) -> None:
     mtype = msg.get("type")
     text, reply_id = "", None
     via_voice = False
+    image_id = None
     if mtype == "text":
         text = ((msg.get("text") or {}).get("body") or "").strip()
     elif mtype == "interactive":
@@ -182,6 +185,10 @@ def _process_message(msg: Dict[str, Any], names: Dict[str, Any], loop) -> None:
     elif mtype == "button":
         reply_id = (msg.get("button") or {}).get("payload")
         text = ((msg.get("button") or {}).get("text") or "").strip()
+    elif mtype == "image":
+        img = msg.get("image") or {}
+        image_id = img.get("id")
+        text = (img.get("caption") or "").strip()
     elif mtype == "audio" and wa_settings.WHATSAPP_VOICE:
         heard, lang = whatsapp_extras.transcribe_voice((msg.get("audio") or {}).get("id") or "")
         if not heard:
@@ -199,8 +206,10 @@ def _process_message(msg: Dict[str, Any], names: Dict[str, Any], loop) -> None:
     try:
         ctx = Ctx(db, phone, loop, names.get(phone))
         ctx.via_voice = via_voice
+        ctx.image_id = image_id
         _route(ctx, text, reply_id)
-        whatsapp_extras.touch(phone)  # starts the 30-minute cart-reminder countdown
+        if not ctx.admin_mode:
+            whatsapp_extras.touch(phone)  # starts the 30-minute cart-reminder countdown
     except Exception:
         logger.exception("WhatsApp handler failed for %s", phone)
         try:
@@ -214,6 +223,27 @@ def _process_message(msg: Dict[str, Any], names: Dict[str, Any], loop) -> None:
 
 def _route(ctx: Ctx, text: str, rid: Optional[str]) -> None:
     db, phone = ctx.db, ctx.phone
+
+    # Admin mode ("switch to admin", admin sign-in, admin menu) is handled first.
+    try:
+        from core import whatsapp_admin
+
+        if whatsapp_admin.intercept(ctx, text, rid):
+            return
+    except Exception:
+        logger.exception("Admin mode failed for %s", phone)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        if getattr(ctx, "admin_mode", False):
+            wa.send_text(phone, "Admin mode hit a problem. Please try again.", raw=True)
+            return
+
+    if ctx.image_id and not text:
+        wa.send_text(phone, "I can read text messages, voice notes and buttons 🙂 Tell me what you're looking for.")
+        return
+
     link = db.query(WhatsAppLink).filter(WhatsAppLink.phone == phone).first()
     user = db.query(User).filter(User.id == link.user_id).first() if link else None
 
@@ -433,6 +463,71 @@ def _send_menu(ctx: Ctx, intro: Optional[str] = None) -> None:
     )
 
 
+CAT_PAGE = 9  # rows per page (WhatsApp lists hold 10; the 10th row is "More categories")
+
+
+def _category_rows(db: Session) -> List[Any]:
+    """Categories that currently have at least one active product, with the count."""
+    return (
+        db.query(Category.id, Category.name, func.count(Product.id))
+        .join(Product, Product.category_id == Category.id)
+        .filter(Product.status == "active")
+        .group_by(Category.id, Category.name)
+        .order_by(Category.name.asc())
+        .all()
+    )
+
+
+def _send_categories(ctx: Ctx, page: int = 1) -> None:
+    """Shop -> a pickable list of the categories we sell."""
+    phone = ctx.phone
+    cats = _category_rows(ctx.db)
+    if not cats:
+        wa.send_text(phone, "🛍 What are you looking for?\n\n" + HELP_TEXT)
+        return
+    page = max(1, page)
+    if len(cats) <= 10:
+        chunk, more = cats, False
+    else:
+        chunk = cats[(page - 1) * CAT_PAGE: page * CAT_PAGE]
+        more = page * CAT_PAGE < len(cats)
+    rows = [
+        {"id": f"cat:{cid}", "title": clip(name, 24), "description": f"{n} item{'s' if n != 1 else ''}"}
+        for cid, name, n in chunk
+    ]
+    if more:
+        rows.append({"id": f"cat:more:{page + 1}", "title": "More categories ➜", "description": "See the next ones"})
+    wa.send_list(
+        phone,
+        "🛍 *What would you like to shop?*\nPick a category, or just type what you're looking for "
+        "(e.g. _a laptop under 500k_).",
+        "Choose category",
+        rows,
+        "Categories",
+    )
+
+
+def _show_category(ctx: Ctx, cat_id: str) -> None:
+    db = ctx.db
+    try:
+        cat = db.query(Category).filter(Category.id == uuid.UUID(cat_id)).first()
+    except ValueError:
+        cat = None
+    if cat is None:
+        _send_categories(ctx)
+        return
+    params = {
+        "q": None,
+        "category_id": str(cat.id),
+        "min_price": None,
+        "max_price": None,
+        "sort_by": None,
+        "sort_order": None,
+    }
+    wa.send_text(ctx.phone, f"🛍 *{cat.name}*")
+    _do_search(ctx, "", None, saved=params)
+
+
 HELP_TEXT = (
     "Just tell me what you're looking for in your own words, for example:\n"
     "• _a fridge under 250k_\n"
@@ -449,7 +544,11 @@ HELP_TEXT = (
 def _handle_reply(ctx: Ctx, rid: str) -> None:
     phone = ctx.phone
     if rid == "menu:shop":
-        wa.send_text(phone, "🛍 What are you looking for?\n\n" + HELP_TEXT)
+        _send_categories(ctx)
+    elif rid.startswith("cat:more:"):
+        _send_categories(ctx, page=int(rid[9:] or 1))
+    elif rid.startswith("cat:"):
+        _show_category(ctx, rid[4:])
     elif rid == "menu:cart":
         _send_cart(ctx)
     elif rid == "menu:orders":
