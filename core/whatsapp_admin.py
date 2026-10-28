@@ -29,7 +29,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -38,6 +38,7 @@ from sqlalchemy import String as SAString
 from sqlalchemy import cast
 from sqlalchemy.orm import joinedload
 
+from core.discounts import effective_price, is_on_sale, normalize_discount
 from core.model import (
     AssetImage,
     AuditLog,
@@ -196,6 +197,54 @@ def _parse_amount(text: str) -> Optional[Decimal]:
     elif m.group(2) == "m":
         val *= 1_000_000
     return val
+
+
+def _selling_price(p: Product) -> Decimal:
+    """What a customer pays right now (the sale-aware price)."""
+    return effective_price(p.price, p.discount_percent, p.discount_starts_at, p.discount_ends_at)
+
+
+def _on_sale(p: Product) -> bool:
+    return bool(is_on_sale(p.discount_percent, p.discount_starts_at, p.discount_ends_at))
+
+
+def _original_from_selling(selling: Decimal, pct) -> Decimal:
+    """The owner types the price customers should PAY and a discount %. We work out the
+    higher, crossed-out original price so the website's sale math lands exactly on that price."""
+    f = Decimal("1") - Decimal(str(pct)) / Decimal("100")
+    return (Decimal(str(selling)) / f).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _set_selling_price(p: Product, selling: Decimal) -> None:
+    """Change the price customers pay, keeping any running discount percent."""
+    if _on_sale(p):
+        p.price = _original_from_selling(selling, p.discount_percent)
+    else:
+        p.price = Decimal(str(selling))
+
+
+def _apply_discount(p: Product, pct) -> Decimal:
+    """Put/replace/remove a discount while the SELLING price stays the same.
+    pct 0/None removes it. Returns the original (crossed-out) price. Raises ValueError."""
+    selling = _selling_price(p)
+    if not pct:
+        p.price = selling
+        p.discount_percent = None
+        p.discount_starts_at = None
+        p.discount_ends_at = None
+        return selling
+    pct = normalize_discount(selling, discount_percent=pct)  # validates 0 < pct <= 90
+    p.price = _original_from_selling(selling, pct)
+    p.discount_percent = pct
+    p.discount_starts_at = None
+    p.discount_ends_at = None
+    return Decimal(str(p.price))
+
+
+def _price_line(p: Product) -> str:
+    if _on_sale(p):
+        return f"{naira(_selling_price(p))} (was ~{naira(p.price)}~, {int(Decimal(str(p.discount_percent)))}% off)"
+    return naira(p.price)
 
 
 def _wat_str(dt: Optional[datetime]) -> str:
@@ -429,7 +478,7 @@ def _admin_menu(ctx, user: User, intro: Optional[str] = None) -> None:
     _list(ctx.phone, body, "Admin menu", rows, "Admin")
 
 
-_WIZARD_RIDS = ("adm:cat:", "adm:skip", "adm:done", "adm:save")
+_WIZARD_RIDS = ("adm:cat:", "adm:catmore:", "adm:skip", "adm:done", "adm:save")
 
 
 def _admin(ctx, link: WhatsAppAdminLink, user: User, text: str, rid: Optional[str], image_id: Optional[str]) -> None:
@@ -470,12 +519,39 @@ def _admin(ctx, link: WhatsAppAdminLink, user: User, text: str, rid: Optional[st
         return
 
     if step:
+        # a question in the middle of a form ("what categories do I have?") goes to the AI;
+        # the form stays open so the owner can carry on afterwards
+        if "?" in text and step.startswith("ap_") and _try_ai(ctx, user, text):
+            return
         _wizard(ctx, user, step, st, text)
         return
 
     if re.fullmatch(r"(hi|hello|hey|menu|start|help|admin)\W*", low):
         _admin_menu(ctx, user)
-    elif re.search(r"\b(add|new|upload|create)\b.*\bproduct\b|\bproduct\b.*\b(add|new|upload)\b", low):
+        return
+    if _try_ai(ctx, user, text):
+        return
+    _keyword_route(ctx, user, low)
+
+
+def _try_ai(ctx, user: User, text: str) -> bool:
+    """Free-text admin chat (questions, tasks outside the menu). False = AI off/failed."""
+    try:
+        from core import whatsapp_admin_ai
+
+        return bool(whatsapp_admin_ai.ai_admin_reply(ctx, user, text))
+    except Exception:
+        logger.exception("Admin AI failed")
+        try:
+            ctx.db.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def _keyword_route(ctx, user: User, low: str) -> None:
+    """Fallback when the AI is off: simple keyword commands."""
+    if re.search(r"\b(add|new|upload|create)\b.*\bproduct\b|\bproduct\b.*\b(add|new|upload)\b", low):
         _start_wizard(ctx)
     elif re.search(r"\bsales?\b.*\b(month|monthly)\b|\b(month|monthly)\b.*\b(sales?|revenue)\b|this month", low):
         _sales(ctx, "month")
@@ -492,6 +568,8 @@ def _admin(ctx, link: WhatsAppAdminLink, user: User, text: str, rid: Optional[st
     else:
         _admin_menu(ctx, user, "I didn't quite get that. Pick an action below, or say things like "
                                "*sales today*, *pending deliveries*, *add product*.")
+
+
 
 
 def _rid(ctx, link, user, rid: str, st: Dict[str, Any]) -> None:
@@ -531,12 +609,29 @@ def _rid(ctx, link, user, rid: str, st: Dict[str, Any]) -> None:
         _product_detail(ctx, rid[6:])
     elif rid.startswith("adm:pp:"):
         _reset(phone, step="edit_price", pid=rid[7:])
-        _say(phone, "💰 Send the new price in naira (e.g. *250000* or *250k*). Send *cancel* to stop.")
+        _say(phone, "💰 Send the new *selling price* in naira (what customers pay, e.g. *250000* or *250k*). "
+                    "If the product has a discount, I keep it and adjust the crossed-out price. Send *cancel* to stop.")
     elif rid.startswith("adm:ps:"):
         _reset(phone, step="edit_stock", pid=rid[7:])
         _say(phone, "📦 Send the new stock quantity (a number). Send *cancel* to stop.")
     elif rid.startswith("adm:pv:"):
         _toggle_product(ctx, rid[7:])
+    elif rid.startswith("adm:ph:"):
+        _toggle_product(ctx, rid[7:], force="inactive")
+    elif rid.startswith("adm:pm:"):
+        _product_more(ctx, rid[7:])
+    elif rid.startswith("adm:pd:"):
+        _reset(phone, step="edit_discount", pid=rid[7:])
+        _say(phone, "🔥 Send the discount percent (e.g. *15*). The selling price stays the same; I add the discount on top "
+                    "to get the crossed-out price. Send *0* to remove the discount.")
+    elif rid.startswith("adm:delyes:"):
+        _delete_product(ctx, user, rid[11:])
+    elif rid.startswith("adm:del:"):
+        _ask_delete(ctx, rid[8:])
+    elif rid.startswith("adm:catmore:"):
+        if st.get("step") == "ap_category":
+            _set(phone, cat_page=int(rid[12:] or 1))
+            _ask_category(ctx)
     elif rid.startswith("adm:cat:"):
         _wizard_category(ctx, rid[8:], None)
     elif rid == "adm:skip":
@@ -730,8 +825,7 @@ def _range_start(kind: str):
     return func.timezone("Africa/Lagos", func.date_trunc(unit, func.timezone("Africa/Lagos", func.now())))
 
 
-def _sales(ctx, kind: str) -> None:
-    db, phone = ctx.db, ctx.phone
+def _sales_numbers(db, kind: str) -> Dict[str, Any]:
     start = _range_start(kind)
     online_amt, online_orders = db.query(
         func.coalesce(func.sum(Payment.amount), 0), func.count(func.distinct(Payment.order_id))
@@ -741,8 +835,6 @@ def _sales(ctx, kind: str) -> None:
     off_amt, off_n = db.query(
         func.coalesce(func.sum(ExternalPayment.amount), 0), func.count(ExternalPayment.id)
     ).filter(ExternalPayment.status == "completed", ExternalPayment.paid_at >= start).one()
-    to_ship = db.query(Order).filter(Order.status == "paid").count()
-    on_way = db.query(Order).filter(Order.status.in_(["shipped", "partially_shipped"])).count()
     top = (
         db.query(Product.name, func.sum(OrderItem.quantity).label("q"))
         .join(OrderItem, OrderItem.product_id == Product.id)
@@ -752,21 +844,36 @@ def _sales(ctx, kind: str) -> None:
         .order_by(func.sum(OrderItem.quantity).desc())
         .first()
     )
+    return {
+        "online": Decimal(str(online_amt or 0)),
+        "online_orders": int(online_orders or 0),
+        "offline": Decimal(str(off_amt or 0)),
+        "offline_sales": int(off_n or 0),
+        "total": Decimal(str(online_amt or 0)) + Decimal(str(off_amt or 0)),
+        "to_ship": db.query(Order).filter(Order.status == "paid").count(),
+        "on_the_way": db.query(Order).filter(Order.status.in_(["shipped", "partially_shipped"])).count(),
+        "top_product": top[0] if top else None,
+        "top_product_units": int(top[1] or 0) if top else 0,
+    }
+
+
+def _sales(ctx, kind: str) -> None:
+    db, phone = ctx.db, ctx.phone
+    n = _sales_numbers(db, kind)
     now = datetime.now(WAT)
     label = now.strftime("%a %d %b") if kind == "day" else now.strftime("%B %Y")
-    total = Decimal(str(online_amt or 0)) + Decimal(str(off_amt or 0))
     lines = [
         f"📊 *Sales {'today' if kind == 'day' else 'this month'}* ({label})",
         "",
-        f"💳 Online: *{naira(online_amt)}* from {int(online_orders or 0)} order(s)",
-        f"💵 Recorded offline: {naira(off_amt)} ({int(off_n or 0)} sale(s))",
-        f"*Total: {naira(total)}*",
+        f"💳 Online: *{naira(n['online'])}* from {n['online_orders']} order(s)",
+        f"💵 Recorded offline: {naira(n['offline'])} ({n['offline_sales']} sale(s))",
+        f"*Total: {naira(n['total'])}*",
         "",
-        f"📦 To ship now: {to_ship}",
-        f"🚚 On the way / waiting pickup: {on_way}",
+        f"📦 To ship now: {n['to_ship']}",
+        f"🚚 On the way / waiting pickup: {n['on_the_way']}",
     ]
-    if top:
-        lines.append(f"🏆 Top seller: {top[0]} ({int(top[1] or 0)} sold)")
+    if n["top_product"]:
+        lines.append(f"🏆 Top seller: {n['top_product']} ({n['top_product_units']} sold)")
     _buttons(phone, "\n".join(lines),
              [("adm:pending", "Pending deliveries"), ("adm:products", "Low stock"), ("adm:menu", "Admin menu")])
 
@@ -774,12 +881,10 @@ def _sales(ctx, kind: str) -> None:
 # ═════════════════════════════════════════════════════════════
 # products: list, edit price / stock / visibility
 # ═════════════════════════════════════════════════════════════
-def _product_list(ctx) -> None:
+def _product_list(ctx, page: int = 1) -> None:
     db, phone = ctx.db, ctx.phone
-    prods = (
-        db.query(Product).filter(Product.status != "inactive")
-        .order_by(func.coalesce(Product.stock_quantity, 0).asc(), Product.name.asc()).limit(10).all()
-    )
+    q = db.query(Product).filter(Product.status != "inactive")
+    prods = q.order_by(func.coalesce(Product.stock_quantity, 0).asc(), Product.name.asc()).limit(10).all()
     hidden = db.query(Product).filter(Product.status == "inactive").count()
     if not prods:
         _buttons(phone, "You have no products yet.", [("adm:new", "➕ Add product"), ("adm:menu", "Admin menu")])
@@ -791,10 +896,11 @@ def _product_list(ctx) -> None:
         rows.append({
             "id": f"adm:p:{p.id}",
             "title": clip(p.name, 24),
-            "description": clip(f"{flag}{stock} in stock · {naira(p.price)} · {p.status}", 72),
+            "description": clip(f"{flag}{stock} in stock · {naira(_selling_price(p))} · {p.status}", 72),
         })
     note = f"\n({hidden} hidden product(s) not shown)" if hidden else ""
-    _list(phone, f"🗂 *Products* (lowest stock first){note}\nTap one to change its price, stock or visibility.",
+    _list(phone, f"🗂 *Products* (lowest stock first){note}\nTap one to change its price, stock or discount. "
+                 "To find a specific product, just tell me its name.",
           "Choose product", rows, "Products")
 
 
@@ -805,14 +911,21 @@ def _product_detail(ctx, pid: str) -> None:
         _say(phone, "I couldn't find that product.")
         return
     cat = p.category.name if p.category else "-"
-    lines = [f"🛍 *{p.name}*", f"Price: {naira(p.price)}"]
-    if p.discount_percent:
-        lines.append(f"Discount: {p.discount_percent}%")
-    lines += [f"Stock: {p.stock_quantity or 0}", f"Category: {cat}", f"Status: {p.status}"]
-    hide = p.status != "inactive"
+    lines = [f"🛍 *{p.name}*", f"Price: {_price_line(p)}", f"Stock: {p.stock_quantity or 0}",
+             f"Category: {cat}", f"Status: {p.status}"]
     _buttons(phone, "\n".join(lines),
-             [(f"adm:pp:{p.id}", "Edit price"), (f"adm:ps:{p.id}", "Edit stock"),
-              (f"adm:pv:{p.id}", "Hide product" if hide else "Show product")])
+             [(f"adm:pp:{p.id}", "Edit price"), (f"adm:ps:{p.id}", "Edit stock"), (f"adm:pm:{p.id}", "More options")])
+
+
+def _product_more(ctx, pid: str) -> None:
+    p = _find_product(ctx.db, pid)
+    if p is None:
+        _say(ctx.phone, "I couldn't find that product.")
+        return
+    hide = p.status != "inactive"
+    _buttons(ctx.phone, f"More for *{p.name}*:",
+             [(f"adm:pv:{p.id}", "Hide product" if hide else "Show product"),
+              (f"adm:pd:{p.id}", "Set discount"), (f"adm:del:{p.id}", "Delete product")])
 
 
 def _find_product(db, pid: str) -> Optional[Product]:
@@ -823,16 +936,59 @@ def _find_product(db, pid: str) -> Optional[Product]:
     return db.query(Product).options(joinedload(Product.category)).filter(Product.id == u).first()
 
 
-def _toggle_product(ctx, pid: str) -> None:
+def _toggle_product(ctx, pid: str, force: Optional[str] = None) -> None:
     db, phone = ctx.db, ctx.phone
     p = _find_product(db, pid)
     if p is None:
         _say(phone, "I couldn't find that product.")
         return
-    p.status = "active" if p.status == "inactive" else "inactive"
+    p.status = force or ("active" if p.status == "inactive" else "inactive")
     db.commit()
     _buttons(phone, f"✅ *{p.name}* is now {'visible on the website' if p.status == 'active' else 'hidden'}.",
              [(f"adm:p:{p.id}", "Back to product"), ("adm:products", "Products"), ("adm:menu", "Admin menu")])
+
+
+def _product_orders(db, p: Product) -> int:
+    return db.query(OrderItem).filter(OrderItem.product_id == p.id).count()
+
+
+def _ask_delete(ctx, pid: str) -> None:
+    db, phone = ctx.db, ctx.phone
+    p = _find_product(db, pid)
+    if p is None:
+        _say(phone, "I couldn't find that product.")
+        return
+    n = _product_orders(db, p)
+    if n:
+        _buttons(phone,
+                 f"⚠️ *{p.name}* is in {n} order/cart line(s). Deleting it would wipe those orders from your records, "
+                 "so I won't delete it. I can *hide* it from the store instead (customers won't see it).",
+                 [(f"adm:ph:{p.id}", "Hide it"), ("adm:menu", "Admin menu")])
+        return
+    _buttons(phone, f"🗑 Delete *{p.name}* permanently? This can't be undone.",
+             [(f"adm:delyes:{p.id}", "Yes, delete it"), (f"adm:p:{p.id}", "No, keep it")])
+
+
+def _delete_product(ctx, user: User, pid: str) -> None:
+    db, phone = ctx.db, ctx.phone
+    p = _find_product(db, pid)
+    if p is None:
+        _say(phone, "That product is already gone.")
+        return
+    if _product_orders(db, p):
+        _ask_delete(ctx, pid)
+        return
+    name = p.name
+    try:
+        db.add(AuditLog(admin_id=user.id, target_id=p.id, action="product_deleted_whatsapp", details=name))
+        db.delete(p)
+        db.commit()
+    except Exception:
+        logger.exception("Delete product failed")
+        db.rollback()
+        _say(phone, "⚠️ I couldn't delete it. Please try again, or hide it instead.")
+        return
+    _buttons(phone, f"🗑 *{name}* has been deleted.", [("adm:products", "Products"), ("adm:menu", "Admin menu")])
 
 
 def _edit_value(ctx, user: User, step: str, st: Dict[str, Any], text: str) -> None:
@@ -842,16 +998,35 @@ def _edit_value(ctx, user: User, step: str, st: Dict[str, Any], text: str) -> No
         _clear(phone)
         _say(phone, "I couldn't find that product.")
         return
+    back = [(f"adm:p:{p.id}", "Back to product"), ("adm:products", "Products"), ("adm:menu", "Admin menu")]
     if step == "edit_price":
         amt = _parse_amount(text)
         if amt is None or amt <= 0:
             _say(phone, "Please send a price like *250000* or *250k*.")
             return
-        p.price = amt
+        _set_selling_price(p, amt)
         db.commit()
         _clear(phone)
-        _buttons(phone, f"✅ *{p.name}* price is now {naira(amt)}.",
-                 [(f"adm:p:{p.id}", "Back to product"), ("adm:products", "Products"), ("adm:menu", "Admin menu")])
+        _buttons(phone, f"✅ *{p.name}* now sells for {_price_line(p)}.", back)
+    elif step == "edit_discount":
+        low = (text or "").strip().lower()
+        try:
+            if low in ("0", "none", "no", "remove", "off", "clear"):
+                _apply_discount(p, None)
+                msg = f"✅ Discount removed. *{p.name}* sells for {naira(p.price)}."
+            else:
+                m = re.fullmatch(r"\D*(\d{1,2}(?:\.\d+)?)\s*%?\D*", low)
+                if not m:
+                    _say(phone, "Send the discount percent (like *15*), or *0* to remove the discount.")
+                    return
+                _apply_discount(p, float(m.group(1)))
+                msg = f"✅ Done. *{p.name}*: {_price_line(p)}"
+        except ValueError as exc:
+            _say(phone, f"⚠️ {exc}")
+            return
+        db.commit()
+        _clear(phone)
+        _buttons(phone, msg, back)
     else:
         m = re.search(r"\d+", text or "")
         if not m:
@@ -863,23 +1038,57 @@ def _edit_value(ctx, user: User, step: str, st: Dict[str, Any], text: str) -> No
             p.status = "active"
         db.commit()
         _clear(phone)
-        _buttons(phone, f"✅ *{p.name}* stock is now {qty}.",
-                 [(f"adm:p:{p.id}", "Back to product"), ("adm:products", "Products"), ("adm:menu", "Admin menu")])
+        _buttons(phone, f"✅ *{p.name}* stock is now {qty}.", back)
 
 
 # ═════════════════════════════════════════════════════════════
 # add-product wizard (same fields as the website form)
 # ═════════════════════════════════════════════════════════════
-def _start_wizard(ctx) -> None:
-    _reset(ctx.phone, step="ap_name", photos=[])
-    _say(ctx.phone, "➕ *New product*\n\nWhat's the product *name*? (e.g. _iPhone 15 Pro 256GB_)\nSend *cancel* any time to stop.")
+def _start_wizard(ctx, prefill: Optional[Dict[str, Any]] = None) -> None:
+    """Start the add-product form. `prefill` lets the AI hand over whatever the owner already said."""
+    st: Dict[str, Any] = {"step": "ap_name", "photos": []}
+    st.update(prefill or {})
+    _reset(ctx.phone, **st)
+    _say(ctx.phone, "➕ *New product*\n(Send *cancel* any time to stop.)")
+    _wizard_next(ctx)
+
+
+def _wizard_next(ctx) -> None:
+    """Ask for the first thing that's still missing."""
+    phone = ctx.phone
+    st = _st(phone)
+    if not st.get("name"):
+        _set(phone, step="ap_name")
+        _say(phone, "What's the product *name*? (e.g. _iPhone 15 Pro 256GB_)")
+    elif "price" not in st:
+        _set(phone, step="ap_price")
+        _say(phone, "💰 What *price should customers pay*? (the final selling price, e.g. *250000* or *250k*)\n"
+                    "If it's on sale, I'll work out the crossed-out price for you.")
+    elif "category_id" not in st:
+        _set(phone, step="ap_category", cat_page=1)
+        _ask_category(ctx)
+    elif "stock" not in st:
+        _set(phone, step="ap_stock")
+        _say(phone, "📦 How many are *in stock*? (a number)")
+    elif "desc" not in st:
+        _set(phone, step="ap_desc")
+        _buttons(phone, "📝 Send a short *description* (specs, what's in the box, colour…), or skip it.",
+                 [("adm:skip", "Skip")])
+    elif "discount" not in st:
+        _set(phone, step="ap_discount")
+        _buttons(phone, "🔥 Is it on sale? Send the *discount percent* (1 to 90, e.g. *10*). "
+                        "The selling price stays what you typed; I add the discount on top to get the crossed-out price.",
+                 [("adm:skip", "No discount")])
+    else:
+        _set(phone, step="ap_photo")
+        _ask_photo(ctx)
 
 
 def _wizard(ctx, user: User, step: str, st: Dict[str, Any], text: str, skipped: bool = False) -> None:
     phone, db = ctx.phone, ctx.db
     t = " ".join((text or "").split())
 
-    if step in ("edit_price", "edit_stock"):
+    if step in ("edit_price", "edit_stock", "edit_discount"):
         _edit_value(ctx, user, step, st, t)
         return
 
@@ -887,16 +1096,20 @@ def _wizard(ctx, user: User, step: str, st: Dict[str, Any], text: str, skipped: 
         if not (1 <= len(t) <= 255):
             _say(phone, "Please send the product name (up to 255 characters).")
             return
-        _set(phone, step="ap_price", name=t)
-        _say(phone, "💰 What's the *price* in naira? (e.g. *250000* or *250k*)")
+        _set(phone, name=t)
+        _wizard_next(ctx)
     elif step == "ap_price":
         amt = _parse_amount(t)
         if amt is None or amt <= 0:
             _say(phone, "Please send the price as a number, like *250000* or *250k*.")
             return
-        _set(phone, step="ap_category", price=str(amt))
-        _ask_category(ctx)
+        _set(phone, price=str(amt))
+        _wizard_next(ctx)
     elif step == "ap_category":
+        if t.lower() in ("more", "show more", "next", "more categories"):
+            _set(phone, cat_page=int(st.get("cat_page", 1)) + 1)
+            _ask_category(ctx)
+            return
         cat = _agent()._find_category(db, t) if t else None
         if cat is None:
             _say(phone, "I couldn't find that category. Pick one from the list, or type its name exactly.")
@@ -908,17 +1121,15 @@ def _wizard(ctx, user: User, step: str, st: Dict[str, Any], text: str, skipped: 
         if not m:
             _say(phone, "Please send the stock quantity as a whole number, like *10*.")
             return
-        _set(phone, step="ap_desc", stock=int(m.group(1)))
-        _buttons(phone, "📝 Send a short *description* (specs, what's in the box, colour…), or skip it.",
-                 [("adm:skip", "Skip")])
+        _set(phone, stock=int(m.group(1)))
+        _wizard_next(ctx)
     elif step == "ap_desc":
         desc = "" if skipped else (text or "").strip()
         if len(desc) > 2000:
             _say(phone, "That's a bit long. Please keep the description under 2000 characters.")
             return
-        _set(phone, step="ap_discount", desc=desc)
-        _buttons(phone, "🔥 Is it on sale? Send the *discount percent* (1 to 90, e.g. *10*), or skip.",
-                 [("adm:skip", "No discount")])
+        _set(phone, desc=desc)
+        _wizard_next(ctx)
     elif step == "ap_discount":
         pct = None
         if not skipped:
@@ -927,8 +1138,8 @@ def _wizard(ctx, user: User, step: str, st: Dict[str, Any], text: str, skipped: 
                 _say(phone, "Please send a percent between 1 and 90 (like *15*), or tap *No discount*.")
                 return
             pct = float(m.group(1))
-        _set(phone, step="ap_photo", discount=pct)
-        _ask_photo(ctx)
+        _set(phone, discount=pct)
+        _wizard_next(ctx)
     elif step == "ap_photo":
         if re.fullmatch(r"(done|finish|finished|skip|no|ok)\W*", t.lower()):
             _wizard_photos_done(ctx)
@@ -941,21 +1152,28 @@ def _wizard(ctx, user: User, step: str, st: Dict[str, Any], text: str, skipped: 
         _admin_menu(ctx, user)
 
 
+CAT_PAGE = 9
+
+
 def _ask_category(ctx) -> None:
     cats = ctx.db.query(Category).order_by(Category.name.asc()).all()
     if not cats:
         _say(ctx.phone, "⚠️ There are no categories yet. Please create one on the website first, then try again.")
         _clear(ctx.phone)
         return
+    page = max(1, int(_st(ctx.phone).get("cat_page", 1)))
     if len(cats) <= 10:
         shown, more = cats, False
     else:
-        shown, more = cats[:9], True
+        shown = cats[(page - 1) * CAT_PAGE: page * CAT_PAGE]
+        more = page * CAT_PAGE < len(cats)
+        if not shown:
+            _set(ctx.phone, cat_page=1)
+            return _ask_category(ctx)
     rows = [{"id": f"adm:cat:{c.id}", "title": clip(c.name, 24)} for c in shown]
-    body = "🗂 Pick the *category*:"
     if more:
-        body += "\n(There are more categories. You can also type a category name.)"
-    _list(ctx.phone, body, "Choose category", rows, "Categories")
+        rows.append({"id": f"adm:catmore:{page + 1}", "title": "More categories ➜", "description": "See the next ones"})
+    _list(ctx.phone, f"🗂 Pick the *category* ({len(cats)} in total):", "Choose category", rows, "Categories")
 
 
 def _wizard_category(ctx, cat_id: str, name: Optional[str]) -> None:
@@ -971,8 +1189,9 @@ def _wizard_category(ctx, cat_id: str, name: Optional[str]) -> None:
         _say(phone, "I couldn't find that category. Please pick again.")
         _ask_category(ctx)
         return
-    _set(phone, step="ap_stock", category_id=str(cat.id), category_name=cat.name)
-    _say(phone, f"Category: *{cat.name}* ✅\n\n📦 How many are *in stock*? (a number)")
+    _set(phone, category_id=str(cat.id), category_name=cat.name)
+    _say(phone, f"Category: *{cat.name}* ✅")
+    _wizard_next(ctx)
 
 
 def _cloudinary_conf() -> Optional[Dict[str, str]]:
@@ -1077,12 +1296,13 @@ def _wizard_photos_done(ctx) -> None:
 
 def _confirm(ctx) -> None:
     st = _st(ctx.phone)
-    lines = ["🧾 *Please check this product*", "", f"*{st.get('name')}*",
-             f"Price: {naira(st.get('price'))}"]
+    selling = Decimal(str(st.get("price")))
+    price_line = f"Selling price: *{naira(selling)}*"
     if st.get("discount"):
-        lines.append(f"Discount: {st['discount']}%")
-    lines += [f"Category: {st.get('category_name')}", f"Stock: {st.get('stock')}",
-              f"Photos: {len(st.get('photos') or [])}"]
+        price_line += f" (crossed-out {naira(_original_from_selling(selling, st['discount']))}, {st['discount']}% off)"
+    lines = ["🧾 *Please check this product*", "", f"*{st.get('name')}*", price_line,
+             f"Category: {st.get('category_name')}", f"Stock: {st.get('stock')}",
+             f"Photos: {len(st.get('photos') or [])}"]
     if st.get("desc"):
         lines.append(f"\n{clip(st['desc'], 300)}")
     _buttons(ctx.phone, "\n".join(lines), [("adm:save", "Save product"), ("adm:cancel", "Cancel")])
@@ -1102,16 +1322,15 @@ def _wizard_save(ctx, user: User) -> None:
         if store is None:
             _say(phone, "⚠️ The store profile isn't configured on the server, so I can't save products.")
             return
-        price = Decimal(str(st["price"]))
-        pct = None
+        selling = Decimal(str(st["price"]))
+        pct, price = None, selling
         if st.get("discount"):
             try:
-                from core.discounts import normalize_discount
-
-                pct = normalize_discount(price, discount_percent=st["discount"])
+                pct = normalize_discount(selling, discount_percent=st["discount"])
             except ValueError as exc:
                 _say(phone, f"⚠️ {exc}")
                 return
+            price = _original_from_selling(selling, pct)  # crossed-out price; sale math lands on `selling`
         product = Product(
             seller_id=store.id,
             name=st["name"],
@@ -1129,7 +1348,7 @@ def _wizard_save(ctx, user: User) -> None:
             db.add(AssetImage(product_id=product.id, image_url=url))
         try:
             db.add(AuditLog(admin_id=user.id, target_id=product.id, action="product_created_whatsapp",
-                            details=f"{product.name} (₦{price})"))
+                            details=f"{product.name} (₦{selling})"))
         except Exception:
             logger.exception("Audit log skipped")
         db.commit()
@@ -1144,7 +1363,7 @@ def _wizard_save(ctx, user: User) -> None:
     finally:
         _r().delete(f"wa:adm:saving:{phone}")
     _clear(phone)
-    _buttons(phone, f"✅ *{product.name}* is live on the store at {naira(price)} with {int(st.get('stock') or 0)} in stock.",
+    _buttons(phone, f"✅ *{product.name}* is live on the store at {_price_line(product)} with {int(st.get('stock') or 0)} in stock.",
              [("adm:new", "Add another"), (f"adm:p:{product.id}", "View product"), ("adm:menu", "Admin menu")])
 
 
