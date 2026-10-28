@@ -467,11 +467,10 @@ CAT_PAGE = 9  # rows per page (WhatsApp lists hold 10; the 10th row is "More cat
 
 
 def _category_rows(db: Session) -> List[Any]:
-    """Categories that currently have at least one active product, with the count."""
+    """ALL categories (A-Z) with how many active products each has."""
     return (
         db.query(Category.id, Category.name, func.count(Product.id))
-        .join(Product, Product.category_id == Category.id)
-        .filter(Product.status == "active")
+        .outerjoin(Product, (Product.category_id == Category.id) & (Product.status == "active"))
         .group_by(Category.id, Category.name)
         .order_by(Category.name.asc())
         .all()
@@ -492,15 +491,20 @@ def _send_categories(ctx: Ctx, page: int = 1) -> None:
         chunk = cats[(page - 1) * CAT_PAGE: page * CAT_PAGE]
         more = page * CAT_PAGE < len(cats)
     rows = [
-        {"id": f"cat:{cid}", "title": clip(name, 24), "description": f"{n} item{'s' if n != 1 else ''}"}
+        {"id": f"cat:{cid}", "title": clip(name, 24),
+         "description": (f"{n} item{'s' if n != 1 else ''}" if n else "Coming soon")}
         for cid, name, n in chunk
     ]
     if more:
         rows.append({"id": f"cat:more:{page + 1}", "title": "More categories ➜", "description": "See the next ones"})
+    update_state(phone, cat_more=(page + 1) if more else None)  # lets "show more" continue the list
     wa.send_list(
         phone,
-        "🛍 *What would you like to shop?*\nPick a category, or just type what you're looking for "
-        "(e.g. _a laptop under 500k_).",
+        f"🛍 *What would you like to shop?* ({len(cats)} categories"
+        + (f", page {page}" if len(cats) > 10 else "")
+        + ")\nPick one"
+        + (", or say *show more* to see the rest" if more else "")
+        + ", or just type what you're looking for (e.g. _a laptop under 500k_).",
         "Choose category",
         rows,
         "Categories",
@@ -524,6 +528,13 @@ def _show_category(ctx: Ctx, cat_id: str) -> None:
         "sort_by": None,
         "sort_order": None,
     }
+    if not db.query(Product.id).filter(Product.category_id == cat.id, Product.status == "active").first():
+        wa.send_buttons(
+            ctx.phone,
+            f"We don't have products in *{cat.name}* yet. Check back soon, or pick another category.",
+            [("menu:shop", "🛍 Categories"), ("menu:cart", "🛒 My cart")],
+        )
+        return
     wa.send_text(ctx.phone, f"🛍 *{cat.name}*")
     _do_search(ctx, "", None, saved=params)
 
@@ -661,8 +672,12 @@ def _rule_intent(text: str) -> Intent:
 
 def _handle_text(ctx: Ctx, text: str) -> None:
     low = text.lower().strip()
-    if low in ("more", "show more", "next"):
-        _more_results(ctx)
+    if low in ("more", "show more", "next", "more categories", "show more categories"):
+        nxt = ctx.state.get("cat_more")
+        if nxt:  # the last thing shown was the category list: continue it
+            _send_categories(ctx, page=int(nxt))
+        else:
+            _more_results(ctx)
         return
     if re.fullmatch(r"(hi|hello|hey|help|menu|start)\W*", low):
         _send_menu(ctx, HELP_TEXT)
@@ -799,7 +814,7 @@ def _do_search(ctx: Ctx, text: str, intent_query: Optional[str], page: int = 1, 
         wa.send_buttons(phone, "\n".join(lines), [(f"add:{p.id}", "Add to cart")], header_image=image)
         results.append({"n": i, "id": str(p.id), "name": p.name})
 
-    update_state(phone, last_results=results, search=params)
+    update_state(phone, last_results=results, search=params, cat_more=None)
     shown_to = first_n + len(products)
     footer = f"Showing {first_n + 1}-{shown_to} of {total}. Tap *Add to cart*, or tell me what else you need."
     buttons = [("menu:cart", "🛒 View cart")]
