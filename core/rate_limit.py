@@ -31,6 +31,10 @@ RULES: List[Tuple[str, str, int, int]] = [
     # Money-moving and account-creating writes (order spam / scraping guard).
     ("POST", "/checkout", 30, 60),
     ("POST", "/orders", 30, 60),
+    # Referral joins, spins and reward orders (per IP).
+    ("POST", "/referrals", 30, 60),
+    ("GET", "/referrals/validate", 30, 60),
+    ("POST", "/admin/referrals", 60, 60),
     ("POST", "/admin", 60, 60),
     ("PUT", "/admin", 60, 60),
     ("DELETE", "/admin", 120, 60),

@@ -21,6 +21,9 @@ class LogoutRequest(BaseModel):
 
 class GoogleAuthRequest(BaseModel):
     id_token: str
+    # Optional referral attribution captured from a shared campaign link.
+    referral_code: Optional[str] = Field(None, max_length=32)
+    device_id: Optional[str] = Field(None, max_length=128)
 
 
 class UserRole(str, Enum):
@@ -41,6 +44,9 @@ class RegisterRequest(BaseModel):
     # Anti-bot: honeypot (humans leave empty) + Turnstile token (optional until key set).
     website: Optional[str] = None
     turnstile_token: Optional[str] = None
+    # Referral attribution from a shared campaign link.
+    referral_code: Optional[str] = Field(None, max_length=32)
+    device_id: Optional[str] = Field(None, max_length=128)
 
 
 class ChangePasswordRequest(BaseModel):

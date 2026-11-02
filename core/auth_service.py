@@ -25,6 +25,9 @@ class AuthService:
         full_name: str,
         phone: str,
         bio: str,
+        referral_code: Optional[str] = None,
+        device_id: Optional[str] = None,
+        client_ip: Optional[str] = None,
     ) -> str:
         """
         Create a new user with appropriate profile
@@ -52,6 +55,23 @@ class AuthService:
         profile = Profile(id=user.id, name=full_name, phone=phone, bio=bio)
 
         db.add(profile)
+
+        # Referral attribution is recorded in the same transaction as the new
+        # account. Invalid/expired codes are ignored and never block signup.
+        if referral_code:
+            try:
+                from core.referral_service import referral_service
+
+                referral_service.attach_registration(
+                    db,
+                    user.id,
+                    referral_code,
+                    device_id=device_id,
+                    client_ip=client_ip,
+                )
+            except Exception as exc:
+                print(f"Referral attribution skipped: {exc}")
+
         db.commit()
         db.refresh(user)
 
@@ -96,13 +116,21 @@ class AuthService:
         return str(user.id)
 
     def authenticate_or_create_google_user(
-        self, db: Session, google_id: str, email: str, full_name: str
-    ) -> User:
+        self,
+        db: Session,
+        google_id: str,
+        email: str,
+        full_name: str,
+        referral_code: Optional[str] = None,
+        device_id: Optional[str] = None,
+        client_ip: Optional[str] = None,
+    ) -> Tuple[User, bool]:
         """
         Look up a user by Google id, falling back to linking-by-email for an
         existing password account, or creating a brand-new customer.
 
-        Returns the User (existing or newly created).
+        Returns ``(User, created)``. ``created`` is True only for a brand-new
+        account, which is the only case where referral attribution applies.
         """
         user = db.query(User).filter(User.google_id == google_id).first()
         if user:
@@ -111,7 +139,7 @@ class AuthService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="This account has been deactivated.",
                 )
-            return user
+            return user, False
 
         user = db.query(User).filter(User.email == email).first()
         if user:
@@ -124,7 +152,7 @@ class AuthService:
             user.google_id = google_id
             db.commit()
             db.refresh(user)
-            return user
+            return user, False
 
         # Brand-new signup via Google — no password, email already verified by Google.
         display_name = full_name or email.split("@")[0]
@@ -142,6 +170,21 @@ class AuthService:
 
         profile = Profile(id=user.id, name=display_name)
         db.add(profile)
+
+        if referral_code:
+            try:
+                from core.referral_service import referral_service
+
+                referral_service.attach_registration(
+                    db,
+                    user.id,
+                    referral_code,
+                    device_id=device_id,
+                    client_ip=client_ip,
+                )
+            except Exception as exc:
+                print(f"Google referral attribution skipped: {exc}")
+
         db.commit()
         db.refresh(user)
 
@@ -181,7 +224,7 @@ class AuthService:
         except Exception as e:
             print(f"Failed to notify admins about new user: {e}")
 
-        return user
+        return user, True
 
     def authenticate_user(
         self, db: Session, email: str, password: str
@@ -563,6 +606,15 @@ class AuthService:
 
         # Send welcome email (async, non-blocking)
         send_welcome_email.delay(email, user_name)
+
+        # Referral credit is confirmed only after successful email verification.
+        # Best-effort: a referral failure must never fail verification.
+        try:
+            from core.referral_service import referral_service
+
+            referral_service.confirm_for_user(db, user.id)
+        except Exception as exc:
+            print(f"Referral confirmation deferred: {exc}")
 
         return {
             "message": "Email verified successfully",

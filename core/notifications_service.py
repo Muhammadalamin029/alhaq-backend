@@ -53,6 +53,10 @@ VALID_NOTIFICATION_TYPES = frozenset({
     "financing_application_approved",
     "financing_application_rejected",
     "financing_application_revoked",
+    "referral_confirmed",
+    "referral_qualified",
+    "referral_reward_awarded",
+    "referral_order_created",
 })
 
 # Best-effort fallback for types that predate their DB enum migration.
@@ -185,6 +189,10 @@ def create_notification(db: Session, payload: Dict[str, Any]) -> Notification:
         'payment_reminder': 'payment_updates',
         'installment_due': 'payment_updates',
         'installment_defaulted': 'payment_updates',
+        'referral_confirmed': 'promotional_offers',
+        'referral_qualified': 'promotional_offers',
+        'referral_reward_awarded': 'promotional_offers',
+        'referral_order_created': 'order_updates',
     }
     group = type_to_group.get(notification.type, 'order_updates')
     if 'email' in channels and not skip_email:

@@ -20,6 +20,7 @@ from schemas.checkout import (
 from schemas.order import OrderResponse
 from core.notifications_service import create_notification
 from core.system_settings_service import system_settings_service
+from core.delivery_service import resolve_delivery_fee
 
 router = APIRouter()
 
@@ -122,11 +123,7 @@ async def process_checkout(
                 detail="Delivery address not found"
             )
         
-        state = address.delivery_state
-        if state and state.is_active and state.delivery_price is not None:
-            delivery_fee = Decimal(str(state.delivery_price))
-        else:
-            delivery_fee = Decimal(str(settings.base_delivery_price or 0))
+        delivery_fee = resolve_delivery_fee(db, address)
 
         pending_order.delivery_address = checkout_data.delivery_address_id
         pending_order.pickup_location = None

@@ -25,6 +25,8 @@ from routers import (
     delivery as delivery_router,
     seo as seo_router,
       image_search as image_search_router,
+    referrals as referrals_router,
+    admin_referrals as admin_referrals_router,
 )
 from core.config import settings
 from db.session import engine
@@ -137,6 +139,10 @@ app.include_router(
 )
 app.include_router(delivery_router.router, prefix="/admin/delivery", tags=["Admin"])
 app.include_router(seo_router.router, tags=["SEO"])
+app.include_router(referrals_router.router, prefix="/referrals", tags=["Referrals"])
+app.include_router(
+    admin_referrals_router.router, prefix="/admin/referrals", tags=["Admin"]
+)
 
 try:
     from routers import whatsapp as whatsapp_router

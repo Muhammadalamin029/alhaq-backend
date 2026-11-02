@@ -205,7 +205,9 @@ def login(request: Request, form_data: LoginRequest, db: Session = Depends(get_d
 
 
 @router.post("/google", response_model=TokenResponse)
-def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
+def google_auth(
+    body: GoogleAuthRequest, request: Request, db: Session = Depends(get_db)
+):
     """Authenticate (or create) a customer via a Google Sign-In ID token."""
     if not settings.GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=501, detail="Google sign-in is not configured")
@@ -228,11 +230,20 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
         )
 
     try:
-        user = auth_service.authenticate_or_create_google_user(
+        forwarded_for = request.headers.get("x-forwarded-for")
+        client_ip = (
+            forwarded_for.split(",")[0].strip()
+            if forwarded_for
+            else (request.client.host if request.client else None)
+        )
+        user, created = auth_service.authenticate_or_create_google_user(
             db,
             google_id=google_sub,
             email=email,
             full_name=claims.get("name", ""),
+            referral_code=body.referral_code,
+            device_id=body.device_id,
+            client_ip=client_ip,
         )
     except IntegrityError:
         # A concurrent first login raced us to create the user; re-query and continue.
@@ -240,12 +251,23 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)):
         user = db.query(User).filter(User.google_id == google_sub).first()
         if not user:
             raise HTTPException(status_code=401, detail="Google sign-in failed")
+        created = False
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         log_error(auth_logger, f"Unexpected error during Google auth for {email}", e)
         raise HTTPException(status_code=500, detail="Google sign-in failed")
+
+    # Google has already verified this email, so a brand-new Google account's
+    # referral can be confirmed immediately.
+    if created and body.referral_code:
+        try:
+            from core.referral_service import referral_service
+
+            referral_service.confirm_for_user(db, user.id)
+        except Exception as exc:
+            auth_logger.warning(f"Google referral confirmation deferred: {exc}")
 
     log_auth_event(
         auth_logger,
@@ -330,6 +352,9 @@ def register_customer(body: RegisterRequest, request: Request, db: Session = Dep
             body.full_name,
             body.phone,
             body.bio,
+            referral_code=body.referral_code,
+            device_id=body.device_id,
+            client_ip=client_ip,
         )
 
         # Log successful registration

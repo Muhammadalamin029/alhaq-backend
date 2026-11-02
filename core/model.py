@@ -1,7 +1,8 @@
 from db.session import Base
 from sqlalchemy import (
     Column, String, UUID, Text, Date, Integer, DECIMAL,
-    TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric, JSON
+    TIMESTAMP, func, Enum, ForeignKey, Boolean, Numeric, JSON,
+    UniqueConstraint, CheckConstraint, Index
 )
 from sqlalchemy.orm import relationship
 
@@ -270,6 +271,20 @@ class Order(Base):
     # Delivery fields
     delivery_type = Column(Enum("pickup", "delivery", name="delivery_type"), default="delivery")
     delivery_fee = Column(Numeric(15, 2), default=0)
+
+    # Referral reward orders are still normal orders for fulfilment, but are
+    # distinguishable for reporting and never charged for the product itself.
+    order_type = Column(
+        Enum("standard", "referral_reward", name="order_type"),
+        nullable=False,
+        server_default="standard",
+    )
+    referral_claim_id = Column(
+        UUID,
+        ForeignKey("referral_reward_claims.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
     pickup_location = Column(Text, nullable=True)  # For pickup orders
     pickup_address = Column(Text, nullable=True)  # Full address snapshot at checkout
 
@@ -500,6 +515,10 @@ class Notification(Base):
         "financing_application_approved",
         "financing_application_rejected",
         "financing_application_revoked",
+        "referral_confirmed",
+        "referral_qualified",
+        "referral_reward_awarded",
+        "referral_order_created",
         name="notification_type"
     ), nullable=False)
 
@@ -991,3 +1010,230 @@ class PushDeviceToken(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
                         onupdate=func.current_timestamp())
+
+
+# ---------------- REFERRAL CAMPAIGNS ----------------
+class ReferralCampaign(Base):
+    """Admin-configured referral campaign with a fixed reward catalogue.
+
+    ``terms_locked_at`` is set on activation. Once locked, the economic terms
+    (required referrals, reward products, delivery policy, device cap) cannot
+    change; only descriptive fields and the end date may be extended.
+    """
+
+    __tablename__ = "referral_campaigns"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    required_referrals = Column(Integer, nullable=False, default=1)
+    start_at = Column(TIMESTAMP, nullable=False)
+    end_at = Column(TIMESTAMP, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    ended_at = Column(TIMESTAMP, nullable=True)
+    customer_pays_delivery = Column(Boolean, nullable=False, default=False)
+    terms_locked_at = Column(TIMESTAMP, nullable=True)
+    max_credited_referrals_per_device = Column(Integer, nullable=False, default=1)
+    created_by = Column(UUID, ForeignKey("users.id"), nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+    products = relationship(
+        "ReferralCampaignProduct",
+        back_populates="campaign",
+        cascade="all, delete-orphan",
+        order_by="ReferralCampaignProduct.display_order",
+    )
+    participations = relationship(
+        "ReferralParticipation", back_populates="campaign"
+    )
+
+
+class ReferralCampaignProduct(Base):
+    __tablename__ = "referral_campaign_products"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "product_id",
+                         name="uq_referral_campaign_product"),
+    )
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    campaign_id = Column(
+        UUID,
+        ForeignKey("referral_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        UUID, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    display_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+    campaign = relationship("ReferralCampaign", back_populates="products")
+    product = relationship("Product")
+
+
+class ReferralParticipation(Base):
+    """A customer's single entry into one campaign."""
+
+    __tablename__ = "referral_participations"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "user_id",
+                         name="uq_referral_participation_user"),
+    )
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    campaign_id = Column(
+        UUID,
+        ForeignKey("referral_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    referral_code = Column(String(16), unique=True, nullable=False, index=True)
+    status = Column(
+        Enum("active", "qualified", "rewarded", "cancelled",
+             name="referral_participation_status"),
+        nullable=False,
+        default="active",
+    )
+    qualified_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+    campaign = relationship("ReferralCampaign", back_populates="participations")
+    user = relationship("User")
+    referrals = relationship(
+        "Referral", back_populates="participation", cascade="all, delete-orphan"
+    )
+    claim = relationship(
+        "ReferralRewardClaim", back_populates="participation", uselist=False
+    )
+
+
+class Referral(Base):
+    """Attribution of one new user to one participation.
+
+    ``referred_user_id`` is globally unique: a new account can only ever be
+    credited to one campaign, even if it later opens another referral link.
+    """
+
+    __tablename__ = "referrals"
+    __table_args__ = (
+        UniqueConstraint("referred_user_id", name="uq_referral_referred_user"),
+        CheckConstraint("referrer_user_id <> referred_user_id",
+                        name="ck_referral_no_self_referral"),
+    )
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    participation_id = Column(
+        UUID,
+        ForeignKey("referral_participations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    campaign_id = Column(
+        UUID, ForeignKey("referral_campaigns.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    referrer_user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"),
+                              nullable=False, index=True)
+    referred_user_id = Column(UUID, ForeignKey("users.id", ondelete="CASCADE"),
+                              nullable=False, index=True)
+    code_used = Column(String(16), nullable=False)
+    status = Column(
+        Enum("pending", "confirmed", "rejected", "expired",
+             name="referral_status"),
+        nullable=False,
+        default="pending",
+    )
+    device_hash = Column(String(64), nullable=True, index=True)
+    signup_ip_hash = Column(String(64), nullable=True)
+    rejection_reason = Column(String(120), nullable=True)
+    registered_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    confirmed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+    participation = relationship("ReferralParticipation", back_populates="referrals")
+    campaign = relationship("ReferralCampaign")
+    referrer = relationship("User", foreign_keys=[referrer_user_id])
+    referred = relationship("User", foreign_keys=[referred_user_id])
+
+
+class ReferralRewardClaim(Base):
+    """One durable reward claim per qualified participation."""
+
+    __tablename__ = "referral_reward_claims"
+    __table_args__ = (
+        UniqueConstraint("participation_id", name="uq_referral_claim_participation"),
+    )
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    participation_id = Column(
+        UUID,
+        ForeignKey("referral_participations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    campaign_id = Column(
+        UUID, ForeignKey("referral_campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(
+        Enum("unlocked", "awarded", "order_created", "fulfilled", "cancelled",
+             name="referral_claim_status"),
+        nullable=False,
+        default="unlocked",
+    )
+    won_product_id = Column(
+        UUID, ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
+    )
+    # Frozen copy of the wheel at draw time: product ids, names, prices, images
+    # and the winning segment. Keeps the animation/result auditable even if the
+    # catalogue later changes.
+    wheel_snapshot = Column(JSON, nullable=True)
+    segment_index = Column(Integer, nullable=True)
+    draw_nonce = Column(String(64), nullable=True)
+    awarded_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(
+    ), onupdate=func.current_timestamp())
+
+    participation = relationship("ReferralParticipation", back_populates="claim")
+    campaign = relationship("ReferralCampaign")
+    won_product = relationship("Product")
+
+
+class ReferralEvent(Base):
+    """Append-only lifecycle audit for referral campaigns and rewards."""
+
+    __tablename__ = "referral_events"
+
+    id = Column(UUID, primary_key=True, index=True,
+                default=func.gen_random_uuid())
+    event = Column(String(64), nullable=False, index=True)
+    campaign_id = Column(UUID, ForeignKey("referral_campaigns.id", ondelete="SET NULL"),
+                         nullable=True, index=True)
+    participation_id = Column(
+        UUID, ForeignKey("referral_participations.id", ondelete="SET NULL"),
+        nullable=True, index=True
+    )
+    referral_id = Column(UUID, ForeignKey("referrals.id", ondelete="SET NULL"),
+                         nullable=True)
+    claim_id = Column(UUID, ForeignKey("referral_reward_claims.id", ondelete="SET NULL"),
+                      nullable=True)
+    actor_user_id = Column(UUID, ForeignKey("users.id", ondelete="SET NULL"),
+                           nullable=True)
+    details = Column(JSON, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
