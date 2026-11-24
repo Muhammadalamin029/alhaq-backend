@@ -3,40 +3,48 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-
+    image: lel-store-backend:latest
     container_name: lel-store-api
-
     restart: unless-stopped
-
+    init: true
     env_file:
       - .env
-
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-
+    command: ["sh", "./start-api.sh"]
     ports:
       - "127.0.0.1:8100:8000"
-
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-
     networks:
       - lel-store-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   celery:
+    image: lel-store-backend:latest
     build:
       context: .
       dockerfile: Dockerfile
-
     container_name: lel-store-celery
-
     restart: unless-stopped
-
+    init: true
     env_file:
       - .env
-
     command:
       [
         "celery",
@@ -48,90 +56,71 @@ services:
         "--queues=default,emails,notifications",
         "--prefetch-multiplier=1",
       ]
-
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-
     networks:
       - lel-store-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   celery-beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-
+    image: lel-store-backend:latest
     container_name: lel-store-celery-beat
-
     restart: unless-stopped
-
+    init: true
     env_file:
       - .env
-
-    command: ["celery", "-A", "core.celery_app", "beat", "--loglevel=info"]
-
+    command:
+      [
+        "celery",
+        "-A",
+        "core.celery_app",
+        "beat",
+        "--loglevel=info",
+        "--schedule=/var/lib/celery/celerybeat-schedule",
+      ]
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-
-    networks:
-      - lel-store-network
-
-  postgres:
-    image: postgres:16-alpine
-
-    container_name: lel-store-postgres
-
-    restart: unless-stopped
-
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
     volumes:
-      - lel-store-postgres-data:/var/lib/postgresql/data
-
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
+      - lel-store-celery-beat-data:/var/lib/celery
     networks:
       - lel-store-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
-
     container_name: lel-store-redis
-
     restart: unless-stopped
-
-    command: ["redis-server", "--appendonly", "yes"]
-
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - lel-store-redis-data:/data
-
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-
     networks:
       - lel-store-network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
-  lel-store-postgres-data:
-    name: lel-store-postgres-data
-
   lel-store-redis-data:
     name: lel-store-redis-data
+  lel-store-celery-beat-data:
+    name: lel-store-celery-beat-data
 
 networks:
   lel-store-network:
