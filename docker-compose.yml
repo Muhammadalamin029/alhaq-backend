@@ -23,12 +23,12 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+          "import urllib.request; req=urllib.request.Request('http://127.0.0.1:8000/', method='HEAD'); urllib.request.urlopen(req, timeout=5)",
         ]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 90s
     logging:
       driver: json-file
       options:
@@ -37,9 +37,6 @@ services:
 
   celery:
     image: lel-store-backend:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: lel-store-celery
     restart: unless-stopped
     init: true
@@ -57,6 +54,8 @@ services:
         "--prefetch-multiplier=1",
       ]
     depends_on:
+      api:
+        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
@@ -84,6 +83,8 @@ services:
         "--schedule=/var/lib/celery/celerybeat-schedule",
       ]
     depends_on:
+      api:
+        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
